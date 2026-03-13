@@ -1,0 +1,9 @@
+Title guidance:
+- The Pull Request title is fixed for this mode.
+- Use exactly `## Title: {fixed_title}` in the output.
+- Do not generate an alternative title or vary the title wording.
+- Use this mode for hotfix-promotion PRs from `hotfix/*` to `master`.
+- Summarize the hotfix as a patch release rather than a single Conventional Commit.
+- Good examples: `Hotfix 1.0.1`, `Hotfix 1.6.1`, `Hotfix 2.0.1`.
+- In the body, frame the PR as a hotfix promotion and summarize the included changes from the provided commits, diffs, and context.
+- Do not invent QA results, rollout steps, or release notes not supported by the available artifacts.

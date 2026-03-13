@@ -1,0 +1,8 @@
+Title guidance:
+- For Issue output, keep `## Title:` short, descriptive, and human-readable.
+- For Pull Request output, the title is fixed for `sync/* -> develop` PRs.
+- Use exactly `## Title: {fixed_title}` for the Pull Request title.
+- Do not generate an alternative Pull Request title.
+- Good PR title examples: `Sync 1.6.0`, `Sync 1.6.1`, `Sync 2.0.0`.
+- In the PR body, frame the PR as branch synchronization and summarize the included release or hotfix changes from the provided commits, diffs, and context.
+- Do not invent QA results, rollout steps, or release notes not supported by the available artifacts.

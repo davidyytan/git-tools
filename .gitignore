@@ -1,0 +1,9 @@
+*.pyc
+__pycache__
+.DS_Store
+git-tools.env
+mappings.json
+.zed/debug.json
+.zed/settings.json
+build/
+*.egg-info/

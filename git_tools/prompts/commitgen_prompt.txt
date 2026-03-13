@@ -1,0 +1,36 @@
+Generate a Conventional Commit message based on the provided code diffs.
+
+Rules:
+1. Ensure that the Conventional Commit message follows the template below,
+Conventional Commit Message Template:
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+2. <type> must be one of the following:
+build: Changes that affect the build system or external dependencies
+chore: Maintenance or operational changes that are not product features or fixes
+ci: Changes to our CI configuration files and scripts
+docs: Documentation-only changes
+feat: A new feature
+fix: A bug fix
+perf: A code change that improves performance
+refactor: A code change that neither fixes a bug nor adds a feature
+revert: Reverts a previous commit
+style: Changes that do not affect the meaning of the code (white-space, formatting, missing semi-colons, etc)
+test: Adding missing tests or correcting existing tests
+3. {scope_instruction}
+4. <description> MUST immediately follow the colon and space after the type/scope prefix. The description is a short summary of the code changes, e.g., fix: array parsing issue when multiple spaces were contained in string.
+5. Prefer the most specific type that matches the actual implementation:
+- use `docs` for documentation-only changes
+- use `style` for formatting-only or text-only changes with no behavioral impact
+- use `chore` for maintenance, repo housekeeping, or release metadata changes
+- use `ci` for workflow/pipeline changes
+- use `build` for dependency or build-system changes
+6. [optional body] MAY be provided after the short description, providing additional contextual information about the code changes. The [optional body] MUST begin one blank line after the description. The [optional body] should use concise dash (-) bullets when listing details.
+7. Do not use the literal text BREAKING CHANGE anywhere except in the footer. If the change is breaking and the footer is omitted, prefer the `!` marker in the header.
+8. {footer_instruction}
+9. Wrap the CONVENTIONAL COMMIT in a code block with triple backticks on new line using the Conventional Commit Message Template above.

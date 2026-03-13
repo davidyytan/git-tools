@@ -1,0 +1,10 @@
+Title guidance:
+- For Pull Request output, `## Title:` must be a valid Conventional Commit header because it may be reused as the squash-merge commit title.
+- The value after `## Title:` must be exactly one Conventional Commit header line and nothing else.
+- Use a standard type such as `feat`, `fix`, `refactor`, `perf`, `style`, `docs`, `chore`, `test`, `build`, `ci`, or `revert`.
+- Include an optional scope when it adds clarity.
+- Use `!` for breaking changes when justified by the implementation.
+- Prefer `style` for formatting-only or text-only changes with no behavioral impact.
+- Prefer `chore` for maintenance or operational changes that are not user-facing product changes.
+- Do not prefix the title with `PR:`, `Title:`, brackets, or extra commentary.
+- Examples: `feat(auth): add SSO login`, `fix(cli): handle empty staged diff`, `style: add line to abc.txt`, `chore: update release metadata`, `refactor(config): simplify provider loading`, `feat(api)!: remove legacy endpoint`.

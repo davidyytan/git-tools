@@ -1,0 +1,8 @@
+Code Diffs:
+```
+{diff_content}
+```
+
+Using the rules, template and code diffs, generate a conventional commit message.
+
+Conventional commit message:

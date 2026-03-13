@@ -1,0 +1,1 @@
+Generate both an Issue and a Pull Request using these templates:

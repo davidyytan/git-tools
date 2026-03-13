@@ -1,0 +1,9 @@
+Title guidance:
+- The Pull Request title is fixed for this mode.
+- Use exactly `## Title: {fixed_title}` in the output.
+- Do not generate an alternative title or vary the title wording.
+- Use this mode for branch-sync PRs such as `sync/* -> develop` after a release or hotfix.
+- Summarize the already-released changes being synced back, not new feature intent.
+- Good examples: `Sync 1.6.0`, `Sync 1.6.1`, `Sync 2.0.0`.
+- In the body, frame the PR as branch synchronization and summarize the included release or hotfix changes from the provided commits, diffs, and context.
+- Do not invent QA results, rollout steps, or release notes not supported by the available artifacts.

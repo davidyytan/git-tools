@@ -1,0 +1,8 @@
+[
+    {
+        "label": "Python Active File",
+        "adapter": "Debugpy",
+        "program": "$ZED_FILE",
+        "request": "launch"
+    }
+]

@@ -1,0 +1,366 @@
+# Example workflow for classic Git Flow:
+# See docs/git-flow-guide.md for setup, branch policy, PR flow, and merge settings.
+# - develop -> alpha prereleases on the upcoming release line
+# - release/<x.y.z> stabilizes that same line as rc prereleases
+# - master -> stable releases
+# - hotfix/** -> patch rc prereleases, then stable on master
+
+name: Version Bump (Classic)
+
+on:
+    push:
+        branches:
+            - master
+            - develop
+            - "release/**"
+            - "hotfix/**"
+            - "sync/**"
+            - "feature/**"
+            - "bugfix/**"
+    workflow_dispatch:
+
+env:
+    GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
+    GIT_TOOLS_REF: master
+    GIT_BOT_NAME: David Tan (Bot)
+    GIT_BOT_EMAIL: david.tan.bot@davidyytan.com
+
+jobs:
+    version-bump:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  persist-credentials: true
+                  ssh-key: ${{ secrets.BOT_SSH_SECRETKEY }}
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Decide version strategy
+              id: strategy
+              env:
+                  BRANCH_NAME: ${{ github.ref_name }}
+              run: |
+                  python - <<'PY'
+                  import os
+                  import re
+                  import subprocess
+                  import tomllib
+                  from pathlib import Path
+
+                  DEFAULT_BUMP_PATTERN = re.compile(
+                      r"^((BREAKING[\-\ ]CHANGE|\w+)(\(.+\))?!?):"
+                  )
+                  RELEASE_BRANCH_PATTERN = re.compile(r"^release/(?P<target>\d+\.\d+\.\d+)$")
+                  SEMVER2_PRERELEASE = re.compile(
+                      r"^\d+\.\d+\.\d+-(alpha|beta|rc)\.\d+$"
+                  )
+                  GENERATED_BUMP_PREFIX = "bump:"
+                  RELEASE_MANAGEMENT_PREFIX = "chore(release):"
+                  BOOTSTRAP_RELEASE_SUBJECT = "Release 0.0.1"
+
+                  def read_nested_string(data, keys):
+                      current = data
+                      for key in keys:
+                          if not isinstance(current, dict) or key not in current:
+                              return None
+                          current = current[key]
+                      return current if isinstance(current, str) else None
+
+                  def load_current_version(root: Path) -> str:
+                      cz_path = root / ".cz.toml"
+                      if cz_path.exists():
+                          data = tomllib.loads(cz_path.read_text(encoding="utf-8"))
+                          version = read_nested_string(data, ("tool", "commitizen", "version"))
+                          if version is not None:
+                              return version
+
+                      pyproject_path = root / "pyproject.toml"
+                      if pyproject_path.exists():
+                          data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+                          version = read_nested_string(data, ("project", "version"))
+                          if version is not None:
+                              return version
+
+                      raise SystemExit("No managed version found in .cz.toml or pyproject.toml.")
+
+                  def load_version_from_refs(root: Path, refs: tuple[str, ...]) -> str:
+                      for ref in refs:
+                          for path, keys in (
+                              (".cz.toml", ("tool", "commitizen", "version")),
+                              ("pyproject.toml", ("project", "version")),
+                          ):
+                              try:
+                                  raw = subprocess.run(
+                                      ["git", "show", f"{ref}:{path}"],
+                                      check=True,
+                                      text=True,
+                                      capture_output=True,
+                                  ).stdout
+                              except subprocess.CalledProcessError:
+                                  continue
+
+                              try:
+                                  data = tomllib.loads(raw)
+                              except tomllib.TOMLDecodeError:
+                                  continue
+                              version = read_nested_string(data, keys)
+                              if version is not None:
+                                  return version
+
+                      raise SystemExit(
+                          f"No managed version found on refs: {', '.join(refs)}."
+                      )
+
+                  def release_tuple(version: str) -> tuple[int, int, int]:
+                      return tuple(int(part) for part in version.split("-", 1)[0].split("."))
+
+                  def next_patch_release_line(version: str) -> str:
+                      base = release_tuple(version)
+                      return f"{base[0]}.{base[1]}.{base[2] + 1}"
+
+                  def is_bump_eligible(message: str) -> bool:
+                      for line in message.splitlines():
+                          if DEFAULT_BUMP_PATTERN.search(line):
+                              return True
+                      return False
+
+                  root = Path.cwd()
+                  branch = os.environ["BRANCH_NAME"]
+                  output_path = Path(os.environ["GITHUB_OUTPUT"])
+                  last_commit = subprocess.run(
+                      ["git", "log", "-1", "--pretty=%B"],
+                      check=True,
+                      text=True,
+                      capture_output=True,
+                  ).stdout.strip()
+                  subject = last_commit.splitlines()[0] if last_commit else ""
+                  current_version = load_current_version(root)
+                  current_is_prerelease = bool(SEMVER2_PRERELEASE.fullmatch(current_version))
+                  current_release_line = current_version.split("-", 1)[0]
+                  has_tags = bool(
+                      subprocess.run(
+                          ["git", "tag", "--list"],
+                          check=True,
+                          text=True,
+                          capture_output=True,
+                      ).stdout.strip()
+                  )
+                  master_version = ""
+                  master_release_line = ""
+                  hotfix_target = ""
+                  bump_eligible = is_bump_eligible(last_commit)
+                  release_match = RELEASE_BRANCH_PATTERN.fullmatch(branch)
+                  release_target = release_match.group("target") if release_match else ""
+                  release_branch_error = ""
+                  hotfix_branch_error = ""
+
+                  if branch.startswith("release/"):
+                      if not release_match:
+                          release_branch_error = (
+                              "release branches must be named release/<x.y.z>, "
+                              f"got {branch}"
+                          )
+                      elif not current_is_prerelease:
+                          release_branch_error = (
+                              "classic release branches must carry a prerelease on the "
+                              f"selected line, got {current_version}"
+                          )
+                      elif release_target != current_release_line:
+                          release_branch_error = (
+                              f"classic release branch target {release_target} does not match "
+                              f"the current prerelease line {current_release_line}"
+                          )
+
+                  if branch.startswith("hotfix/"):
+                      master_version = load_version_from_refs(root, ("origin/master", "master"))
+                      master_release_line = master_version.split("-", 1)[0]
+                      hotfix_target = next_patch_release_line(master_version)
+                      if current_release_line == master_release_line:
+                          if current_is_prerelease:
+                              hotfix_branch_error = (
+                                  f"hotfix branches should start from stable master state, got {current_version}"
+                              )
+                      elif current_release_line == hotfix_target:
+                          if not current_is_prerelease:
+                              hotfix_branch_error = (
+                                  "hotfix branches must carry a prerelease after selecting "
+                                  f"the patch target line, got {current_version}"
+                              )
+                      else:
+                          hotfix_branch_error = (
+                              f"hotfix branch version line {current_release_line} does not align "
+                              f"with master {master_release_line} or next patch target {hotfix_target}"
+                          )
+
+                  skip = False
+                  invalid = False
+                  mode = ""
+                  args = ""
+                  reason = ""
+                  error = ""
+
+                  if release_branch_error:
+                      invalid = True
+                      error = release_branch_error
+                  elif hotfix_branch_error:
+                      invalid = True
+                      error = hotfix_branch_error
+                  elif branch.startswith("release/") and "-alpha." in current_version:
+                      mode = "promote-alpha-to-rc"
+                      args = "--yes --increment PATCH --prerelease rc --gpg-sign"
+                      reason = "classic release branch promotes alpha to rc on the same selected line"
+                  elif subject.startswith(GENERATED_BUMP_PREFIX):
+                      skip = True
+                      reason = "latest commit was generated by the version bump workflow"
+                  elif branch.startswith("feature/") or branch.startswith("bugfix/") or branch.startswith("sync/"):
+                      skip = True
+                      reason = "feature, bugfix, and sync branches do not publish versions"
+                  elif branch.startswith("hotfix/"):
+                      if subject.startswith(RELEASE_MANAGEMENT_PREFIX):
+                          skip = True
+                          reason = "release-management commits do not bump hotfix branches"
+                      elif current_release_line != hotfix_target:
+                          if bump_eligible:
+                              mode = "start-hotfix-rc"
+                              args = "--yes --increment PATCH --prerelease rc --gpg-sign"
+                              reason = (
+                                  f"hotfix branch selects patch release {hotfix_target} from master {master_release_line}"
+                              )
+                          else:
+                              skip = True
+                              reason = "latest commit on hotfix branch is not bump-eligible"
+                      elif bump_eligible:
+                          mode = "hotfix-rc"
+                          args = "--yes --increment PATCH --prerelease rc --gpg-sign"
+                          reason = "hotfix branch continues the current patch rc line without reopening semver detection"
+                      else:
+                          skip = True
+                          reason = "latest commit on hotfix branch is not bump-eligible"
+                  elif branch == "develop":
+                      if subject.startswith(RELEASE_MANAGEMENT_PREFIX):
+                          skip = True
+                          reason = "release-management commits do not bump develop"
+                      elif bump_eligible:
+                          mode = "develop-alpha"
+                          args = "--yes --prerelease alpha --default-increment PATCH --gpg-sign"
+                          reason = "develop creates or continues alpha prereleases"
+                      else:
+                          skip = True
+                          reason = "latest commit on develop is not bump-eligible"
+                  elif branch.startswith("release/"):
+                      if subject.startswith(RELEASE_MANAGEMENT_PREFIX):
+                          skip = True
+                          reason = "release-management commit already promoted this release branch"
+                      elif bump_eligible:
+                          mode = "release-rc"
+                          args = "--yes --increment PATCH --prerelease rc --gpg-sign"
+                          reason = "classic release branch continues the current rc line without reopening semver detection"
+                      else:
+                          skip = True
+                          reason = "latest commit on release branch does not require a version bump"
+                  elif branch == "master":
+                      if (
+                          not current_is_prerelease
+                          and current_version == "0.0.1"
+                          and not has_tags
+                          and subject == BOOTSTRAP_RELEASE_SUBJECT
+                      ):
+                          mode = "bootstrap-stable"
+                          args = "--yes --increment MINOR --gpg-sign"
+                          reason = "bootstrap commit promotes the initial baseline from 0.0.1 to 0.1.0"
+                      elif current_is_prerelease:
+                          mode = "finalize-stable"
+                          args = "--yes --gpg-sign"
+                          reason = "master finalizes the current prerelease to stable"
+                      else:
+                          skip = True
+                          reason = "classic Git Flow only finalizes prereleases on master; choose release/** or hotfix/** first"
+                  else:
+                      skip = True
+                      reason = f"branch {branch} is not managed by this workflow"
+
+                  with output_path.open("a", encoding="utf-8") as fh:
+                      fh.write(f"skip={'true' if skip else 'false'}\n")
+                      fh.write(f"invalid={'true' if invalid else 'false'}\n")
+                      fh.write(f"mode={mode}\n")
+                      fh.write(f"args={args}\n")
+                      fh.write(f"reason={reason}\n")
+                      fh.write(f"error={error}\n")
+                      fh.write(f"branch={branch}\n")
+                      fh.write(f"release_target={release_target}\n")
+                      fh.write(f"hotfix_target={hotfix_target}\n")
+                      fh.write(f"current_version={current_version}\n")
+                      fh.write(f"current_release_line={current_release_line}\n")
+                      fh.write(f"master_version={master_version}\n")
+                      fh.write(f"master_release_line={master_release_line}\n")
+                      fh.write(
+                          f"current_is_prerelease={'true' if current_is_prerelease else 'false'}\n"
+                      )
+                      fh.write(f"bump_eligible={'true' if bump_eligible else 'false'}\n")
+                      fh.write(f"subject={subject}\n")
+                  PY
+
+            - name: Show decision
+              run: |
+                  echo "branch=${{ steps.strategy.outputs.branch }}"
+                  echo "skip=${{ steps.strategy.outputs.skip }}"
+                  echo "invalid=${{ steps.strategy.outputs.invalid }}"
+                  echo "mode=${{ steps.strategy.outputs.mode }}"
+                  echo "reason=${{ steps.strategy.outputs.reason }}"
+                  echo "error=${{ steps.strategy.outputs.error }}"
+                  echo "release_target=${{ steps.strategy.outputs.release_target }}"
+                  echo "hotfix_target=${{ steps.strategy.outputs.hotfix_target }}"
+                  echo "current_version=${{ steps.strategy.outputs.current_version }}"
+                  echo "current_release_line=${{ steps.strategy.outputs.current_release_line }}"
+                  echo "master_version=${{ steps.strategy.outputs.master_version }}"
+                  echo "master_release_line=${{ steps.strategy.outputs.master_release_line }}"
+                  echo "current_is_prerelease=${{ steps.strategy.outputs.current_is_prerelease }}"
+                  echo "bump_eligible=${{ steps.strategy.outputs.bump_eligible }}"
+                  echo "subject=${{ steps.strategy.outputs.subject }}"
+
+            - name: Fail invalid release branch configuration
+              if: steps.strategy.outputs.invalid == 'true'
+              run: |
+                  echo "${{ steps.strategy.outputs.error }}"
+                  exit 1
+
+            - name: Import GPG key
+              if: steps.strategy.outputs.skip != 'true' && steps.strategy.outputs.invalid != 'true'
+              uses: crazy-max/ghaction-import-gpg@v6
+              with:
+                  gpg_private_key: ${{ secrets.BOT_GPG_SECRETKEY }}
+                  trust_level: 5
+                  git_user_signingkey: true
+                  git_commit_gpgsign: true
+                  git_tag_gpgsign: true
+                  git_config_global: true
+
+            - name: Clone git-tools
+              if: steps.strategy.outputs.skip != 'true' && steps.strategy.outputs.invalid != 'true'
+              run: |
+                  git clone --branch "$GIT_TOOLS_REF" "$GIT_TOOLS_REPO" "$RUNNER_TEMP/git-tools"
+
+            - name: Run version bump
+              if: steps.strategy.outputs.skip != 'true' && steps.strategy.outputs.invalid != 'true'
+              env:
+                  EDITOR: vi
+                  BUMP_ARGS: ${{ steps.strategy.outputs.args }}
+              run: |
+                  git config --local user.name "$GIT_BOT_NAME"
+                  git config --local user.email "$GIT_BOT_EMAIL"
+                  git fetch --force --tags origin
+
+                  python "$RUNNER_TEMP/git-tools/git_tools/bump.py" $BUMP_ARGS
+
+            - name: Push changes
+              if: steps.strategy.outputs.skip != 'true' && steps.strategy.outputs.invalid != 'true'
+              run: |
+                  git push
+                  git push --tags

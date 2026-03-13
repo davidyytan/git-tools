@@ -1,0 +1,43 @@
+Pull Request Template:
+```
+{title_block}
+
+## Change Overview
+### Overview
+Provide a clear, concise description in sentences that answers:
+- What problem does this PR solve?
+- What is the core solution implemented?
+- Why was this approach chosen?
+
+### Scope
+Main changes:
+- Features implemented/modified
+- Systems and services affected
+- Configuration and dependencies
+- Other technical impacts
+
+## Technical Details
+### Architecture Changes
+- System design changes
+- Component/service interactions
+- Integration points modified
+- Technical architecture decisions
+
+### Code Changes
+- Detailed summary along with code snippets if necessary
+- Key algorithms/logic modifications
+- Configuration updates
+- New dependencies
+- Changes to interfaces
+
+### Design Decisions
+- Explain important technical choices
+- Document considered alternatives
+- Include relevant diagrams/screenshots
+- Note technical debt implications
+
+Labels: [feature/bug/security/documentation]
+Priority: [P0/P1/P2]
+Size: [XS/S/M/L/XL]
+Estimate: [1/2/3/4/5/6/7/8/9/10/11/12/13/14]
+```

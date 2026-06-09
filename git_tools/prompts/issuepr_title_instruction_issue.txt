@@ -1,0 +1,3 @@
+Title guidance:
+- For Issue output, keep `## Title:` short, descriptive, and human-readable.
+- Do not force Issue titles into Conventional Commit format.

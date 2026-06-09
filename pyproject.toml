@@ -1,0 +1,45 @@
+[project]
+name = "git-tools"
+version = "0.1.0"
+description = "AI-powered development automation tool for conventional commits, issue/PR documentation, and version bumping"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = {text = "MIT"}
+authors = [
+    {name = "David Tan", email = "david.tan@davidyytan.com"}
+]
+maintainers = [
+    {name = "David Tan", email = "david.tan@davidyytan.com"}
+]
+keywords = ["ai", "llm", "git", "commit", "automation", "development", "cli"]
+dependencies = [
+    "pydantic==2.10.6",
+    "pydantic-settings==2.7.1",
+    "requests==2.32.3",
+    "openai==1.60.0",
+    "pyperclip==1.9.0",
+    "tiktoken>=0.5.0",
+    "langchain==0.3.18",
+    "langgraph==0.2.70",
+    "langsmith==0.3.7",
+    "langchain-openai==0.3.4",
+    "typer>=0.20.0",
+    "questionary>=2.1.1",
+]
+
+[project.scripts]
+git-tools = "git_tools.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/davidyytan/git-tools"
+Documentation = "https://github.com/davidyytan/git-tools#readme"
+Repository = "https://github.com/davidyytan/git-tools.git"
+Issues = "https://github.com/davidyytan/git-tools/issues"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["git_tools*"]

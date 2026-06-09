@@ -1,0 +1,12 @@
+Promotion PR Context:
+```
+Promotion kind: {promotion_kind}
+Current branch: {current_branch}
+Base branch: {base_branch}
+Target version for this promotion PR: {target_version}
+Target version source: {target_source}
+Base branch managed version: {base_version}
+Current branch managed version: {current_version}
+Inferred transition from base branch to target version: {inferred_transition}
+Use the target version from this context in the PR title and describe this PR as a promotion to the base branch.
+```

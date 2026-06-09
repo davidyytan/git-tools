@@ -1,0 +1,6 @@
+{
+    "hard_tabs": false,
+    "tab_size": 4,
+    "soft_wrap": "bounded",
+    "preferred_line_length": 9999,
+}

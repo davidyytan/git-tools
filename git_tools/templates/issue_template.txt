@@ -1,0 +1,66 @@
+Issue Template:
+```
+## Title: [Brief Descriptive Title]
+
+## Problem Statement
+### Current State
+- What is the existing situation?
+- What are the pain points?
+- Who is affected?
+
+### Desired Outcome
+- What needs to be achieved?
+- What are the success metrics?
+- What are the expected benefits?
+
+### Business Context
+- Impact metrics
+- User/system effects
+- Priority rationale
+- Timeline criticality
+
+## Technical Details
+### Current System
+- System behavior
+- Limitations/blockers
+- Reproduction steps (if bug)
+- Affected components
+
+### Solution Design
+- High-level approach
+- Architecture changes
+- Technology stack updates
+- Third-party integrations
+- Performance considerations
+
+### Implementation Plan
+- Component modifications
+- API updates
+- Security measures
+- Testing strategy
+- Monitoring/logging enhancements
+
+### Dependencies & Constraints
+- External services
+- Team dependencies
+- Performance requirements
+- Security requirements
+- Browser/device support
+
+## Resources
+- Relevant links
+- Related issues
+- Design documents
+- User research
+
+## Notes
+- Open questions
+- Known limitations
+- Future considerations
+- Risk factors
+
+Labels: [feature/bug/security/documentation]
+Priority: [P0/P1/P2]
+Size: [XS/S/M/L/XL]
+Estimate: [1/2/3/4/5/6/7/8/9/10/11/12/13/14]
+```

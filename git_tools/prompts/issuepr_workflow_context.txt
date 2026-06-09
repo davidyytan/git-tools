@@ -1,0 +1,13 @@
+Workflow PR Context:
+```
+Workflow kind: {workflow_kind}
+Current branch: {current_branch}
+Base branch: {base_branch}
+Fixed PR title for this workflow PR: {fixed_title}
+Target version tuple for this workflow PR: {target_version}
+Target version source: {target_source}
+Base branch managed version: {base_version}
+Current branch managed version: {current_version}
+Behavior summary: {behavior_summary}
+Use the fixed title from this context exactly and frame the PR body around this workflow action.
+```

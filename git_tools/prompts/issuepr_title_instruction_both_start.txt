@@ -1,0 +1,8 @@
+Title guidance:
+- For Issue output, keep `## Title:` short, descriptive, and human-readable.
+- For Pull Request output, the title is fixed.
+- Use exactly `## Title: {fixed_title}` for the Pull Request title.
+- Do not generate an alternative Pull Request title.
+- Good PR title examples: `Start 0.3.0`, `Start 1.7.0`, `Start 2.0.0`.
+- In the PR body, summarize the actual changes like a normal develop PR and also explain the target alpha line that opens on merge.
+- Do not invent QA results, rollout steps, or release notes not supported by the available artifacts.

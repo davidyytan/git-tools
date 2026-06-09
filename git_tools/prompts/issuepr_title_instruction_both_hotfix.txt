@@ -1,0 +1,8 @@
+Title guidance:
+- For Issue output, keep `## Title:` short, descriptive, and human-readable.
+- For Pull Request output, the title is fixed.
+- Use exactly `## Title: {fixed_title}` for the Pull Request title.
+- Do not generate an alternative Pull Request title.
+- Good PR title examples: `Hotfix 1.0.1`, `Hotfix 1.6.1`, `Hotfix 2.0.1`.
+- In the PR body, frame the PR as a hotfix promotion and summarize the included changes from the provided commits, diffs, and context.
+- Do not invent QA results, rollout steps, or release notes not supported by the available artifacts.

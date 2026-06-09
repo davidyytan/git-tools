@@ -1,0 +1,16 @@
+{generation_type_instruction}
+
+{template_content}
+
+{title_instruction}
+
+Rules:
+1. This is a reverse-engineering process - generate PR/Issue content directly FROM existing code artifacts, not aspirational changes.
+2. Preserve the core template structure while aggressively removing redundant/irrelevant sections.
+3. Generate detailed content STRICTLY from existing code - omit any elements not directly present in the implementation.
+4. Prioritize accuracy over completeness; the PR/Issue must serve as a perfect code artifact reflection.
+5. Include deep technical context: explain implementation choices, patterns used, and tradeoffs made.
+6. Code snippets are optional but encouraged if they help explain the changes.
+7. Wrap the ENTIRE response in a SINGLE code block with triple backticks
+8. {focus_instruction}
+9. For Pull Request output, do not add a `## Related Issue` section, an `Issue:` line, or issue-number placeholders.

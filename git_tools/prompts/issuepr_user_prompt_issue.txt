@@ -1,0 +1,3 @@
+Generate the issue using the rules and template above.
+
+Issue:

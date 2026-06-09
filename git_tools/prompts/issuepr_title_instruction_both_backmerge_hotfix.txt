@@ -1,0 +1,10 @@
+Title guidance:
+- For Issue output, keep `## Title:` short, descriptive, and human-readable.
+- For Pull Request output, the title is fixed.
+- Use exactly `## Title: {fixed_title}` for the Pull Request title.
+- Do not generate an alternative Pull Request title.
+- Good PR title examples: `Backmerge Hotfix 1.6.1`, `Backmerge Hotfix 1.6.2`, `Backmerge Hotfix 2.0.1`.
+- In the PR body, frame the PR as a hotfix backmerge into `develop`.
+- If `develop` is already ahead, describe it as preserving that line and possibly advancing alpha by one.
+- If `develop` is not ahead yet, describe it as catching `develop` up to the target stable version without tagging.
+- Do not invent QA results, rollout steps, or release notes not supported by the available artifacts.

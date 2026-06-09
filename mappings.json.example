@@ -1,0 +1,56 @@
+{
+    "providers": {
+        "openrouter": {
+            "api_key_env": "OPENROUTER_API_KEY",
+            "models": {
+                "anthropic/claude-sonnet-4.6": {
+                    "model_name": "anthropic/claude-sonnet-4.6",
+                    "data_collection": "deny",
+                    "provider_config": {
+                        "quantizations": [],
+                        "order": [],
+                        "sort": ""
+                    }
+                },
+                "qwen/qwen3.5-397b-a17b": {
+                    "model_name": "qwen/qwen3.5-397b-a17b",
+                    "data_collection": "deny",
+                    "provider_config": {
+                        "quantizations": [],
+                        "order": [],
+                        "sort": ""
+                    }
+                },
+                "deepseek/deepseek-v3.2": {
+                    "model_name": "deepseek/deepseek-v3.2",
+                    "data_collection": "deny",
+                    "provider_config": {
+                        "quantizations": [],
+                        "order": [],
+                        "sort": ""
+                    }
+                },
+                "moonshotai/kimi-k2.5": {
+                    "model_name": "moonshotai/kimi-k2.5",
+                    "data_collection": "deny",
+                    "provider_config": {
+                        "quantizations": [],
+                        "order": [],
+                        "sort": ""
+                    }
+                }
+            },
+            "config_class": "OpenRouterConfig"
+        },
+        "kimicli": {
+            "api_key_env": "MOONSHOT_API_KEY",
+            "api_key_env_fallback": "KIMICLI_API_KEY",
+            "models": {
+                "kimi-k2.5": {
+                    "model_name": "kimi-k2.5"
+                }
+            },
+            "config_class": "KimiCLIConfig"
+        }
+    }
+}

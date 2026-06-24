@@ -36,8 +36,8 @@ git-tools init
 
 Configuration and local state live here:
 
-- `~/.config/git-tools/config.env`
-  Written by `git-tools config`. Stores user-level provider, API key, and default overrides.
+- `~/.git-tools/config.env`
+  Written by `git-tools config`. Stores user-level provider, API key, and default overrides. Delete `~/.git-tools/` to reset all user config from scratch.
 - `./git-tools.env`
   Optional repo-local env override file for the current working directory.
 - `./mappings.json`
@@ -51,7 +51,7 @@ Run the config command to configure the provider, API key, and model defaults:
 git-tools config
 ```
 
-This saves settings to `~/.config/git-tools/config.env`.
+This saves settings to `~/.git-tools/config.env`.
 
 Alternatively, copy the example env file and choose a provider:
 
@@ -63,6 +63,7 @@ Supported providers:
 
 - `openrouter` with `OPENROUTER_API_KEY`
 - `kimicli` with `MOONSHOT_API_KEY`
+- `cliproxyapi` with `CLIPROXYAPI_API_KEY` (local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.5` at `xhigh` reasoning)
 
 The active provider is selected with `GIT_TOOLS_PROVIDER`.
 
@@ -73,6 +74,14 @@ export GIT_TOOLS_PROVIDER="kimicli"
 export MOONSHOT_API_KEY="your-kimi-api-key"
 ```
 
+For a local CLIProxyAPI proxy (Codex/GPT-5), point at the proxy and use its client key. The default model is `gpt-5.5` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` if desired:
+
+```bash
+export GIT_TOOLS_PROVIDER="cliproxyapi"
+export CLIPROXYAPI_API_KEY="cliproxyapi"
+export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
+```
+
 Provider and model defaults come from `mappings.json` when present, otherwise from `mappings.json.example`.
 
 If you want repo-local provider/model defaults, copy and edit `mappings.json`:
@@ -81,7 +90,7 @@ If you want repo-local provider/model defaults, copy and edit `mappings.json`:
 cp mappings.json.example mappings.json
 ```
 
-`git-tools config` does not edit `mappings.json`; it only writes user overrides to `~/.config/git-tools/config.env`.
+`git-tools config` does not edit `mappings.json`; it only writes user overrides to `~/.git-tools/config.env`.
 
 For release workflow and branch policy details, see [GitHub Setup](docs/github-setup.md), [Git Flow Guide](docs/git-flow-guide.md), [Classic Flow](docs/git-flow-classic.md), [Classic — Reviewed](docs/git-flow-classic-reviewed.md), [Variant — Release-led](docs/git-flow-variant-release-led.md), and [Variant — Reviewed](docs/git-flow-variant-reviewed.md).
 

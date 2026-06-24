@@ -293,7 +293,7 @@ $ git-tools issue
   API Key: configured
   Model: moonshotai/kimi-k2-thinking
   Temperature: 0.2
-  Max Tokens: 8000
+  Max Tokens: 32000
   Max Retries: 1
 › Done
 ❯ Temperature                       <- User selects temperature

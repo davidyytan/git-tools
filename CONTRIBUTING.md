@@ -38,7 +38,7 @@ If you want local repo-specific defaults:
 cp mappings.json.example mappings.json
 ```
 
-`git-tools config` writes user overrides to `~/.config/git-tools/config.env`. It does not edit `mappings.json`.
+`git-tools config` writes user overrides to `~/.git-tools/config.env`. It does not edit `mappings.json`.
 
 ## Branch and PR Flow
 

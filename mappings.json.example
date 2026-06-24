@@ -12,26 +12,8 @@
                         "sort": ""
                     }
                 },
-                "qwen/qwen3.5-397b-a17b": {
-                    "model_name": "qwen/qwen3.5-397b-a17b",
-                    "data_collection": "deny",
-                    "provider_config": {
-                        "quantizations": [],
-                        "order": [],
-                        "sort": ""
-                    }
-                },
-                "deepseek/deepseek-v3.2": {
-                    "model_name": "deepseek/deepseek-v3.2",
-                    "data_collection": "deny",
-                    "provider_config": {
-                        "quantizations": [],
-                        "order": [],
-                        "sort": ""
-                    }
-                },
-                "moonshotai/kimi-k2.5": {
-                    "model_name": "moonshotai/kimi-k2.5",
+                "z-ai/glm-5.2": {
+                    "model_name": "z-ai/glm-5.2",
                     "data_collection": "deny",
                     "provider_config": {
                         "quantizations": [],
@@ -51,6 +33,24 @@
                 }
             },
             "config_class": "KimiCLIConfig"
+        },
+        "cliproxyapi": {
+            "api_key_env": "CLIPROXYAPI_API_KEY",
+            "models": {
+                "gpt-5.5": {
+                    "model_name": "gpt-5.5",
+                    "reasoning_effort": "xhigh"
+                },
+                "gpt-5.4-codex": {
+                    "model_name": "gpt-5.4-codex",
+                    "reasoning_effort": "xhigh"
+                },
+                "gpt-5.3-codex": {
+                    "model_name": "gpt-5.3-codex",
+                    "reasoning_effort": "xhigh"
+                }
+            },
+            "config_class": "CLIProxyAPIConfig"
         }
     }
 }

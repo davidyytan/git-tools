@@ -16,10 +16,11 @@ from pydantic_settings import BaseSettings
 from .mappings import PROVIDERS
 
 # Whitelist of allowed configuration classes for security
-ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig"}
+ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig"}
 
-# Default config file location (XDG standard)
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "git-tools" / "config.env"
+# Default config file location. A single self-contained ~/.git-tools/ folder so a
+# full reset is just `rm -rf ~/.git-tools`.
+DEFAULT_CONFIG_PATH = Path.home() / ".git-tools" / "config.env"
 
 
 def _get_env_file_paths() -> list[Path]:
@@ -27,7 +28,7 @@ def _get_env_file_paths() -> list[Path]:
 
     Search order (last found wins in pydantic-settings):
     1. {cwd}/git-tools.env (local development, lowest priority)
-    2. ~/.config/git-tools/config.env (XDG standard, highest priority)
+    2. ~/.git-tools/config.env (user-global, highest priority)
 
     Environment variables (e.g., OPENROUTER_API_KEY) always take precedence.
 
@@ -36,7 +37,7 @@ def _get_env_file_paths() -> list[Path]:
     """
     return [
         Path.cwd() / "git-tools.env",
-        Path.home() / ".config" / "git-tools" / "config.env",
+        Path.home() / ".git-tools" / "config.env",
     ]
 
 
@@ -65,6 +66,7 @@ def _get_provider_label(provider: str) -> str:
     labels = {
         "openrouter": "OpenRouter",
         "kimicli": "Kimi CLI",
+        "cliproxyapi": "CLIProxyAPI",
     }
     return labels.get(provider.lower(), provider.title())
 
@@ -177,8 +179,12 @@ class GitToolsSettings(BaseSettings):
         validation_alias=AliasChoices("GIT_TOOLS_PROVIDER", "GIT_TOOLS_DEFAULT_PROVIDER"),
     )
     default_model: Optional[str] = Field(default=None)
+    default_reasoning_effort: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("GIT_TOOLS_REASONING_EFFORT"),
+    )
     default_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    default_max_tokens: int = Field(default=8000, ge=1)
+    default_max_tokens: int = Field(default=32000, ge=1)
     default_max_retries: int = Field(default=1, ge=0)
     default_retry_delay: float = Field(default=1.0, ge=0.0)
 
@@ -216,7 +222,7 @@ class GitToolsSettings(BaseSettings):
                 "default_token_limit": 200000,
                 "default_issue_pr_token_limit": 200000,
                 "large_diff_threshold": 5000,
-                "default_max_tokens": 8000,
+                "default_max_tokens": 32000,
                 "default_max_retries": 1,
                 "min_file_token_threshold": 1000,
                 "console_width_offset": -2,
@@ -262,6 +268,14 @@ class GitToolsSettings(BaseSettings):
         if v == "":
             return None
         return v
+
+    @field_validator("default_reasoning_effort", mode="before")
+    @classmethod
+    def normalize_reasoning_effort(cls, v: Any) -> Any:
+        """Treat empty strings as unset and normalize casing (e.g. 'xhigh')."""
+        if v is None or v == "":
+            return None
+        return str(v).strip().lower() or None
 
     @property
     def default_temperature_range(self) -> Tuple[float, float]:
@@ -345,6 +359,31 @@ class KimiCLIConfig(BaseLLMConfig):
     base_url: Optional[str] = Field(
         default="https://api.kimi.com/coding/v1",
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "KIMICLI_BASE_URL"),
+    )
+
+    class Config:
+        env_file = _get_env_file_paths()
+        extra = "ignore"
+
+
+class CLIProxyAPIConfig(BaseLLMConfig):
+    """Configuration for the CLIProxyAPI OpenAI-compatible endpoint.
+
+    CLIProxyAPI (https://github.com/router-for-me/CLIProxyAPI) exposes a local
+    OpenAI-compatible proxy in front of CLI-authenticated models such as the
+    Codex/GPT-5 family. Because git-tools runs on the host, the default base URL
+    points at localhost; override it with GIT_TOOLS_API_BASE if the proxy lives
+    elsewhere (e.g. http://host.docker.internal:8317/v1 from inside a container).
+    """
+
+    api_key: str = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("CLIPROXYAPI_API_KEY"),
+    )
+    base_url: Optional[str] = Field(
+        default="http://localhost:8317/v1",
+        validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "CLIPROXYAPI_BASE_URL"),
     )
 
     class Config:

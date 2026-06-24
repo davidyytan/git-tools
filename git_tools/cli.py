@@ -644,7 +644,7 @@ def init_command(
 def config() -> None:
     """Configure git-tools settings interactively.
 
-    Settings will be saved to ~/.config/git-tools/config.env
+    Settings will be saved to ~/.git-tools/config.env
     """
     from .config.config import (
         check_api_key_configured, setup_api_key, save_setting,
@@ -672,7 +672,7 @@ def config() -> None:
     DEFAULTS = {
         "provider": "openrouter",
         "temperature": 0.2,
-        "max_tokens": 8000,
+        "max_tokens": 32000,
         "max_retries": 1,
     }
 

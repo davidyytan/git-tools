@@ -9,6 +9,7 @@ import logging
 import re
 import subprocess
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import questionary
@@ -81,6 +82,11 @@ TYPER_STYLE = Style([
 ])
 
 # Note: Logging is configured in main.py at application startup
+
+# Stable per-process session id for CLIProxyAPI prompt-cache affinity. CLIProxyAPI
+# keys reasoning/cache continuity off the Session_id header, so one id per run keeps
+# a single git-tools invocation on the same upstream session.
+_CLIPROXY_SESSION_ID = f"git-tools-{uuid.uuid4().hex[:16]}"
 
 # Initialize tiktoken encoder once at module level
 _ENCODER = tiktoken.get_encoding("cl100k_base")
@@ -323,6 +329,7 @@ class BaseGenerator:
         provider_label = {
             "openrouter": "OpenRouter",
             "kimicli": "Kimi CLI",
+            "cliproxyapi": "CLIProxyAPI",
         }.get(provider.lower(), provider)
         if self.prompt_confirm(f"Set up your {provider_label} API key now?", default=True):
             from git_tools.config.config import DEFAULT_CONFIG_PATH
@@ -550,6 +557,10 @@ class BaseGenerator:
                 self.chatclient = self._create_kimicli_client(
                     model_to_use, provider_config, temperature, max_tokens
                 )
+            elif provider == "cliproxyapi":
+                self.chatclient = self._create_cliproxy_client(
+                    model_to_use, provider_config, temperature, max_tokens
+                )
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
 
@@ -630,6 +641,79 @@ class BaseGenerator:
         }
 
         self._add_optional_params(kwargs, temperature, max_tokens)
+        return ChatOpenAI(**kwargs)
+
+    def _get_model_config(
+        self, provider: str, model_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return the mappings.json model entry whose model_name matches.
+
+        Used to read per-model knobs (e.g. OpenRouter provider routing or the
+        CLIProxyAPI reasoning_effort default) for a resolved model name.
+        """
+        models = PROVIDERS.get(provider, {}).get("models", {})
+        for model_data in models.values():
+            if model_data.get("model_name") == model_name:
+                return model_data
+        return None
+
+    def _resolve_reasoning_effort(
+        self, model_config: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Resolve reasoning effort: env/settings override > per-model default.
+
+        ``GIT_TOOLS_REASONING_EFFORT`` (via ``settings.default_reasoning_effort``)
+        wins when set; otherwise the model's ``reasoning_effort`` from mappings.json
+        applies (e.g. gpt-5.5 defaults to ``xhigh``).
+        """
+        if settings.default_reasoning_effort:
+            return settings.default_reasoning_effort.strip().lower() or None
+        if model_config and model_config.get("reasoning_effort"):
+            return str(model_config["reasoning_effort"]).strip().lower() or None
+        return None
+
+    def _create_cliproxy_client(
+        self,
+        model_to_use: str,
+        provider_config: Any,
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+    ):
+        """Create ChatOpenAI client for the CLIProxyAPI endpoint.
+
+        CLIProxyAPI fronts CLI-authenticated Codex/GPT-5 models. Those reasoning
+        models reject a custom ``temperature`` (only the server default is valid),
+        so it is omitted for the gpt-5 family. The completion cap covers reasoning
+        + visible tokens together, so it relies on the global ``default_max_tokens``
+        (32k) being large enough to leave room for the answer. A stable
+        ``Session_id`` header keeps the run on one upstream session, and
+        ``reasoning_effort`` (default ``xhigh`` for gpt-5.5) is forwarded when set.
+        """
+        from langchain_openai import ChatOpenAI
+
+        model_config = self._get_model_config("cliproxyapi", model_to_use)
+
+        kwargs: Dict[str, Any] = {
+            "model": model_to_use,
+            "api_key": provider_config.api_key,
+            "base_url": provider_config.base_url,
+            "default_headers": {"Session_id": _CLIPROXY_SESSION_ID},
+            "max_tokens": max_tokens if max_tokens is not None else settings.default_max_tokens,
+            "max_retries": settings.default_max_retries,
+        }
+
+        # gpt-5 / Codex reasoning models reject a custom temperature; omit it so the
+        # server default applies. Non-reasoning models keep the configured value.
+        is_reasoning_model = str(model_to_use).strip().lower().startswith("gpt-5")
+        if not is_reasoning_model:
+            kwargs["temperature"] = (
+                temperature if temperature is not None else settings.default_temperature
+            )
+
+        reasoning_effort = self._resolve_reasoning_effort(model_config)
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
         return ChatOpenAI(**kwargs)
 
     def get_staged_diff(self) -> Optional[str]:

@@ -128,13 +128,13 @@ def _get_openrouter_extra_body(
 ) -> Dict[str, Any]:
     """Return model-specific extra_body for OpenRouter.
 
-    Reads provider configuration from mappings.json if available, otherwise
-    falls back to the provided base_extra_body.
+    Reads provider configuration from the model's provider definition if
+    available, otherwise falls back to the provided base_extra_body.
 
     Args:
         model_name: The model name/identifier
         base_extra_body: Default extra_body configuration
-        model_config: Optional model configuration from mappings.json
+        model_config: Optional per-model config from the PROVIDERS map
 
     Returns:
         Dict with provider routing configuration
@@ -370,7 +370,7 @@ class BaseGenerator:
         elif self._interactive:
             selected_model = self._interactive_model_selection(models)
         else:
-            selected_model = self._get_default_model(models)
+            selected_model = self._get_default_model(models, provider)
 
         # Temperature: CLI param > interactive prompt > settings default
         if self._cli_temperature is not None:
@@ -390,7 +390,7 @@ class BaseGenerator:
 
         return selected_model, temperature, max_tokens
 
-    def _get_default_model(self, models: Dict[str, Any]) -> str:
+    def _get_default_model(self, models: Dict[str, Any], provider: str = "") -> str:
         """Get the default model - from settings first, then first available."""
         # Check if settings default_model exists in available models
         if settings.default_model:
@@ -401,6 +401,9 @@ class BaseGenerator:
             for model_data in models.values():
                 if model_data["model_name"] == settings.default_model:
                     return settings.default_model
+            # OpenRouter is open-ended: trust any configured slug as-is.
+            if normalize_provider_name(provider) == "openrouter":
+                return settings.default_model
         # Fallback to first model
         return list(models.values())[0]["model_name"]
 
@@ -649,7 +652,7 @@ class BaseGenerator:
     def _get_model_config(
         self, provider: str, model_name: str
     ) -> Optional[Dict[str, Any]]:
-        """Return the mappings.json model entry whose model_name matches.
+        """Return the PROVIDERS model entry whose model_name matches.
 
         Used to read per-model knobs (e.g. OpenRouter provider routing or the
         CLIProxyAPI reasoning_effort default) for a resolved model name.
@@ -666,8 +669,9 @@ class BaseGenerator:
         """Resolve reasoning effort: env/settings override > per-model default.
 
         ``GIT_TOOLS_REASONING_EFFORT`` (via ``settings.default_reasoning_effort``)
-        wins for models that declare ``reasoning_effort`` in mappings.json; otherwise
-        the model's per-model default applies (e.g. gpt-5.5 defaults to ``xhigh``).
+        wins for models that declare ``reasoning_effort`` in their provider
+        definition; otherwise the model's per-model default applies (e.g. gpt-5.5
+        defaults to ``xhigh``).
         """
         if not model_config or not model_config.get("reasoning_effort"):
             return None

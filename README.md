@@ -38,10 +38,10 @@ Configuration and local state live here:
 
 - `~/.git-tools/config.env`
   Written by `git-tools config`. Stores user-level provider, API key, and default overrides. Delete `~/.git-tools/` to reset all user config from scratch.
+- `~/.git-tools/models.json`
+  Written by `git-tools config` when you add a custom OpenRouter model. Holds your saved OpenRouter model slugs so they reappear in the picker. Created at runtime; never committed.
 - `./git-tools.env`
   Optional repo-local env override file for the current working directory.
-- `./mappings.json`
-  Optional repo-local provider/model default map. If absent, `git-tools` falls back to `mappings.json.example`.
 
 ## Configuration
 
@@ -63,7 +63,7 @@ Supported providers:
 
 - `openrouter` with `OPENROUTER_API_KEY`
 - `kimicli` with `KIMICODE_API_KEY`
-- `cliproxyapi` with `CLIPROXYAPI_API_KEY` (local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.5` at `xhigh` reasoning)
+- `cliproxyapi` — local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.5` at `xhigh` reasoning. `CLIPROXYAPI_API_KEY` is optional (defaults to the `cliproxyapi` placeholder the proxy ships with); set it only if your proxy uses a different key.
 
 The active provider is selected with `GIT_TOOLS_PROVIDER`.
 
@@ -74,23 +74,19 @@ export GIT_TOOLS_PROVIDER="kimicli"
 export KIMICODE_API_KEY="your-kimi-api-key"
 ```
 
-For a local CLIProxyAPI proxy (Codex/GPT-5), point at the proxy and use its client key. The default model is `gpt-5.5` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` for effort-capable models if desired:
+For a local CLIProxyAPI proxy (Codex/GPT-5), just point at the proxy — the client key defaults to `cliproxyapi`, so you only need to select the provider. The default model is `gpt-5.5` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` for effort-capable models if desired:
 
 ```bash
 export GIT_TOOLS_PROVIDER="cliproxyapi"
-export CLIPROXYAPI_API_KEY="cliproxyapi"
 export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
+# export CLIPROXYAPI_API_KEY="my-key"   # only if your proxy uses a non-default key
 ```
 
-Provider and model defaults come from `mappings.json` when present, otherwise from `mappings.json.example`.
+Provider metadata and the curated model lists for `kimicli` and `cliproxyapi` are defined in code (`git_tools/config/mappings.py`); there is no `mappings.json` to copy or maintain.
 
-If you want repo-local provider/model defaults, copy and edit `mappings.json`:
+OpenRouter is open-ended: run `git-tools config`, choose **Model → Enter a new model…**, and type any slug (for example `z-ai/glm-5.2`). Custom slugs are saved to `~/.git-tools/models.json` so they show up in the picker next time. When nothing is configured, OpenRouter defaults to `anthropic/claude-sonnet-4.6`. You can also set a model directly with `--model <slug>` or `GIT_TOOLS_DEFAULT_MODEL`.
 
-```bash
-cp mappings.json.example mappings.json
-```
-
-`git-tools config` does not edit `mappings.json`; it only writes user overrides to `~/.git-tools/config.env`.
+`git-tools config` writes provider, model, and default overrides to `~/.git-tools/config.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
 
 For release workflow and branch policy details, see [GitHub Setup](docs/github-setup.md), [Git Flow Guide](docs/git-flow-guide.md), [Classic Flow](docs/git-flow-classic.md), [Classic — Reviewed](docs/git-flow-classic-reviewed.md), [Variant — Release-led](docs/git-flow-variant-release-led.md), and [Variant — Reviewed](docs/git-flow-variant-reviewed.md).
 
@@ -281,7 +277,7 @@ git-tools
 | `--defaults` | | Write config using detected defaults without prompting |
 | `--force` | | Update an existing Commitizen config in place |
 
-Model routing is configurable through `mappings.json`.
+Provider metadata and model lists are defined in `git_tools/config/mappings.py`. OpenRouter models are open-ended and managed via `git-tools config` (saved to `~/.git-tools/models.json`).
 
 ## Useful Git Commands
 

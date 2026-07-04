@@ -18,13 +18,19 @@ from .mappings import PROVIDERS
 # Whitelist of allowed configuration classes for security
 ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig"}
 
+# Providers whose API key is a fixed placeholder rather than a secret (local
+# proxies). git-tools defaults these so the user need not set them: CLIProxyAPI
+# ships with the client key "cliproxyapi". An explicit env/config value still
+# overrides the default when the proxy is configured with a different key.
+PROVIDER_DEFAULT_API_KEYS = {"cliproxyapi": "cliproxyapi"}
+
 # Default config file location. A single self-contained ~/.git-tools/ folder so a
 # full reset is just `rm -rf ~/.git-tools`.
 DEFAULT_CONFIG_PATH = Path.home() / ".git-tools" / "config.env"
 
 
 def normalize_provider_name(provider: str) -> str:
-    """Return the canonical provider key used by mappings.json."""
+    """Return the canonical provider key used by the PROVIDERS map."""
     return str(provider).strip().lower()
 
 
@@ -98,6 +104,11 @@ def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | 
                         return True, match.group(1).strip()
                 except OSError:
                     continue
+
+    # Local-proxy providers ship a usable default key, so treat them as
+    # configured even when nothing is set explicitly.
+    if default_key := PROVIDER_DEFAULT_API_KEYS.get(normalize_provider_name(provider)):
+        return True, default_key
 
     return False, None
 
@@ -374,10 +385,14 @@ class CLIProxyAPIConfig(BaseLLMConfig):
     Codex/GPT-5 family. Because git-tools runs on the host, the default base URL
     points at localhost; override it with GIT_TOOLS_API_BASE if the proxy lives
     elsewhere (e.g. http://host.docker.internal:8317/v1 from inside a container).
+
+    The client key defaults to the ``cliproxyapi`` placeholder the proxy ships
+    with, so it need not be set; override CLIPROXYAPI_API_KEY only if the proxy
+    was configured with a different key.
     """
 
     api_key: str = Field(
-        ...,
+        default=PROVIDER_DEFAULT_API_KEYS["cliproxyapi"],
         min_length=1,
         validation_alias="CLIPROXYAPI_API_KEY",
     )

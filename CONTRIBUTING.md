@@ -30,15 +30,9 @@ or:
 cp git-tools.env.example git-tools.env
 ```
 
-Provider and model defaults come from `mappings.json` when present, otherwise `mappings.json.example`.
+Provider metadata and model lists are defined in code (`git_tools/config/mappings.py`); there is no `mappings.json` to copy. OpenRouter is open-ended — add model slugs via `git-tools config` (saved to `~/.git-tools/models.json`) and it defaults to `anthropic/claude-sonnet-4.6`. `kimicli` and `cliproxyapi` keep fixed curated model lists.
 
-If you want local repo-specific defaults:
-
-```bash
-cp mappings.json.example mappings.json
-```
-
-`git-tools config` writes user overrides to `~/.git-tools/config.env`. It does not edit `mappings.json`.
+`git-tools config` writes user overrides to `~/.git-tools/config.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
 
 ## Branch and PR Flow
 
@@ -148,7 +142,7 @@ If you change provider configuration, prompt files, or workflow examples, also c
 When you change one of these areas, update the others in the same PR when needed:
 
 - provider config in `git_tools/config/`
-- provider defaults in `mappings.json.example`
+- provider and model definitions in `git_tools/config/mappings.py`
 - user-facing env examples in `git-tools.env.example`
 - prompt files in `git_tools/prompts/`
 - workflow examples in `.github/workflows/`

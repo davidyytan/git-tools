@@ -15,7 +15,7 @@ import typer.rich_utils
 from questionary import Choice
 from rich.console import Console
 from git_tools.config.config import normalize_provider_name, settings
-from git_tools.config.mappings import PROVIDERS
+from git_tools.config.mappings import PROVIDERS, add_user_openrouter_model
 from git_tools.generators.base import TYPER_STYLE, console, warning, error
 
 # Override Typer's console with configurable width offset for terminal border wrapping
@@ -80,6 +80,13 @@ def _has_interactive_terminal() -> bool:
 
 REASONING_EFFORT_CHOICES = ("xhigh", "high", "medium", "low")
 
+# Providers with an open-ended catalogue: the model picker offers free-text
+# entry instead of restricting the user to a fixed list.
+OPEN_MODEL_PROVIDERS = ("openrouter",)
+
+# Sentinel Choice value that triggers free-text model entry in the config menu.
+ADD_MODEL_SENTINEL = "__git_tools_add_model__"
+
 
 def _provider_default_model(provider: str) -> str:
     """Return the first configured model name for a provider."""
@@ -108,13 +115,17 @@ def _find_model_config(provider: str, model: str | None) -> dict[str, Any] | Non
 def _resolve_current_model(provider: str, configured_model: str | None) -> str:
     """Return a provider-valid model name, falling back to the provider default."""
     provider = normalize_provider_name(provider)
-    provider_model_names = [
-        model["model_name"] for model in PROVIDERS[provider]["models"].values()
-    ]
-    if configured_model in provider_model_names:
-        return configured_model
-    if configured_model in PROVIDERS[provider]["models"]:
-        return PROVIDERS[provider]["models"][configured_model]["model_name"]
+    if configured_model:
+        # Open-ended providers (OpenRouter) honor any configured slug as-is.
+        if provider in OPEN_MODEL_PROVIDERS:
+            return configured_model
+        provider_model_names = [
+            model["model_name"] for model in PROVIDERS[provider]["models"].values()
+        ]
+        if configured_model in provider_model_names:
+            return configured_model
+        if configured_model in PROVIDERS[provider]["models"]:
+            return PROVIDERS[provider]["models"][configured_model]["model_name"]
     return _provider_default_model(provider)
 
 
@@ -161,12 +172,19 @@ def _format_model_display(provider: str, model: str | None) -> str:
 
 
 def _build_model_choices(provider: str) -> list[Choice]:
-    """Build model choices with per-model effort visible when present."""
+    """Build model choices with per-model effort visible when present.
+
+    Open-ended providers (OpenRouter) also get an "enter a new model" option so
+    users can type any slug rather than pick from a fixed list.
+    """
     provider = normalize_provider_name(provider)
-    return [
+    choices = [
         Choice(_format_model_choice(model_config), value=model_config["model_name"])
         for model_config in PROVIDERS[provider]["models"].values()
     ]
+    if provider in OPEN_MODEL_PROVIDERS:
+        choices.append(Choice("Enter a new model…", value=ADD_MODEL_SENTINEL))
+    return choices
 
 
 def _build_effort_choices(
@@ -887,6 +905,16 @@ def config() -> None:
                     pointer="›",
                     instruction="",
                 ).ask()
+                if model_choice == ADD_MODEL_SENTINEL:
+                    new_model = questionary.text(
+                        "Enter model slug (e.g. anthropic/claude-sonnet-4.6):",
+                        style=TYPER_STYLE,
+                        qmark="❯",
+                        instruction="",
+                    ).ask()
+                    model_choice = new_model.strip() if new_model and new_model.strip() else None
+                    if model_choice:
+                        add_user_openrouter_model(model_choice)
                 if model_choice:
                     save_setting("GIT_TOOLS_DEFAULT_MODEL", model_choice)
                     current["model"] = model_choice

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from git_tools.config.mappings import PROVIDERS
@@ -21,6 +24,38 @@ class ProviderConfigTests(unittest.TestCase):
             PROVIDERS["cliproxyapi"]["api_key_env"],
             "CLIPROXYAPI_API_KEY",
         )
+
+    def test_openrouter_defaults_to_claude_sonnet(self) -> None:
+        from git_tools.config.mappings import DEFAULT_OPENROUTER_MODEL
+
+        self.assertEqual(DEFAULT_OPENROUTER_MODEL, "anthropic/claude-sonnet-4.6")
+        models = PROVIDERS["openrouter"]["models"]
+        # The default is the first (and, out of the box, only) OpenRouter model.
+        first = next(iter(models.values()))
+        self.assertEqual(first["model_name"], "anthropic/claude-sonnet-4.6")
+
+    def test_add_user_openrouter_model_persists_and_merges(self) -> None:
+        from git_tools.config import mappings as mappings_module
+
+        slug = "vendor/test-model-x"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "models.json"
+            with patch.object(mappings_module, "USER_MODELS_PATH", path):
+                try:
+                    # First insert is new and written to disk under "openrouter".
+                    self.assertTrue(mappings_module.add_user_openrouter_model(slug))
+                    saved = json.loads(path.read_text())
+                    self.assertIn(slug, saved["openrouter"])
+                    # A duplicate is a no-op that reports False.
+                    self.assertFalse(mappings_module.add_user_openrouter_model(slug))
+                    # Blank input is rejected.
+                    self.assertFalse(mappings_module.add_user_openrouter_model("  "))
+                    # It is mirrored into the live PROVIDERS map with a deny default.
+                    entry = mappings_module.PROVIDERS["openrouter"]["models"][slug]
+                    self.assertEqual(entry["model_name"], slug)
+                    self.assertEqual(entry["data_collection"], "deny")
+                finally:
+                    mappings_module.PROVIDERS["openrouter"]["models"].pop(slug, None)
 
     def test_provider_api_key_env_must_be_declared(self) -> None:
         from git_tools.config import config as config_module
@@ -89,6 +124,34 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(config.api_key, "cliproxyapi")
         self.assertEqual(config.base_url, "http://localhost:8317/v1")
 
+    def test_cliproxyapi_api_key_defaults_without_env(self) -> None:
+        # The CLIProxyAPI client key is a fixed placeholder, so it need not be set.
+        from git_tools.config import config as config_module
+
+        self.assertEqual(
+            CLIProxyAPIConfig.model_fields["api_key"].default, "cliproxyapi"
+        )
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CLIPROXYAPI_API_KEY", None)
+            with patch.object(config_module, "_get_env_file_paths", return_value=[]):
+                configured, value = config_module.check_api_key_configured("cliproxyapi")
+
+        self.assertTrue(configured)
+        self.assertEqual(value, "cliproxyapi")
+
+    def test_openrouter_api_key_not_defaulted(self) -> None:
+        # Only local-proxy providers get a default key; OpenRouter still requires one.
+        from git_tools.config import config as config_module
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            with patch.object(config_module, "_get_env_file_paths", return_value=[]):
+                configured, value = config_module.check_api_key_configured("openrouter")
+
+        self.assertFalse(configured)
+        self.assertIsNone(value)
+
     def test_create_cliproxy_client_sets_session_header_and_reasoning_effort(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = CLIProxyAPIConfig(CLIPROXYAPI_API_KEY="cliproxyapi")
@@ -111,13 +174,13 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertNotIn("temperature", kwargs)
         # The completion cap is forwarded (relies on the 32k global default for headroom).
         self.assertEqual(kwargs["max_tokens"], 8000)
-        # gpt-5.5 carries reasoning_effort=xhigh in mappings.json.
+        # gpt-5.5 carries reasoning_effort=xhigh in its provider definition.
         self.assertEqual(kwargs["reasoning_effort"], "xhigh")
 
     def test_cliproxy_client_override_beats_per_model_reasoning_effort(self) -> None:
         # settings is a singleton loaded at import; patch the resolved value to
         # emulate GIT_TOOLS_REASONING_EFFORT being set, and confirm it wins over
-        # the per-model xhigh default from mappings.json.
+        # the per-model xhigh default from the provider definition.
         from git_tools.config import config as config_module
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)

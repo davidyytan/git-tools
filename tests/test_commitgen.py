@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from git_tools.generators.commitgen import CommitGenerator
+from git_tools.generators.commitgen import CommitGenerator, SensitiveFileMatch
 
 
 class CommitGeneratorTests(unittest.TestCase):
@@ -50,6 +50,56 @@ class CommitGeneratorTests(unittest.TestCase):
 
         self.assertFalse(allowed)
         confirm_mock.assert_not_called()
+
+    def test_noninteractive_sensitive_files_explain_detection_reason(self) -> None:
+        generator = CommitGenerator(interactive=False)
+        sensitive_match = SensitiveFileMatch(
+            path=".env",
+            pattern=".env",
+            reason="environment/configuration file",
+        )
+
+        with (
+            patch.object(
+                generator,
+                "_detect_sensitive_files",
+                return_value=[sensitive_match],
+            ),
+            patch.object(generator, "_confirm_commit_sensitive_files") as confirm_mock,
+            patch("git_tools.generators.commitgen.error") as error_mock,
+        ):
+            allowed = generator._check_sensitive_files()
+
+        self.assertFalse(allowed)
+        confirm_mock.assert_not_called()
+        error_mock.assert_called_once()
+        message = error_mock.call_args.args[0]
+        self.assertIn(".env", message)
+        self.assertIn("environment/configuration file", message)
+        self.assertIn("matched pattern: .env", message)
+
+    def test_detect_sensitive_files_returns_match_reasons(self) -> None:
+        generator = CommitGenerator(interactive=False)
+
+        with patch.object(
+            generator,
+            "_get_staged_files",
+            return_value=["src/.env.local", "README.md", "certs/client.pem"],
+        ):
+            matches = generator._detect_sensitive_files()
+
+        self.assertEqual(
+            [match.path for match in matches],
+            ["src/.env.local", "certs/client.pem"],
+        )
+        self.assertEqual([match.pattern for match in matches], [".env.*", "*.pem"])
+        self.assertEqual(
+            [match.reason for match in matches],
+            [
+                "environment/configuration file",
+                "private key, SSH key, or certificate file",
+            ],
+        )
 
     def test_noninteractive_commit_defaults_to_direct_commit(self) -> None:
         generator = CommitGenerator(interactive=False)

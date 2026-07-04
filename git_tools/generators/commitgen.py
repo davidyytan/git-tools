@@ -8,6 +8,7 @@ import fnmatch
 import logging
 import re
 import subprocess
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from rich.markup import escape
@@ -21,6 +22,15 @@ from .base import (
 logger = logging.getLogger(__name__)
 WORKFLOW_KIND_NORMAL = "normal"
 WORKFLOW_KIND_OPEN_RELEASE = "open-release"
+
+
+@dataclass(frozen=True)
+class SensitiveFileMatch:
+    """A staged file that matched a sensitive filename/path rule."""
+
+    path: str
+    pattern: str
+    reason: str
 
 
 class CommitGenerator(BaseGenerator):
@@ -119,14 +129,14 @@ class CommitGenerator(BaseGenerator):
             self.logger.error(f"Failed to get staged files: {e}")
             return []
 
-    def _detect_sensitive_files(self) -> List[str]:
+    def _detect_sensitive_files(self) -> List[SensitiveFileMatch]:
         """Detect if any staged files match sensitive file patterns.
 
         Uses fnmatch for glob-style pattern matching against both the full path
         and the basename of each file.
 
         Returns:
-            List of sensitive file paths found in staged changes
+            List of sensitive file matches found in staged changes
         """
         import os
 
@@ -145,25 +155,102 @@ class CommitGenerator(BaseGenerator):
                     or fnmatch.fnmatch(file_path_lower, pattern_lower)
                     or fnmatch.fnmatch(file_path_lower, f"*/{pattern_lower}")
                 ):
-                    sensitive_files.append(file_path)
+                    sensitive_files.append(
+                        SensitiveFileMatch(
+                            path=file_path,
+                            pattern=pattern,
+                            reason=self._describe_sensitive_pattern(pattern),
+                        )
+                    )
                     break
 
         return sensitive_files
 
-    def _confirm_commit_sensitive_files(self, sensitive_files: List[str]) -> bool:
+    def _describe_sensitive_pattern(self, pattern: str) -> str:
+        """Return a human-readable reason for a sensitive file pattern."""
+        if pattern in {".env", ".env.*", "*.env", "git-tools.env"}:
+            return "environment/configuration file"
+        if pattern in {
+            "credentials.json",
+            "credentials.yml",
+            "credentials.yaml",
+            "secrets.json",
+            "secrets.yml",
+            "secrets.yaml",
+            "secrets.txt",
+            ".aws/credentials",
+            "aws_credentials",
+        }:
+            return "credentials or secrets file"
+        if pattern in {
+            "*.key",
+            "*.pem",
+            "*.p12",
+            "*.pfx",
+            "*.crt",
+            "*.cer",
+            "id_rsa",
+            "id_rsa.*",
+            "id_dsa",
+            "id_dsa.*",
+            "id_ecdsa",
+            "id_ecdsa.*",
+            "id_ed25519",
+            "id_ed25519.*",
+        }:
+            return "private key, SSH key, or certificate file"
+        if pattern in {"*.keystore", "*.jks"}:
+            return "keystore file"
+        if pattern in {"htpasswd", ".htpasswd", ".netrc", ".npmrc", ".pypirc"}:
+            return "authentication/configuration file"
+        return "sensitive filename/path pattern"
+
+    def _format_sensitive_file_lines(
+        self,
+        sensitive_files: List[SensitiveFileMatch | str],
+    ) -> List[str]:
+        """Format sensitive file matches for CLI output."""
+        lines = []
+        for sensitive_file in sensitive_files:
+            if isinstance(sensitive_file, SensitiveFileMatch):
+                lines.append(
+                    "  • "
+                    f"{escape(sensitive_file.path)} - "
+                    f"{escape(sensitive_file.reason)} "
+                    f"(matched pattern: {escape(sensitive_file.pattern)})"
+                )
+            else:
+                lines.append(f"  • {escape(sensitive_file)}")
+        return lines
+
+    def _format_sensitive_file_block(
+        self,
+        sensitive_files: List[SensitiveFileMatch | str],
+    ) -> str:
+        """Format sensitive file matches with context for hard failures."""
+        files_list = "\n".join(self._format_sensitive_file_lines(sensitive_files))
+        return f"""Sensitive files detected. Unstage them or re-run with --force-sensitive.
+
+Flagged staged files:
+{files_list}"""
+
+    def _confirm_commit_sensitive_files(
+        self,
+        sensitive_files: List[SensitiveFileMatch | str],
+    ) -> bool:
         """Prompt user to confirm committing sensitive files.
 
         Args:
-            sensitive_files: List of sensitive file paths
+            sensitive_files: List of sensitive file matches
 
         Returns:
             True if user confirms, False otherwise
         """
         # Build warning message
-        files_list = "\n".join(f"  • {file}" for file in sensitive_files)
+        files_list = "\n".join(self._format_sensitive_file_lines(sensitive_files))
         warning_text = f"""[bold red]Sensitive files detected in staged changes![/bold red]
 
-The following files appear to contain sensitive data:
+The following staged files matched sensitive file rules:
 {files_list}
 
 Committing these files may expose:
@@ -326,11 +413,15 @@ Committing these files may expose:
         if sensitive_files:
             # Skip confirmation if --force-sensitive was provided
             if self._cli_force_sensitive:
-                warning(f"Committing {len(sensitive_files)} sensitive file(s) (--force-sensitive)")
+                warning(
+                    f"Committing {len(sensitive_files)} sensitive file(s) "
+                    "(--force-sensitive)"
+                )
+                console.print("\n".join(self._format_sensitive_file_lines(sensitive_files)))
                 return True
 
             if not self._interactive:
-                error("Sensitive files detected. Unstage them or re-run with --force-sensitive.")
+                error(self._format_sensitive_file_block(sensitive_files))
                 return False
 
             if not self._confirm_commit_sensitive_files(sensitive_files):

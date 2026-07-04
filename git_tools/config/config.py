@@ -23,6 +23,11 @@ ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfi
 DEFAULT_CONFIG_PATH = Path.home() / ".git-tools" / "config.env"
 
 
+def normalize_provider_name(provider: str) -> str:
+    """Return the canonical provider key used by mappings.json."""
+    return str(provider).strip().lower()
+
+
 def _get_env_file_paths() -> list[Path]:
     """Get environment file search paths.
 
@@ -42,7 +47,7 @@ def _get_env_file_paths() -> list[Path]:
 
 
 def _get_provider_definition(provider: str) -> dict[str, Any]:
-    provider_lower = provider.lower()
+    provider_lower = normalize_provider_name(provider)
     if provider_lower not in PROVIDERS:
         raise ValueError(f"Unknown provider: {provider}")
     return PROVIDERS[provider_lower]
@@ -50,16 +55,10 @@ def _get_provider_definition(provider: str) -> dict[str, Any]:
 
 def _get_provider_api_key_envs(provider: str) -> list[str]:
     provider_def = _get_provider_definition(provider)
-    envs = []
     primary_env = provider_def.get("api_key_env")
-    fallback_env = provider_def.get("api_key_env_fallback")
-    if primary_env:
-        envs.append(primary_env)
-    if fallback_env and fallback_env not in envs:
-        envs.append(fallback_env)
-    if not envs:
-        envs.append(f"{provider.upper()}_API_KEY")
-    return envs
+    if not primary_env:
+        raise ValueError(f"Provider '{provider}' must define api_key_env")
+    return [primary_env]
 
 
 def _get_provider_label(provider: str) -> str:
@@ -68,7 +67,8 @@ def _get_provider_label(provider: str) -> str:
         "kimicli": "Kimi CLI",
         "cliproxyapi": "CLIProxyAPI",
     }
-    return labels.get(provider.lower(), provider.title())
+    provider_lower = normalize_provider_name(provider)
+    return labels.get(provider_lower, provider.title())
 
 
 def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | None]:
@@ -252,7 +252,7 @@ class GitToolsSettings(BaseSettings):
         """Convert empty provider values to the default provider."""
         if v == "" or v is None:
             return "openrouter"
-        return str(v).strip().lower()
+        return normalize_provider_name(str(v))
 
     @field_validator("default_provider")
     @classmethod
@@ -336,7 +336,7 @@ class OpenRouterConfig(BaseLLMConfig):
     api_key: str = Field(
         ...,
         min_length=1,
-        validation_alias=AliasChoices("OPENROUTER_API_KEY"),
+        validation_alias="OPENROUTER_API_KEY",
     )
     base_url: Optional[str] = Field(
         default="https://openrouter.ai/api/v1",
@@ -354,7 +354,7 @@ class KimiCLIConfig(BaseLLMConfig):
     api_key: str = Field(
         ...,
         min_length=1,
-        validation_alias=AliasChoices("MOONSHOT_API_KEY", "KIMICLI_API_KEY"),
+        validation_alias="KIMICODE_API_KEY",
     )
     base_url: Optional[str] = Field(
         default="https://api.kimi.com/coding/v1",
@@ -379,7 +379,7 @@ class CLIProxyAPIConfig(BaseLLMConfig):
     api_key: str = Field(
         ...,
         min_length=1,
-        validation_alias=AliasChoices("CLIPROXYAPI_API_KEY"),
+        validation_alias="CLIPROXYAPI_API_KEY",
     )
     base_url: Optional[str] = Field(
         default="http://localhost:8317/v1",
@@ -403,7 +403,7 @@ def load_provider_config(provider: str) -> BaseLLMConfig:
     Raises:
         ValueError: If provider is unknown or config class is not whitelisted
     """
-    provider_lower = provider.lower()
+    provider_lower = normalize_provider_name(provider)
     if provider_lower not in PROVIDERS:
         raise ValueError(f"Unknown provider: {provider}")
 

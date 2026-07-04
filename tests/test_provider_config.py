@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+from git_tools.config.mappings import PROVIDERS
 from git_tools.config.config import (
     CLIProxyAPIConfig,
     KimiCLIConfig,
@@ -14,8 +15,22 @@ from git_tools.generators.issueprgen import IssuePullRequestGenerator
 
 
 class ProviderConfigTests(unittest.TestCase):
-    @patch.dict(os.environ, {"MOONSHOT_API_KEY": "sk-kimi-test"}, clear=False)
-    def test_check_api_key_configured_supports_kimicli_moonshot_env(self) -> None:
+    def test_provider_api_key_env_names_are_exact(self) -> None:
+        self.assertEqual(PROVIDERS["kimicli"]["api_key_env"], "KIMICODE_API_KEY")
+        self.assertEqual(
+            PROVIDERS["cliproxyapi"]["api_key_env"],
+            "CLIPROXYAPI_API_KEY",
+        )
+
+    def test_provider_api_key_env_must_be_declared(self) -> None:
+        from git_tools.config import config as config_module
+
+        with patch.dict(config_module.PROVIDERS, {"testprovider": {}}, clear=False):
+            with self.assertRaisesRegex(ValueError, "must define api_key_env"):
+                check_api_key_configured("testprovider")
+
+    @patch.dict(os.environ, {"KIMICODE_API_KEY": "sk-kimi-test"}, clear=False)
+    def test_check_api_key_configured_supports_kimicli_kimicode_env(self) -> None:
         configured, value = check_api_key_configured("kimicli")
 
         self.assertTrue(configured)
@@ -23,7 +38,7 @@ class ProviderConfigTests(unittest.TestCase):
 
     @patch.dict(
         os.environ,
-        {"MOONSHOT_API_KEY": "sk-kimi-test", "GIT_TOOLS_API_BASE": "https://kimi.example/v1"},
+        {"KIMICODE_API_KEY": "sk-kimi-test", "GIT_TOOLS_API_BASE": "https://kimi.example/v1"},
         clear=False,
     )
     def test_load_provider_config_supports_kimicli(self) -> None:
@@ -36,7 +51,7 @@ class ProviderConfigTests(unittest.TestCase):
     def test_create_kimicli_client_sets_headers_and_extra_body(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = KimiCLIConfig(
-            MOONSHOT_API_KEY="sk-kimi-test",
+            KIMICODE_API_KEY="sk-kimi-test",
             GIT_TOOLS_API_BASE="https://api.kimi.com/coding/v1",
         )
 
@@ -119,6 +134,16 @@ class ProviderConfigTests(unittest.TestCase):
 
         kwargs = chat_openai.call_args.kwargs
         self.assertEqual(kwargs["reasoning_effort"], "low")
+
+    def test_reasoning_effort_override_requires_model_effort(self) -> None:
+        from git_tools.config import config as config_module
+
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+
+        with patch.object(config_module.settings, "default_reasoning_effort", "low"):
+            effort = generator._resolve_reasoning_effort({"model_name": "plain-model"})
+
+        self.assertIsNone(effort)
 
     @patch.dict(os.environ, {"GIT_TOOLS_REASONING_EFFORT": "MEDIUM"}, clear=False)
     def test_settings_reads_and_normalizes_reasoning_effort_env(self) -> None:

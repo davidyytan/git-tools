@@ -25,8 +25,7 @@
             "config_class": "OpenRouterConfig"
         },
         "kimicli": {
-            "api_key_env": "MOONSHOT_API_KEY",
-            "api_key_env_fallback": "KIMICLI_API_KEY",
+            "api_key_env": "KIMICODE_API_KEY",
             "models": {
                 "kimi-k2.5": {
                     "model_name": "kimi-k2.5"

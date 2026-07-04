@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from git_tools.cli import app
+from git_tools.cli import app, _build_config_choices, _build_model_choices
 
 
 class CliTests(unittest.TestCase):
@@ -31,11 +33,16 @@ class CliTests(unittest.TestCase):
         select_mock.assert_not_called()
 
     def test_init_uses_defaults_in_direct_mode(self) -> None:
-        with self.runner.isolated_filesystem():
-            result = self.runner.invoke(app, ["init"])
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                os.chdir(tmpdir)
+                result = self.runner.invoke(app, ["init"])
+            finally:
+                os.chdir(original_cwd)
 
             self.assertEqual(result.exit_code, 0)
-            self.assertTrue(Path(".cz.toml").exists())
+            self.assertTrue((Path(tmpdir) / ".cz.toml").exists())
             self.assertIn("Wrote Commitizen config", result.output)
 
     def test_init_help_is_available(self) -> None:
@@ -71,6 +78,59 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0)
         self.assertNotIn("--version-source", result.output)
+
+    def test_config_choices_show_provider_model_effort_then_api_key(self) -> None:
+        current = {
+            "provider": "cliproxyapi",
+            "model": "gpt-5.5",
+            "reasoning_effort": None,
+            "temperature": 0.2,
+            "max_tokens": 32000,
+            "max_retries": 1,
+        }
+
+        titles = [choice.title for choice in _build_config_choices(current, False)]
+
+        self.assertEqual(
+            titles[:4],
+            [
+                "Provider: cliproxyapi",
+                "Model: gpt-5.5",
+                "Effort: xhigh (model default)",
+                "API Key (cliproxyapi): not set",
+            ],
+        )
+
+    def test_config_choices_omit_effort_when_model_has_none(self) -> None:
+        current = {
+            "provider": "kimicli",
+            "model": "kimi-k2.5",
+            "reasoning_effort": "high",
+            "temperature": 0.2,
+            "max_tokens": 32000,
+            "max_retries": 1,
+        }
+
+        titles = [choice.title for choice in _build_config_choices(current, True)]
+
+        self.assertNotIn("Effort:", "\n".join(titles))
+        self.assertEqual(
+            titles[:3],
+            [
+                "Provider: kimicli",
+                "Model: kimi-k2.5",
+                "API Key (kimicli): configured",
+            ],
+        )
+
+    def test_model_choices_show_effort_only_when_declared(self) -> None:
+        cliproxy_titles = [
+            choice.title for choice in _build_model_choices("cliproxyapi")
+        ]
+        kimi_titles = [choice.title for choice in _build_model_choices("kimicli")]
+
+        self.assertIn("gpt-5.5 (effort: xhigh)", cliproxy_titles)
+        self.assertEqual(kimi_titles, ["kimi-k2.5"])
 
 
 if __name__ == "__main__":

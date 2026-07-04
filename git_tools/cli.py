@@ -7,14 +7,15 @@ and comprehensive issue/pull request documentation using LLM providers.
 import logging
 import sys
 from enum import Enum
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import questionary
 import typer
 import typer.rich_utils
 from questionary import Choice
 from rich.console import Console
-from git_tools.config.config import settings
+from git_tools.config.config import normalize_provider_name, settings
+from git_tools.config.mappings import PROVIDERS
 from git_tools.generators.base import TYPER_STYLE, console, warning, error
 
 # Override Typer's console with configurable width offset for terminal border wrapping
@@ -75,6 +76,158 @@ def _setup_logging(level: int = logging.INFO) -> None:
 def _has_interactive_terminal() -> bool:
     """Return True when stdin and stdout are interactive terminals."""
     return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+REASONING_EFFORT_CHOICES = ("xhigh", "high", "medium", "low")
+
+
+def _provider_default_model(provider: str) -> str:
+    """Return the first configured model name for a provider."""
+    provider = normalize_provider_name(provider)
+    models = list(PROVIDERS[provider]["models"].values())
+    return models[0]["model_name"] if models else ""
+
+
+def _find_model_config(provider: str, model: str | None) -> dict[str, Any] | None:
+    """Find a model mapping by key or model_name."""
+    if not model:
+        return None
+
+    provider = normalize_provider_name(provider)
+    models = PROVIDERS[provider]["models"]
+    if model in models:
+        return models[model]
+
+    for model_config in models.values():
+        if model_config.get("model_name") == model:
+            return model_config
+
+    return None
+
+
+def _resolve_current_model(provider: str, configured_model: str | None) -> str:
+    """Return a provider-valid model name, falling back to the provider default."""
+    provider = normalize_provider_name(provider)
+    provider_model_names = [
+        model["model_name"] for model in PROVIDERS[provider]["models"].values()
+    ]
+    if configured_model in provider_model_names:
+        return configured_model
+    if configured_model in PROVIDERS[provider]["models"]:
+        return PROVIDERS[provider]["models"][configured_model]["model_name"]
+    return _provider_default_model(provider)
+
+
+def _model_effort(provider: str, model: str | None) -> str | None:
+    """Return the per-model reasoning effort if that model declares one."""
+    model_config = _find_model_config(provider, model)
+    if not model_config:
+        return None
+    effort = model_config.get("reasoning_effort")
+    return str(effort).strip().lower() if effort else None
+
+
+def _effective_effort(
+    provider: str,
+    model: str | None,
+    configured_effort: str | None,
+) -> str | None:
+    """Resolve the effort shown in config: explicit override, then model default."""
+    model_effort = _model_effort(provider, model)
+    if not model_effort:
+        return None
+
+    if configured_effort:
+        return configured_effort.strip().lower() or None
+
+    return model_effort
+
+
+def _format_model_choice(model_config: dict[str, Any]) -> str:
+    """Format a model menu item, including effort only when the model has it."""
+    model_name = model_config["model_name"]
+    effort = model_config.get("reasoning_effort")
+    if effort:
+        return f"{model_name} (effort: {str(effort).strip().lower()})"
+    return model_name
+
+
+def _format_model_display(provider: str, model: str | None) -> str:
+    """Format the current model value without duplicating the separate effort row."""
+    model_config = _find_model_config(provider, model)
+    if model_config:
+        return model_config["model_name"]
+    return model or _provider_default_model(provider)
+
+
+def _build_model_choices(provider: str) -> list[Choice]:
+    """Build model choices with per-model effort visible when present."""
+    provider = normalize_provider_name(provider)
+    return [
+        Choice(_format_model_choice(model_config), value=model_config["model_name"])
+        for model_config in PROVIDERS[provider]["models"].values()
+    ]
+
+
+def _build_effort_choices(
+    provider: str,
+    model: str | None,
+    configured_effort: str | None,
+) -> list[Choice]:
+    """Build reasoning-effort choices for effort-capable models."""
+    model_effort = _model_effort(provider, model)
+    choices = []
+
+    if model_effort:
+        choices.append(Choice(f"Model default ({model_effort})", value=""))
+    else:
+        choices.append(Choice("Unset", value=""))
+
+    effort_values = []
+    for effort in (configured_effort, model_effort, *REASONING_EFFORT_CHOICES):
+        if effort:
+            normalized = str(effort).strip().lower()
+            if normalized and normalized not in effort_values:
+                effort_values.append(normalized)
+
+    choices.extend(Choice(effort, value=effort) for effort in effort_values)
+    return choices
+
+
+def _build_config_choices(
+    current: dict[str, Any],
+    is_api_configured: bool,
+) -> list[Choice]:
+    """Build the top-level config menu in provider/model/effort/API-key order."""
+    provider = normalize_provider_name(current["provider"])
+    api_status = "configured" if is_api_configured else "not set"
+    choices = [
+        Choice(f"Provider: {provider}", value="provider"),
+        Choice(
+            f"Model: {_format_model_display(provider, current.get('model'))}",
+            value="model",
+        ),
+    ]
+
+    effort = _effective_effort(
+        provider,
+        current.get("model"),
+        current.get("reasoning_effort"),
+    )
+    if effort:
+        source = "override" if current.get("reasoning_effort") else "model default"
+        choices.append(Choice(f"Effort: {effort} ({source})", value="reasoning_effort"))
+
+    choices.extend(
+        [
+            Choice(f"API Key ({provider}): {api_status}", value="api_key"),
+            Choice(f"Temperature: {current['temperature']}", value="temperature"),
+            Choice(f"Max Tokens: {current['max_tokens']}", value="max_tokens"),
+            Choice(f"Max Retries: {current['max_retries']}", value="max_retries"),
+            Choice("Done", value="done"),
+        ]
+    )
+    return choices
 
 
 # ============================================================================
@@ -650,23 +803,10 @@ def config() -> None:
         check_api_key_configured, setup_api_key, save_setting,
     )
     from .generators.base import success, TYPER_STYLE
-    from .config.mappings import PROVIDERS
 
     if not _has_interactive_terminal():
         error("git-tools config requires an interactive terminal.")
         raise typer.Exit(1)
-
-    def provider_default_model(provider: str) -> str:
-        models = list(PROVIDERS[provider]["models"].values())
-        return models[0]["model_name"] if models else ""
-
-    def resolve_current_model(provider: str, configured_model: str | None) -> str:
-        provider_model_names = [
-            model["model_name"] for model in PROVIDERS[provider]["models"].values()
-        ]
-        if configured_model in provider_model_names:
-            return configured_model
-        return provider_default_model(provider)
 
     # Defaults for reference
     DEFAULTS = {
@@ -677,28 +817,19 @@ def config() -> None:
     }
 
     # Track current state locally (settings object is loaded once at startup)
-    is_api_configured, _ = check_api_key_configured(settings.default_provider)
+    current_provider = normalize_provider_name(settings.default_provider)
+    is_api_configured, _ = check_api_key_configured(current_provider)
     current = {
-        "provider": settings.default_provider,
-        "model": resolve_current_model(
-            settings.default_provider, settings.default_model
-        ),
+        "provider": current_provider,
+        "model": _resolve_current_model(current_provider, settings.default_model),
+        "reasoning_effort": settings.default_reasoning_effort,
         "temperature": settings.default_temperature,
         "max_tokens": settings.default_max_tokens,
         "max_retries": settings.default_max_retries,
     }
 
     def build_choices():
-        api_status = "configured" if is_api_configured else "not set"
-        return [
-            Choice(f"Provider: {current['provider']}", value="provider"),
-            Choice(f"API Key ({current['provider']}): {api_status}", value="api_key"),
-            Choice(f"Model: {current['model']}", value="model"),
-            Choice(f"Temperature: {current['temperature']}", value="temperature"),
-            Choice(f"Max Tokens: {current['max_tokens']}", value="max_tokens"),
-            Choice(f"Max Retries: {current['max_retries']}", value="max_retries"),
-            Choice("Done", value="done"),
-        ]
+        return _build_config_choices(current, is_api_configured)
 
     try:
         while True:
@@ -726,10 +857,11 @@ def config() -> None:
                     instruction="",
                 ).ask()
                 if provider_choice:
+                    provider_choice = normalize_provider_name(provider_choice)
                     save_setting("GIT_TOOLS_PROVIDER", provider_choice)
                     current["provider"] = provider_choice
                     is_api_configured, _ = check_api_key_configured(provider_choice)
-                    current["model"] = resolve_current_model(
+                    current["model"] = _resolve_current_model(
                         provider_choice, current["model"]
                     )
                     console.print()
@@ -743,13 +875,12 @@ def config() -> None:
 
             elif choice == "model":
                 provider_models = PROVIDERS[current["provider"]]["models"]
-                model_choices = list(provider_models.keys())
                 default_model = current["model"]
                 if default_model not in [m["model_name"] for m in provider_models.values()]:
-                    default_model = provider_default_model(current["provider"])
+                    default_model = _provider_default_model(current["provider"])
                 model_choice = questionary.select(
-                    f"Select model (current: {current['model']}, default: {provider_default_model(current['provider'])}):",
-                    choices=[model["model_name"] for model in provider_models.values()],
+                    f"Select model (current: {current['model']}, default: {_provider_default_model(current['provider'])}):",
+                    choices=_build_model_choices(current["provider"]),
                     default=default_model,
                     style=TYPER_STYLE,
                     qmark="❯",
@@ -761,6 +892,41 @@ def config() -> None:
                     current["model"] = model_choice
                     console.print()
                     success(f"Model set to {model_choice}")
+
+            elif choice == "reasoning_effort":
+                effective_effort = _effective_effort(
+                    current["provider"],
+                    current["model"],
+                    current["reasoning_effort"],
+                )
+                effort_choice = questionary.select(
+                    f"Reasoning effort (current: {effective_effort or 'unset'}):",
+                    choices=_build_effort_choices(
+                        current["provider"],
+                        current["model"],
+                        current["reasoning_effort"],
+                    ),
+                    default=current["reasoning_effort"] or "",
+                    style=TYPER_STYLE,
+                    qmark="❯",
+                    pointer="›",
+                    instruction="",
+                ).ask()
+                if effort_choice is not None:
+                    save_setting("GIT_TOOLS_REASONING_EFFORT", effort_choice)
+                    current["reasoning_effort"] = effort_choice or None
+                    console.print()
+                    if effort_choice:
+                        success(f"Effort override set to {effort_choice}")
+                    else:
+                        model_effort = _model_effort(
+                            current["provider"],
+                            current["model"],
+                        )
+                        if model_effort:
+                            success(f"Effort reset to model default ({model_effort})")
+                        else:
+                            success("Effort override cleared")
 
             elif choice == "temperature":
                 temp_input = questionary.text(

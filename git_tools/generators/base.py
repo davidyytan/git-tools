@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 
-from git_tools.config.config import settings
+from git_tools.config.config import normalize_provider_name, settings
 from git_tools.config.mappings import PROVIDERS
 
 # Rich console for styled output
@@ -313,6 +313,7 @@ class BaseGenerator:
         """
         from git_tools.config.config import check_api_key_configured, setup_api_key
 
+        provider = normalize_provider_name(provider)
         is_configured, _ = check_api_key_configured(provider)
         if is_configured:
             return True
@@ -343,11 +344,11 @@ class BaseGenerator:
 
     def get_provider_config(self, provider: str) -> Any:
         """Load provider config ONLY when requested"""
-        provider_lower = provider.lower()
+        provider_lower = normalize_provider_name(provider)
         if provider_lower not in self._provider_configs:
             from git_tools.config.config import load_provider_config
 
-            self._provider_configs[provider_lower] = load_provider_config(provider)
+            self._provider_configs[provider_lower] = load_provider_config(provider_lower)
         return self._provider_configs[provider_lower]
 
     def select_model_params(
@@ -359,6 +360,7 @@ class BaseGenerator:
         - Interactive mode: prompts for input
         - Non-interactive mode: uses provider defaults
         """
+        provider = normalize_provider_name(provider)
         provider_config = self.get_provider_config(provider)
         models = PROVIDERS[provider]["models"]
 
@@ -545,6 +547,7 @@ class BaseGenerator:
     ) -> bool:
         """Initialize LangChain chat client for the selected provider"""
         try:
+            provider = normalize_provider_name(provider)
             provider_config = self.get_provider_config(provider)
             model_details = PROVIDERS[provider]["models"].get(model, {})
             model_to_use = model_details.get("model_name", model)
@@ -663,14 +666,14 @@ class BaseGenerator:
         """Resolve reasoning effort: env/settings override > per-model default.
 
         ``GIT_TOOLS_REASONING_EFFORT`` (via ``settings.default_reasoning_effort``)
-        wins when set; otherwise the model's ``reasoning_effort`` from mappings.json
-        applies (e.g. gpt-5.5 defaults to ``xhigh``).
+        wins for models that declare ``reasoning_effort`` in mappings.json; otherwise
+        the model's per-model default applies (e.g. gpt-5.5 defaults to ``xhigh``).
         """
+        if not model_config or not model_config.get("reasoning_effort"):
+            return None
         if settings.default_reasoning_effort:
             return settings.default_reasoning_effort.strip().lower() or None
-        if model_config and model_config.get("reasoning_effort"):
-            return str(model_config["reasoning_effort"]).strip().lower() or None
-        return None
+        return str(model_config["reasoning_effort"]).strip().lower() or None
 
     def _create_cliproxy_client(
         self,

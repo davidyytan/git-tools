@@ -62,7 +62,7 @@ cp git-tools.env.example git-tools.env
 Supported providers:
 
 - `openrouter` with `OPENROUTER_API_KEY`
-- `kimicli` with `MOONSHOT_API_KEY`
+- `kimicli` with `KIMICODE_API_KEY`
 - `cliproxyapi` with `CLIPROXYAPI_API_KEY` (local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.5` at `xhigh` reasoning)
 
 The active provider is selected with `GIT_TOOLS_PROVIDER`.
@@ -71,10 +71,10 @@ You can also export the variables directly, for example:
 
 ```bash
 export GIT_TOOLS_PROVIDER="kimicli"
-export MOONSHOT_API_KEY="your-kimi-api-key"
+export KIMICODE_API_KEY="your-kimi-api-key"
 ```
 
-For a local CLIProxyAPI proxy (Codex/GPT-5), point at the proxy and use its client key. The default model is `gpt-5.5` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` if desired:
+For a local CLIProxyAPI proxy (Codex/GPT-5), point at the proxy and use its client key. The default model is `gpt-5.5` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` for effort-capable models if desired:
 
 ```bash
 export GIT_TOOLS_PROVIDER="cliproxyapi"

@@ -290,8 +290,10 @@ $ git-tools issue
 ### config - Interactive Settings
 ```
 ❯ Select setting to edit:           <- Questionary (select)
-  API Key: configured
-  Model: moonshotai/kimi-k2-thinking
+  Provider: cliproxyapi
+  Model: gpt-5.5
+  Effort: xhigh (model default)
+  API Key (cliproxyapi): configured
   Temperature: 0.2
   Max Tokens: 32000
   Max Retries: 1

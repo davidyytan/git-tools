@@ -19,8 +19,8 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 
-from git_tools.config.config import normalize_provider_name, settings
-from git_tools.config.mappings import PROVIDERS
+from git_tools.settings.settings import normalize_provider_name, settings
+from git_tools.settings.mappings import PROVIDERS
 
 # Rich console for styled output
 # - soft_wrap: prevents trailing spaces from creating phantom lines
@@ -311,7 +311,11 @@ class BaseGenerator:
         Returns:
             True if API key is available (existing or newly set up), False otherwise
         """
-        from git_tools.config.config import check_api_key_configured, setup_api_key
+        from git_tools.settings.settings import (
+            check_api_key_configured,
+            provider_label,
+            setup_api_key,
+        )
 
         provider = normalize_provider_name(provider)
         is_configured, _ = check_api_key_configured(provider)
@@ -323,19 +327,14 @@ class BaseGenerator:
 
         # In non-interactive mode, can't prompt for setup
         if not self._interactive:
-            error("Run 'git-tools config' to configure your API key.")
+            error("Run 'git-tools settings' to configure your API key.")
             return False
 
         # Interactive mode - offer setup
-        provider_label = {
-            "openrouter": "OpenRouter",
-            "kimicli": "Kimi CLI",
-            "cliproxyapi": "CLIProxyAPI",
-        }.get(provider.lower(), provider)
-        if self.prompt_confirm(f"Set up your {provider_label} API key now?", default=True):
-            from git_tools.config.config import DEFAULT_CONFIG_PATH
+        if self.prompt_confirm(f"Set up your {provider_label(provider)} API key now?", default=True):
+            from git_tools.settings.settings import DEFAULT_SETTINGS_PATH
             if setup_api_key(provider):
-                success(f"API key saved to {DEFAULT_CONFIG_PATH}")
+                success(f"API key saved to {DEFAULT_SETTINGS_PATH}")
                 return True
             else:
                 warning("API key setup cancelled.")
@@ -346,7 +345,7 @@ class BaseGenerator:
         """Load provider config ONLY when requested"""
         provider_lower = normalize_provider_name(provider)
         if provider_lower not in self._provider_configs:
-            from git_tools.config.config import load_provider_config
+            from git_tools.settings.settings import load_provider_config
 
             self._provider_configs[provider_lower] = load_provider_config(provider_lower)
         return self._provider_configs[provider_lower]

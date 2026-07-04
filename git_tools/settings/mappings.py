@@ -5,10 +5,10 @@ model list for fixed-catalogue providers — lives in code here. There is no
 external ``mappings.json`` to copy or maintain in the repo.
 
 OpenRouter is the open-ended exception: its catalogue is huge, so users add
-model slugs interactively via ``git-tools config`` (or ``--model`` / the
-``GIT_TOOLS_DEFAULT_MODEL`` env var). Custom slugs entered in ``config`` are
-persisted to ``~/.git-tools/models.json`` — a small user config file alongside
-``config.env``, created at runtime and never committed — and merged into the
+model slugs interactively via ``git-tools settings`` (or ``--model`` / the
+``GIT_TOOLS_DEFAULT_MODEL`` env var). Custom slugs entered in ``settings`` are
+persisted to ``~/.git-tools/models.json`` — a small user file alongside
+``settings.env``, created at runtime and never committed — and merged into the
 OpenRouter model list on load. When nothing is configured, OpenRouter defaults
 to ``anthropic/claude-sonnet-4.6``.
 """
@@ -23,7 +23,7 @@ import typer
 # OpenRouter model used when nothing else is configured.
 DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6"
 
-# User config file holding custom OpenRouter model slugs. Kept inside
+# User settings file holding custom OpenRouter model slugs. Kept inside
 # ~/.git-tools/ so a full reset stays a single `rm -rf ~/.git-tools`.
 USER_MODELS_PATH = Path.home() / ".git-tools" / "models.json"
 

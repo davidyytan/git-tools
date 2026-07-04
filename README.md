@@ -21,7 +21,7 @@ After install, the main entrypoints are:
 
 ```bash
 # Configure provider, API key, and defaults
-git-tools config
+git-tools settings
 
 # Interactive menu
 git-tools
@@ -36,22 +36,28 @@ git-tools init
 
 Configuration and local state live here:
 
-- `~/.git-tools/config.env`
-  Written by `git-tools config`. Stores user-level provider, API key, and default overrides. Delete `~/.git-tools/` to reset all user config from scratch.
+- `~/.git-tools/settings.env`
+  Written by `git-tools settings`. Stores user-level provider, API key, and default overrides. Delete `~/.git-tools/` to reset all user settings from scratch. (A legacy `config.env` is migrated to `settings.env` automatically on first run.)
 - `~/.git-tools/models.json`
-  Written by `git-tools config` when you add a custom OpenRouter model. Holds your saved OpenRouter model slugs so they reappear in the picker. Created at runtime; never committed.
+  Written by `git-tools settings` when you add a custom OpenRouter model. Holds your saved OpenRouter model slugs so they reappear in the picker. Created at runtime; never committed.
 - `./git-tools.env`
   Optional repo-local env override file for the current working directory.
 
 ## Configuration
 
-Run the config command to configure the provider, API key, and model defaults:
+Run the settings command to configure the provider, API key, and model defaults:
 
 ```bash
-git-tools config
+git-tools settings
 ```
 
-This saves settings to `~/.git-tools/config.env`.
+This opens an interactive picker (press Esc or choose ← Back to go up a level) and saves settings to `~/.git-tools/settings.env`. You can also edit a single setting directly:
+
+```bash
+git-tools settings provider openrouter
+git-tools settings temperature 0.2
+git-tools settings model anthropic/claude-sonnet-4.6
+```
 
 Alternatively, copy the example env file and choose a provider:
 
@@ -82,11 +88,11 @@ export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
 # export CLIPROXYAPI_API_KEY="my-key"   # only if your proxy uses a non-default key
 ```
 
-Provider metadata and the curated model lists for `kimicli` and `cliproxyapi` are defined in code (`git_tools/config/mappings.py`); there is no `mappings.json` to copy or maintain.
+Provider metadata and the curated model lists for `kimicli` and `cliproxyapi` are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain.
 
-OpenRouter is open-ended: run `git-tools config`, choose **Model → Enter a new model…**, and type any slug (for example `z-ai/glm-5.2`). Custom slugs are saved to `~/.git-tools/models.json` so they show up in the picker next time. When nothing is configured, OpenRouter defaults to `anthropic/claude-sonnet-4.6`. You can also set a model directly with `--model <slug>` or `GIT_TOOLS_DEFAULT_MODEL`.
+OpenRouter is open-ended: run `git-tools settings`, choose **Model → Enter a new model…**, and type any slug (for example `z-ai/glm-5.2`). Custom slugs are saved to `~/.git-tools/models.json` so they show up in the picker next time. When nothing is configured, OpenRouter defaults to `anthropic/claude-sonnet-4.6`. You can also set a model directly with `--model <slug>` or `GIT_TOOLS_DEFAULT_MODEL`.
 
-`git-tools config` writes provider, model, and default overrides to `~/.git-tools/config.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
+`git-tools settings` writes provider, model, and default overrides to `~/.git-tools/settings.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
 
 For release workflow and branch policy details, see [GitHub Setup](docs/github-setup.md), [Git Flow Guide](docs/git-flow-guide.md), [Classic Flow](docs/git-flow-classic.md), [Classic — Reviewed](docs/git-flow-classic-reviewed.md), [Variant — Release-led](docs/git-flow-variant-release-led.md), and [Variant — Reviewed](docs/git-flow-variant-reviewed.md).
 
@@ -115,10 +121,10 @@ git-tools commit --workflow-kind open-release
 ### Configure provider and defaults
 
 ```bash
-git-tools config
+git-tools settings
 ```
 
-`git-tools config` is interactive. Use it to choose the provider, save the matching API key, and set default model and request settings.
+`git-tools settings` is interactive. Use it to choose the provider, save the matching API key, and set default model and request settings. Press Esc (or pick ← Back) to go up one menu level. `git-tools settings <name> [value]` edits a single setting directly, e.g. `git-tools settings temperature 0.2`.
 
 ### Generate issue documentation
 
@@ -242,9 +248,9 @@ git-tools
 | `--max-tokens` | | Maximum tokens for completion |
 | `--token-limit` | `-l` | Token limit for diff processing |
 
-### Config
+### Settings
 
-`git-tools config` is interactive and currently has no user-facing CLI flags.
+`git-tools settings` is interactive when run bare. It also accepts direct arguments: `git-tools settings <name> [value]` where `<name>` is one of `provider`, `model`, `effort`, `api-key`, `temperature`, `max-tokens`, `max-retries`.
 
 ### Bump
 
@@ -277,7 +283,7 @@ git-tools
 | `--defaults` | | Write config using detected defaults without prompting |
 | `--force` | | Update an existing Commitizen config in place |
 
-Provider metadata and model lists are defined in `git_tools/config/mappings.py`. OpenRouter models are open-ended and managed via `git-tools config` (saved to `~/.git-tools/models.json`).
+Provider metadata and model lists are defined in `git_tools/settings/mappings.py`. OpenRouter models are open-ended and managed via `git-tools settings` (saved to `~/.git-tools/models.json`).
 
 ## Useful Git Commands
 

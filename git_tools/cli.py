@@ -7,16 +7,22 @@ and comprehensive issue/pull request documentation using LLM providers.
 import logging
 import sys
 from enum import Enum
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Callable, Optional
 
 import questionary
 import typer
 import typer.rich_utils
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from questionary import Choice
 from rich.console import Console
-from git_tools.config.config import normalize_provider_name, settings
-from git_tools.config.mappings import PROVIDERS, add_user_openrouter_model
-from git_tools.generators.base import TYPER_STYLE, console, warning, error
+from git_tools.settings.settings import (
+    GitToolsSettings,
+    normalize_provider_name,
+    reload_settings,
+    settings,
+)
+from git_tools.settings.mappings import PROVIDERS, add_user_openrouter_model
+from git_tools.generators.base import TYPER_STYLE, console, success, warning, error
 
 # Override Typer's console with configurable width offset for terminal border wrapping
 _typer_width = Console(force_terminal=True).width
@@ -84,8 +90,35 @@ REASONING_EFFORT_CHOICES = ("xhigh", "high", "medium", "low")
 # entry instead of restricting the user to a fixed list.
 OPEN_MODEL_PROVIDERS = ("openrouter",)
 
-# Sentinel Choice value that triggers free-text model entry in the config menu.
+# Sentinel Choice value that triggers free-text model entry in the settings menu.
 ADD_MODEL_SENTINEL = "__git_tools_add_model__"
+
+# Sentinel Choice value meaning "go up one menu level" in settings menus.
+_BACK = "__git_tools_back__"
+
+
+def _back_choice() -> Choice:
+    return Choice("← Back", value=_BACK)
+
+
+def _ask_with_back(question: questionary.Question) -> Any:
+    """Ask ``question`` with Esc bound to go back one level.
+
+    Esc makes the prompt return None, which callers treat like "← Back".
+    Ctrl+C still raises KeyboardInterrupt and exits the whole command.
+    """
+    esc_bindings = KeyBindings()
+
+    @esc_bindings.add("escape", eager=True)
+    def _cancel(event: Any) -> None:
+        event.app.exit(result=None)
+
+    application = question.application
+    existing = application.key_bindings
+    application.key_bindings = (
+        merge_key_bindings([existing, esc_bindings]) if existing else esc_bindings
+    )
+    return question.unsafe_ask()
 
 
 def _provider_default_model(provider: str) -> str:
@@ -212,37 +245,38 @@ def _build_effort_choices(
     return choices
 
 
-def _build_config_choices(
-    current: dict[str, Any],
-    is_api_configured: bool,
+def _build_settings_choices(
+    state: dict[str, Any],
+    *,
+    done_label: str = "Done",
 ) -> list[Choice]:
-    """Build the top-level config menu in provider/model/effort/API-key order."""
-    provider = normalize_provider_name(current["provider"])
-    api_status = "configured" if is_api_configured else "not set"
+    """Build the top-level settings menu in provider/model/effort/API-key order."""
+    provider = normalize_provider_name(state["provider"])
+    api_status = "configured" if state["api_configured"] else "not set"
     choices = [
         Choice(f"Provider: {provider}", value="provider"),
         Choice(
-            f"Model: {_format_model_display(provider, current.get('model'))}",
+            f"Model: {_format_model_display(provider, state.get('model'))}",
             value="model",
         ),
     ]
 
     effort = _effective_effort(
         provider,
-        current.get("model"),
-        current.get("reasoning_effort"),
+        state.get("model"),
+        state.get("reasoning_effort"),
     )
     if effort:
-        source = "override" if current.get("reasoning_effort") else "model default"
-        choices.append(Choice(f"Effort: {effort} ({source})", value="reasoning_effort"))
+        source = "override" if state.get("reasoning_effort") else "model default"
+        choices.append(Choice(f"Effort: {effort} ({source})", value="effort"))
 
     choices.extend(
         [
-            Choice(f"API Key ({provider}): {api_status}", value="api_key"),
-            Choice(f"Temperature: {current['temperature']}", value="temperature"),
-            Choice(f"Max Tokens: {current['max_tokens']}", value="max_tokens"),
-            Choice(f"Max Retries: {current['max_retries']}", value="max_retries"),
-            Choice("Done", value="done"),
+            Choice(f"API Key ({provider}): {api_status}", value="api-key"),
+            Choice(f"Temperature: {state['temperature']}", value="temperature"),
+            Choice(f"Max Tokens: {state['max_tokens']}", value="max-tokens"),
+            Choice(f"Max Retries: {state['max_retries']}", value="max-retries"),
+            Choice(done_label, value="done"),
         ]
     )
     return choices
@@ -258,11 +292,13 @@ def main(ctx: typer.Context) -> None:
     """Show interactive menu when no subcommand is provided."""
     _setup_logging()
 
-    if ctx.invoked_subcommand is None:
-        if not _has_interactive_terminal():
-            typer.echo(ctx.get_help())
-            raise typer.Exit(0)
+    if ctx.invoked_subcommand is not None:
+        return
+    if not _has_interactive_terminal():
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
 
+    while True:
         try:
             choice = questionary.select(
                 "Select command:",
@@ -272,7 +308,7 @@ def main(ctx: typer.Context) -> None:
                     Choice("pr", value="pr"),
                     Choice("bump", value="bump"),
                     Choice("init", value="init"),
-                    Choice("config", value="config"),
+                    Choice("settings", value="settings"),
                     Choice("exit", value="exit"),
                 ],
                 style=TYPER_STYLE,
@@ -287,6 +323,17 @@ def main(ctx: typer.Context) -> None:
         if choice is None or choice == "exit":
             raise typer.Exit(0)
 
+        # Settings is a detour, not a destination: leaving it lands back here.
+        if choice == "settings":
+            try:
+                _run_settings_menu(done_label="← Back")
+            except (KeyboardInterrupt, EOFError):
+                warning("Operation cancelled by user.")
+                raise typer.Exit(0)
+            # Content commands read the settings singleton; pick up any edits.
+            reload_settings()
+            continue
+
         # Invoke the selected command with interactive=True
         command_map = {
             "commit": commit,
@@ -294,14 +341,9 @@ def main(ctx: typer.Context) -> None:
             "pr": pr,
             "bump": bump,
             "init": init_command,
-            "config": config,
         }
-        if choice == "config":
-            ctx.invoke(command_map[choice])
-        elif choice in {"bump", "init"}:
-            ctx.invoke(command_map[choice], interactive=True)
-        else:
-            ctx.invoke(command_map[choice], interactive=True)
+        ctx.invoke(command_map[choice], interactive=True)
+        return
 
 
 # ============================================================================
@@ -807,226 +849,385 @@ def init_command(
 
 
 # ============================================================================
-# Config Command
+# Settings Command
 # ============================================================================
 
+# Defaults shown alongside settings prompts, sourced from the pydantic field
+# defaults so they cannot drift from what an unset value actually resolves to.
+_SETTING_DEFAULTS = {
+    "provider": GitToolsSettings.model_fields["default_provider"].default,
+    "temperature": GitToolsSettings.model_fields["default_temperature"].default,
+    "max_tokens": GitToolsSettings.model_fields["default_max_tokens"].default,
+    "max_retries": GitToolsSettings.model_fields["default_max_retries"].default,
+}
 
-@app.command()
-def config() -> None:
-    """Configure git-tools settings interactively.
 
-    Settings will be saved to ~/.git-tools/config.env
-    """
-    from .config.config import (
-        check_api_key_configured, setup_api_key, save_setting,
-    )
-    from .generators.base import success, TYPER_STYLE
+def _load_settings_state() -> dict[str, Any]:
+    """Re-read persisted settings; the import-time singleton would be stale
+    when the menu is re-entered after edits in the same session."""
+    from .settings.settings import GitToolsSettings, check_api_key_configured
 
-    if not _has_interactive_terminal():
-        error("git-tools config requires an interactive terminal.")
-        raise typer.Exit(1)
-
-    # Defaults for reference
-    DEFAULTS = {
-        "provider": "openrouter",
-        "temperature": 0.2,
-        "max_tokens": 32000,
-        "max_retries": 1,
+    fresh = GitToolsSettings()
+    provider = normalize_provider_name(fresh.default_provider)
+    is_api_configured, _ = check_api_key_configured(provider)
+    return {
+        "provider": provider,
+        "model": _resolve_current_model(provider, fresh.default_model),
+        "reasoning_effort": fresh.default_reasoning_effort,
+        "temperature": fresh.default_temperature,
+        "max_tokens": fresh.default_max_tokens,
+        "max_retries": fresh.default_max_retries,
+        "api_configured": is_api_configured,
     }
 
-    # Track current state locally (settings object is loaded once at startup)
-    current_provider = normalize_provider_name(settings.default_provider)
-    is_api_configured, _ = check_api_key_configured(current_provider)
-    current = {
-        "provider": current_provider,
-        "model": _resolve_current_model(current_provider, settings.default_model),
-        "reasoning_effort": settings.default_reasoning_effort,
-        "temperature": settings.default_temperature,
-        "max_tokens": settings.default_max_tokens,
-        "max_retries": settings.default_max_retries,
-    }
 
-    def build_choices():
-        return _build_config_choices(current, is_api_configured)
+def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import check_api_key_configured, save_setting
 
-    try:
-        while True:
-            choice = questionary.select(
-                "Select setting to edit:",
-                choices=build_choices(),
+    providers = list(PROVIDERS.keys())
+    if value is None:
+        selection = _ask_with_back(
+            questionary.select(
+                f"Select provider (current: {state['provider']}, default: {_SETTING_DEFAULTS['provider']}):",
+                choices=[*providers, _back_choice()],
+                default=state["provider"] if state["provider"] in providers else _SETTING_DEFAULTS["provider"],
                 style=TYPER_STYLE,
                 qmark="❯",
                 pointer="›",
                 instruction="",
-            ).ask()
+            )
+        )
+        if selection is None or selection == _BACK:
+            return
+    else:
+        selection = normalize_provider_name(value)
+        if selection not in PROVIDERS:
+            error(f"Unknown provider: {value}. One of: {', '.join(providers)}")
+            raise typer.Exit(1)
 
-            if choice is None or choice == "done":
-                break
+    provider_changed = selection != state["provider"]
+    save_setting("GIT_TOOLS_PROVIDER", selection)
+    state["provider"] = selection
+    state["api_configured"], _ = check_api_key_configured(selection)
+    console.print()
+    success(f"Provider set to {selection}")
+    if provider_changed:
+        # A model carried over from the old provider is meaningless on the new
+        # one; keep it only when the new provider's catalogue knows it, else
+        # reset to the provider default — and persist so content commands
+        # never send the old provider's slug to the new endpoint.
+        model_config = _find_model_config(selection, state["model"])
+        new_model = (
+            model_config["model_name"] if model_config else _provider_default_model(selection)
+        )
+        save_setting("GIT_TOOLS_DEFAULT_MODEL", new_model)
+        if new_model != state["model"]:
+            success(f"Model set to {new_model}")
+        state["model"] = new_model
 
-            if choice == "provider":
-                providers = list(PROVIDERS.keys())
-                provider_choice = questionary.select(
-                    f"Select provider (current: {current['provider']}, default: {DEFAULTS['provider']}):",
-                    choices=providers,
-                    default=current["provider"] if current["provider"] in providers else DEFAULTS["provider"],
+
+def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    provider = state["provider"]
+    if value is None:
+        provider_models = PROVIDERS[provider]["models"]
+        default_model = state["model"]
+        if default_model not in [m["model_name"] for m in provider_models.values()]:
+            default_model = _provider_default_model(provider)
+        model_choice = _ask_with_back(
+            questionary.select(
+                f"Select model (current: {state['model']}, default: {_provider_default_model(provider)}):",
+                choices=[*_build_model_choices(provider), _back_choice()],
+                default=default_model,
+                style=TYPER_STYLE,
+                qmark="❯",
+                pointer="›",
+                instruction="",
+            )
+        )
+        if model_choice is None or model_choice == _BACK:
+            return
+        if model_choice == ADD_MODEL_SENTINEL:
+            new_model = _ask_with_back(
+                questionary.text(
+                    "Enter model slug (e.g. anthropic/claude-sonnet-4.6):",
                     style=TYPER_STYLE,
                     qmark="❯",
-                    pointer="›",
                     instruction="",
-                ).ask()
-                if provider_choice:
-                    provider_choice = normalize_provider_name(provider_choice)
-                    save_setting("GIT_TOOLS_PROVIDER", provider_choice)
-                    current["provider"] = provider_choice
-                    is_api_configured, _ = check_api_key_configured(provider_choice)
-                    current["model"] = _resolve_current_model(
-                        provider_choice, current["model"]
-                    )
-                    console.print()
-                    success(f"Provider set to {provider_choice}")
-
-            elif choice == "api_key":
-                if setup_api_key(current["provider"]):
-                    console.print()
-                    success("API key saved.")
-                    is_api_configured = True
-
-            elif choice == "model":
-                provider_models = PROVIDERS[current["provider"]]["models"]
-                default_model = current["model"]
-                if default_model not in [m["model_name"] for m in provider_models.values()]:
-                    default_model = _provider_default_model(current["provider"])
-                model_choice = questionary.select(
-                    f"Select model (current: {current['model']}, default: {_provider_default_model(current['provider'])}):",
-                    choices=_build_model_choices(current["provider"]),
-                    default=default_model,
-                    style=TYPER_STYLE,
-                    qmark="❯",
-                    pointer="›",
-                    instruction="",
-                ).ask()
-                if model_choice == ADD_MODEL_SENTINEL:
-                    new_model = questionary.text(
-                        "Enter model slug (e.g. anthropic/claude-sonnet-4.6):",
-                        style=TYPER_STYLE,
-                        qmark="❯",
-                        instruction="",
-                    ).ask()
-                    model_choice = new_model.strip() if new_model and new_model.strip() else None
-                    if model_choice:
-                        add_user_openrouter_model(model_choice)
-                if model_choice:
-                    save_setting("GIT_TOOLS_DEFAULT_MODEL", model_choice)
-                    current["model"] = model_choice
-                    console.print()
-                    success(f"Model set to {model_choice}")
-
-            elif choice == "reasoning_effort":
-                effective_effort = _effective_effort(
-                    current["provider"],
-                    current["model"],
-                    current["reasoning_effort"],
                 )
-                effort_choice = questionary.select(
-                    f"Reasoning effort (current: {effective_effort or 'unset'}):",
-                    choices=_build_effort_choices(
-                        current["provider"],
-                        current["model"],
-                        current["reasoning_effort"],
+            )
+            model_choice = new_model.strip() if new_model and new_model.strip() else None
+            if not model_choice:
+                return
+            add_user_openrouter_model(model_choice)
+    else:
+        model_choice = value.strip()
+        if not model_choice:
+            error("Model cannot be empty.")
+            raise typer.Exit(1)
+        if provider in OPEN_MODEL_PROVIDERS:
+            add_user_openrouter_model(model_choice)
+        else:
+            model_config = _find_model_config(provider, model_choice)
+            if not model_config:
+                names = ", ".join(
+                    model["model_name"] for model in PROVIDERS[provider]["models"].values()
+                )
+                error(f"Unknown model for {provider}: {model_choice}. One of: {names}")
+                raise typer.Exit(1)
+            model_choice = model_config["model_name"]
+
+    save_setting("GIT_TOOLS_DEFAULT_MODEL", model_choice)
+    state["model"] = model_choice
+    console.print()
+    success(f"Model set to {model_choice}")
+
+
+def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        effective_effort = _effective_effort(
+            state["provider"],
+            state["model"],
+            state["reasoning_effort"],
+        )
+        effort_choice = _ask_with_back(
+            questionary.select(
+                f"Reasoning effort (current: {effective_effort or 'unset'}):",
+                choices=[
+                    *_build_effort_choices(
+                        state["provider"],
+                        state["model"],
+                        state["reasoning_effort"],
                     ),
-                    default=current["reasoning_effort"] or "",
-                    style=TYPER_STYLE,
-                    qmark="❯",
-                    pointer="›",
-                    instruction="",
-                ).ask()
-                if effort_choice is not None:
-                    save_setting("GIT_TOOLS_REASONING_EFFORT", effort_choice)
-                    current["reasoning_effort"] = effort_choice or None
-                    console.print()
-                    if effort_choice:
-                        success(f"Effort override set to {effort_choice}")
-                    else:
-                        model_effort = _model_effort(
-                            current["provider"],
-                            current["model"],
-                        )
-                        if model_effort:
-                            success(f"Effort reset to model default ({model_effort})")
-                        else:
-                            success("Effort override cleared")
+                    _back_choice(),
+                ],
+                default=state["reasoning_effort"] or "",
+                style=TYPER_STYLE,
+                qmark="❯",
+                pointer="›",
+                instruction="",
+            )
+        )
+        if effort_choice is None or effort_choice == _BACK:
+            return
+    else:
+        effort_choice = value.strip().lower()
+        if effort_choice in {"unset", "default", "none"}:
+            effort_choice = ""
+        if effort_choice and effort_choice not in REASONING_EFFORT_CHOICES:
+            error(
+                f"Invalid effort: {value}. One of: {', '.join(REASONING_EFFORT_CHOICES)} (or 'unset')"
+            )
+            raise typer.Exit(1)
 
-            elif choice == "temperature":
-                temp_input = questionary.text(
-                    f"Temperature (current: {current['temperature']}, default: {DEFAULTS['temperature']}):",
-                    default=str(current["temperature"]),
-                    style=TYPER_STYLE,
-                    qmark="❯",
-                    instruction="",
-                ).ask()
-                if temp_input:
-                    try:
-                        temp = float(temp_input)
-                        if 0.0 <= temp <= 2.0:
-                            save_setting("GIT_TOOLS_DEFAULT_TEMPERATURE", str(temp))
-                            current["temperature"] = temp
-                            console.print()
-                            success(f"Temperature set to {temp}")
-                        else:
-                            console.print()
-                            warning("Temperature must be between 0.0 and 2.0")
-                    except ValueError:
-                        console.print()
-                        warning("Invalid temperature value.")
+    save_setting("GIT_TOOLS_REASONING_EFFORT", effort_choice)
+    state["reasoning_effort"] = effort_choice or None
+    console.print()
+    if effort_choice:
+        success(f"Effort override set to {effort_choice}")
+    else:
+        model_effort = _model_effort(state["provider"], state["model"])
+        if model_effort:
+            success(f"Effort reset to model default ({model_effort})")
+        else:
+            success("Effort override cleared")
 
-            elif choice == "max_tokens":
-                tokens_input = questionary.text(
-                    f"Max tokens (current: {current['max_tokens']}, default: {DEFAULTS['max_tokens']}):",
-                    default=str(current["max_tokens"]),
-                    style=TYPER_STYLE,
-                    qmark="❯",
-                    instruction="",
-                ).ask()
-                if tokens_input:
-                    try:
-                        tokens = int(tokens_input)
-                        if tokens > 0:
-                            save_setting("GIT_TOOLS_DEFAULT_MAX_TOKENS", str(tokens))
-                            current["max_tokens"] = tokens
-                            console.print()
-                            success(f"Max tokens set to {tokens}")
-                        else:
-                            console.print()
-                            warning("Max tokens must be greater than 0")
-                    except ValueError:
-                        console.print()
-                        warning("Invalid max tokens value.")
 
-            elif choice == "max_retries":
-                retries_input = questionary.text(
-                    f"Max retries (current: {current['max_retries']}, default: {DEFAULTS['max_retries']}):",
-                    default=str(current["max_retries"]),
-                    style=TYPER_STYLE,
-                    qmark="❯",
-                    instruction="",
-                ).ask()
-                if retries_input:
-                    try:
-                        retries = int(retries_input)
-                        if retries >= 0:
-                            save_setting("GIT_TOOLS_DEFAULT_MAX_RETRIES", str(retries))
-                            current["max_retries"] = retries
-                            console.print()
-                            success(f"Max retries set to {retries}")
-                        else:
-                            console.print()
-                            warning("Max retries must be 0 or greater")
-                    except ValueError:
-                        console.print()
-                        warning("Invalid max retries value.")
+def _edit_api_key(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import provider_api_key_env, provider_label, save_setting
 
-            console.print()
-    except KeyboardInterrupt:
+    provider = state["provider"]
+    direct = value is not None
+    if not direct:
+        value = _ask_with_back(
+            questionary.password(
+                f"Enter your {provider_label(provider)} API key:",
+                style=TYPER_STYLE,
+                qmark="❯",
+            )
+        )
+        if value is None:
+            return
+
+    key = value.strip()
+    if not key:
+        if direct:
+            error("API key cannot be empty.")
+            raise typer.Exit(1)
+        return
+
+    save_setting(provider_api_key_env(provider), key)
+    state["api_configured"] = True
+    console.print()
+    success("API key saved.")
+
+
+def _edit_number(
+    state: dict[str, Any],
+    *,
+    state_key: str,
+    env_var: str,
+    label: str,
+    parse: Callable[[str], Any],
+    is_valid: Callable[[Any], bool],
+    invalid_message: str,
+    range_message: str,
+    value: Optional[str] = None,
+) -> None:
+    from .settings.settings import save_setting
+
+    direct = value is not None
+    if not direct:
+        value = _ask_with_back(
+            questionary.text(
+                f"{label} (current: {state[state_key]}, default: {_SETTING_DEFAULTS[state_key]}):",
+                default=str(state[state_key]),
+                style=TYPER_STYLE,
+                qmark="❯",
+                instruction="",
+            )
+        )
+        if not value:
+            return
+
+    try:
+        parsed = parse(value)
+    except ValueError:
+        if direct:
+            error(invalid_message)
+            raise typer.Exit(1)
+        console.print()
+        warning(invalid_message)
+        return
+    if not is_valid(parsed):
+        if direct:
+            error(range_message)
+            raise typer.Exit(1)
+        console.print()
+        warning(range_message)
+        return
+
+    save_setting(env_var, str(parsed))
+    state[state_key] = parsed
+    console.print()
+    success(f"{label} set to {parsed}")
+
+
+def _edit_temperature(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_number(
+        state,
+        state_key="temperature",
+        env_var="GIT_TOOLS_DEFAULT_TEMPERATURE",
+        label="Temperature",
+        parse=float,
+        is_valid=lambda temp: 0.0 <= temp <= 2.0,
+        invalid_message="Invalid temperature value.",
+        range_message="Temperature must be between 0.0 and 2.0",
+        value=value,
+    )
+
+
+def _edit_max_tokens(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_number(
+        state,
+        state_key="max_tokens",
+        env_var="GIT_TOOLS_DEFAULT_MAX_TOKENS",
+        label="Max tokens",
+        parse=int,
+        is_valid=lambda tokens: tokens > 0,
+        invalid_message="Invalid max tokens value.",
+        range_message="Max tokens must be greater than 0",
+        value=value,
+    )
+
+
+def _edit_max_retries(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_number(
+        state,
+        state_key="max_retries",
+        env_var="GIT_TOOLS_DEFAULT_MAX_RETRIES",
+        label="Max retries",
+        parse=int,
+        is_valid=lambda retries: retries >= 0,
+        invalid_message="Invalid max retries value.",
+        range_message="Max retries must be 0 or greater",
+        value=value,
+    )
+
+
+# Menu order, and the names accepted by `git-tools settings <name> [value]`.
+_SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
+    "provider": _edit_provider,
+    "model": _edit_model,
+    "effort": _edit_effort,
+    "api-key": _edit_api_key,
+    "temperature": _edit_temperature,
+    "max-tokens": _edit_max_tokens,
+    "max-retries": _edit_max_retries,
+}
+
+
+def _run_settings_menu(*, done_label: str = "Done") -> None:
+    """Interactive settings menu; Esc or the last row leaves it."""
+    state = _load_settings_state()
+    while True:
+        choice = _ask_with_back(
+            questionary.select(
+                "Select setting to edit:",
+                choices=_build_settings_choices(state, done_label=done_label),
+                style=TYPER_STYLE,
+                qmark="❯",
+                pointer="›",
+                instruction="",
+            )
+        )
+        if choice is None or choice == "done":
+            return
+        _SETTINGS_EDITORS[choice](state)
+        console.print()
+
+
+@app.command(name="settings")
+def settings_command(
+    name: Annotated[
+        Optional[str],
+        typer.Argument(
+            help="Setting to edit: " + " · ".join(_SETTINGS_EDITORS),
+            show_default=False,
+        ),
+    ] = None,
+    value: Annotated[
+        Optional[str],
+        typer.Argument(help="New value; omit to edit interactively", show_default=False),
+    ] = None,
+) -> None:
+    """Edit git-tools settings.
+
+    Bare ``git-tools settings`` opens an interactive picker; ``git-tools
+    settings <name> [value]`` goes straight to one setting. Values are saved
+    to ~/.git-tools/settings.env.
+    """
+    try:
+        if name is not None:
+            key = name.strip().lower().replace("_", "-")
+            editor = _SETTINGS_EDITORS.get(key)
+            if editor is None:
+                error(f"Unknown setting: {name}. One of: {' · '.join(_SETTINGS_EDITORS)}")
+                raise typer.Exit(1)
+            if value is None and not _has_interactive_terminal():
+                error("git-tools settings requires an interactive terminal (or pass a value).")
+                raise typer.Exit(1)
+            editor(_load_settings_state(), value)
+            return
+
+        if not _has_interactive_terminal():
+            error("git-tools settings requires an interactive terminal.")
+            raise typer.Exit(1)
+        _run_settings_menu()
+    except (KeyboardInterrupt, EOFError):
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
 

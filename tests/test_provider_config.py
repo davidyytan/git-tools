@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from git_tools.config.mappings import PROVIDERS
-from git_tools.config.config import (
+from git_tools.settings.mappings import PROVIDERS
+from git_tools.settings.settings import (
     CLIProxyAPIConfig,
     KimiCLIConfig,
     check_api_key_configured,
@@ -26,7 +26,7 @@ class ProviderConfigTests(unittest.TestCase):
         )
 
     def test_openrouter_defaults_to_claude_sonnet(self) -> None:
-        from git_tools.config.mappings import DEFAULT_OPENROUTER_MODEL
+        from git_tools.settings.mappings import DEFAULT_OPENROUTER_MODEL
 
         self.assertEqual(DEFAULT_OPENROUTER_MODEL, "anthropic/claude-sonnet-4.6")
         models = PROVIDERS["openrouter"]["models"]
@@ -35,7 +35,7 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(first["model_name"], "anthropic/claude-sonnet-4.6")
 
     def test_add_user_openrouter_model_persists_and_merges(self) -> None:
-        from git_tools.config import mappings as mappings_module
+        from git_tools.settings import mappings as mappings_module
 
         slug = "vendor/test-model-x"
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,9 +58,9 @@ class ProviderConfigTests(unittest.TestCase):
                     mappings_module.PROVIDERS["openrouter"]["models"].pop(slug, None)
 
     def test_provider_api_key_env_must_be_declared(self) -> None:
-        from git_tools.config import config as config_module
+        from git_tools.settings import settings as settings_module
 
-        with patch.dict(config_module.PROVIDERS, {"testprovider": {}}, clear=False):
+        with patch.dict(settings_module.PROVIDERS, {"testprovider": {}}, clear=False):
             with self.assertRaisesRegex(ValueError, "must define api_key_env"):
                 check_api_key_configured("testprovider")
 
@@ -126,7 +126,7 @@ class ProviderConfigTests(unittest.TestCase):
 
     def test_cliproxyapi_api_key_defaults_without_env(self) -> None:
         # The CLIProxyAPI client key is a fixed placeholder, so it need not be set.
-        from git_tools.config import config as config_module
+        from git_tools.settings import settings as settings_module
 
         self.assertEqual(
             CLIProxyAPIConfig.model_fields["api_key"].default, "cliproxyapi"
@@ -134,20 +134,20 @@ class ProviderConfigTests(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("CLIPROXYAPI_API_KEY", None)
-            with patch.object(config_module, "_get_env_file_paths", return_value=[]):
-                configured, value = config_module.check_api_key_configured("cliproxyapi")
+            with patch.object(settings_module, "_get_env_file_paths", return_value=[]):
+                configured, value = settings_module.check_api_key_configured("cliproxyapi")
 
         self.assertTrue(configured)
         self.assertEqual(value, "cliproxyapi")
 
     def test_openrouter_api_key_not_defaulted(self) -> None:
         # Only local-proxy providers get a default key; OpenRouter still requires one.
-        from git_tools.config import config as config_module
+        from git_tools.settings import settings as settings_module
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENROUTER_API_KEY", None)
-            with patch.object(config_module, "_get_env_file_paths", return_value=[]):
-                configured, value = config_module.check_api_key_configured("openrouter")
+            with patch.object(settings_module, "_get_env_file_paths", return_value=[]):
+                configured, value = settings_module.check_api_key_configured("openrouter")
 
         self.assertFalse(configured)
         self.assertIsNone(value)
@@ -181,12 +181,12 @@ class ProviderConfigTests(unittest.TestCase):
         # settings is a singleton loaded at import; patch the resolved value to
         # emulate GIT_TOOLS_REASONING_EFFORT being set, and confirm it wins over
         # the per-model xhigh default from the provider definition.
-        from git_tools.config import config as config_module
+        from git_tools.settings import settings as settings_module
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = CLIProxyAPIConfig(CLIPROXYAPI_API_KEY="cliproxyapi")
 
-        with patch.object(config_module.settings, "default_reasoning_effort", "low"):
+        with patch.object(settings_module.settings, "default_reasoning_effort", "low"):
             with patch("langchain_openai.ChatOpenAI") as chat_openai:
                 generator._create_cliproxy_client(
                     "gpt-5.5",
@@ -199,18 +199,18 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(kwargs["reasoning_effort"], "low")
 
     def test_reasoning_effort_override_requires_model_effort(self) -> None:
-        from git_tools.config import config as config_module
+        from git_tools.settings import settings as settings_module
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
-        with patch.object(config_module.settings, "default_reasoning_effort", "low"):
+        with patch.object(settings_module.settings, "default_reasoning_effort", "low"):
             effort = generator._resolve_reasoning_effort({"model_name": "plain-model"})
 
         self.assertIsNone(effort)
 
     @patch.dict(os.environ, {"GIT_TOOLS_REASONING_EFFORT": "MEDIUM"}, clear=False)
     def test_settings_reads_and_normalizes_reasoning_effort_env(self) -> None:
-        from git_tools.config.config import GitToolsSettings
+        from git_tools.settings.settings import GitToolsSettings
 
         # A freshly constructed settings object reads the env alias and lowercases it.
         fresh = GitToolsSettings()
@@ -218,10 +218,94 @@ class ProviderConfigTests(unittest.TestCase):
 
     @patch.dict(os.environ, {"GIT_TOOLS_DEFAULT_MAX_TOKENS": ""}, clear=False)
     def test_settings_default_max_tokens_is_32k(self) -> None:
-        from git_tools.config.config import GitToolsSettings
+        from git_tools.settings.settings import GitToolsSettings
 
         # Default (and empty-string fallback) is the bumped 32k cap.
         self.assertEqual(GitToolsSettings().default_max_tokens, 32000)
+
+    def test_legacy_config_env_migrates_to_settings_env(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "config.env"
+            target = Path(tmp) / "settings.env"
+            legacy.write_text('GIT_TOOLS_PROVIDER="openrouter"\n')
+
+            with (
+                patch.object(settings_module, "LEGACY_SETTINGS_PATH", legacy),
+                patch.object(settings_module, "DEFAULT_SETTINGS_PATH", target),
+            ):
+                settings_module._migrate_legacy_settings_file()
+
+            self.assertFalse(legacy.exists())
+            self.assertEqual(target.read_text(), 'GIT_TOOLS_PROVIDER="openrouter"\n')
+
+    def test_save_setting_preserves_backslashes_when_updating(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.env"
+            path.write_text('GIT_TOOLS_DEFAULT_MODEL="old"\n')
+            with patch.object(settings_module, "DEFAULT_SETTINGS_PATH", path):
+                self.assertTrue(
+                    settings_module.save_setting("GIT_TOOLS_DEFAULT_MODEL", r"a\1b")
+                )
+            self.assertIn('GIT_TOOLS_DEFAULT_MODEL="a\\1b"', path.read_text())
+
+    def test_settings_env_wins_over_surviving_legacy_file(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "config.env"
+            target = Path(tmp) / "settings.env"
+            legacy.write_text('OPENROUTER_API_KEY="stale-key"\n')
+            target.write_text('OPENROUTER_API_KEY="fresh-key"\n')
+
+            with (
+                patch.object(settings_module, "LEGACY_SETTINGS_PATH", legacy),
+                patch.object(settings_module, "DEFAULT_SETTINGS_PATH", target),
+                patch.dict(os.environ, {}, clear=False),
+            ):
+                os.environ.pop("OPENROUTER_API_KEY", None)
+                # Once settings.env exists, the surviving legacy file is dropped
+                # from the search list so it can never shadow fresh values.
+                self.assertNotIn(legacy, settings_module._get_env_file_paths())
+                configured, value = settings_module.check_api_key_configured("openrouter")
+
+            self.assertTrue(configured)
+            self.assertEqual(value, "fresh-key")
+
+    def test_reload_settings_refreshes_singleton_in_place(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        original = settings_module.settings.default_temperature
+        try:
+            with patch.dict(
+                os.environ, {"GIT_TOOLS_DEFAULT_TEMPERATURE": "1.5"}, clear=False
+            ):
+                settings_module.reload_settings()
+                self.assertEqual(settings_module.settings.default_temperature, 1.5)
+        finally:
+            settings_module.reload_settings()
+        self.assertEqual(settings_module.settings.default_temperature, original)
+
+    def test_legacy_migration_never_overwrites_settings_env(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "config.env"
+            target = Path(tmp) / "settings.env"
+            legacy.write_text('GIT_TOOLS_PROVIDER="kimicli"\n')
+            target.write_text('GIT_TOOLS_PROVIDER="openrouter"\n')
+
+            with (
+                patch.object(settings_module, "LEGACY_SETTINGS_PATH", legacy),
+                patch.object(settings_module, "DEFAULT_SETTINGS_PATH", target),
+            ):
+                settings_module._migrate_legacy_settings_file()
+
+            self.assertTrue(legacy.exists())
+            self.assertEqual(target.read_text(), 'GIT_TOOLS_PROVIDER="openrouter"\n')
 
 
 if __name__ == "__main__":

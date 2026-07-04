@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from rich.markup import escape
 
-from git_tools.config.config import settings
+from git_tools.settings.settings import settings
 from .base import (
     BaseGenerator, console, Panel, info, success, warning, error,
     STYLE_BORDER, STYLE_DIM, STYLE_ERROR, ALIGN_PANEL,

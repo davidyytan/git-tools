@@ -21,7 +21,7 @@ uv tool install -e .
 Configure a provider in one of these ways:
 
 ```bash
-git-tools config
+git-tools settings
 ```
 
 or:
@@ -30,9 +30,9 @@ or:
 cp git-tools.env.example git-tools.env
 ```
 
-Provider metadata and model lists are defined in code (`git_tools/config/mappings.py`); there is no `mappings.json` to copy. OpenRouter is open-ended — add model slugs via `git-tools config` (saved to `~/.git-tools/models.json`) and it defaults to `anthropic/claude-sonnet-4.6`. `kimicli` and `cliproxyapi` keep fixed curated model lists.
+Provider metadata and model lists are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy. OpenRouter is open-ended — add model slugs via `git-tools settings` (saved to `~/.git-tools/models.json`) and it defaults to `anthropic/claude-sonnet-4.6`. `kimicli` and `cliproxyapi` keep fixed curated model lists.
 
-`git-tools config` writes user overrides to `~/.git-tools/config.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
+`git-tools settings` writes user overrides to `~/.git-tools/settings.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
 
 ## Branch and PR Flow
 
@@ -141,8 +141,8 @@ If you change provider configuration, prompt files, or workflow examples, also c
 
 When you change one of these areas, update the others in the same PR when needed:
 
-- provider config in `git_tools/config/`
-- provider and model definitions in `git_tools/config/mappings.py`
+- provider settings in `git_tools/settings/`
+- provider and model definitions in `git_tools/settings/mappings.py`
 - user-facing env examples in `git-tools.env.example`
 - prompt files in `git_tools/prompts/`
 - workflow examples in `.github/workflows/`

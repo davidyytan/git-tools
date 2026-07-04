@@ -23,7 +23,7 @@ from .bumpgen import (
     load_bump_config,
     release_tuple,
 )
-from git_tools.config.config import settings
+from git_tools.settings.settings import settings
 from git_tools.templates import get_issue_template, get_pr_template
 from .base import (
     BaseGenerator, console, Panel, info, success, warning, error,

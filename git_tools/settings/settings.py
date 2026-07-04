@@ -24,9 +24,26 @@ ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfi
 # overrides the default when the proxy is configured with a different key.
 PROVIDER_DEFAULT_API_KEYS = {"cliproxyapi": "cliproxyapi"}
 
-# Default config file location. A single self-contained ~/.git-tools/ folder so a
+# Default settings file location. A single self-contained ~/.git-tools/ folder so a
 # full reset is just `rm -rf ~/.git-tools`.
-DEFAULT_CONFIG_PATH = Path.home() / ".git-tools" / "config.env"
+DEFAULT_SETTINGS_PATH = Path.home() / ".git-tools" / "settings.env"
+
+# Pre-rename location: settings used to live in config.env. It is moved to
+# settings.env once on import; the legacy path stays in the search list only as
+# a fallback in case that move fails (e.g. permissions).
+LEGACY_SETTINGS_PATH = Path.home() / ".git-tools" / "config.env"
+
+
+def _migrate_legacy_settings_file() -> None:
+    """One-time move of ~/.git-tools/config.env to ~/.git-tools/settings.env."""
+    if LEGACY_SETTINGS_PATH.exists() and not DEFAULT_SETTINGS_PATH.exists():
+        try:
+            LEGACY_SETTINGS_PATH.replace(DEFAULT_SETTINGS_PATH)
+        except OSError:
+            pass
+
+
+_migrate_legacy_settings_file()
 
 
 def normalize_provider_name(provider: str) -> str:
@@ -39,17 +56,23 @@ def _get_env_file_paths() -> list[Path]:
 
     Search order (last found wins in pydantic-settings):
     1. {cwd}/git-tools.env (local development, lowest priority)
-    2. ~/.git-tools/config.env (user-global, highest priority)
+    2. ~/.git-tools/config.env (legacy, consulted only until settings.env exists)
+    3. ~/.git-tools/settings.env (user-global, highest priority)
+
+    The legacy file is dropped from the list as soon as settings.env exists, so
+    a stale config.env left behind by a failed migration can never shadow
+    settings.env for first-match readers like check_api_key_configured.
 
     Environment variables (e.g., OPENROUTER_API_KEY) always take precedence.
 
     Returns:
         List of Path objects to search for env file
     """
-    return [
-        Path.cwd() / "git-tools.env",
-        Path.home() / ".git-tools" / "config.env",
-    ]
+    paths = [Path.cwd() / "git-tools.env"]
+    if LEGACY_SETTINGS_PATH.exists() and not DEFAULT_SETTINGS_PATH.exists():
+        paths.append(LEGACY_SETTINGS_PATH)
+    paths.append(DEFAULT_SETTINGS_PATH)
+    return paths
 
 
 def _get_provider_definition(provider: str) -> dict[str, Any]:
@@ -67,7 +90,8 @@ def _get_provider_api_key_envs(provider: str) -> list[str]:
     return [primary_env]
 
 
-def _get_provider_label(provider: str) -> str:
+def provider_label(provider: str) -> str:
+    """Return the human-readable display name for a provider."""
     labels = {
         "openrouter": "OpenRouter",
         "kimicli": "Kimi CLI",
@@ -75,6 +99,11 @@ def _get_provider_label(provider: str) -> str:
     }
     provider_lower = normalize_provider_name(provider)
     return labels.get(provider_lower, provider.title())
+
+
+def provider_api_key_env(provider: str) -> str:
+    """Return the primary API-key environment variable for a provider."""
+    return _get_provider_api_key_envs(provider)[0]
 
 
 def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | None]:
@@ -114,7 +143,7 @@ def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | 
 
 
 def save_setting(key: str, value: str) -> bool:
-    """Save a setting to the config file.
+    """Save a setting to the settings file.
 
     Args:
         key: Environment variable name (e.g., 'GIT_TOOLS_DEFAULT_MODEL')
@@ -124,27 +153,29 @@ def save_setting(key: str, value: str) -> bool:
         True if saved successfully, False otherwise
     """
     # Ensure config directory exists
-    DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     # Read existing content or start fresh
-    if DEFAULT_CONFIG_PATH.exists():
-        content = DEFAULT_CONFIG_PATH.read_text()
+    if DEFAULT_SETTINGS_PATH.exists():
+        content = DEFAULT_SETTINGS_PATH.read_text()
         pattern = re.compile(rf'^{key}\s*=.*$', re.MULTILINE)
         if pattern.search(content):
-            # Update existing key
-            content = pattern.sub(f'{key}="{value}"', content)
+            # Update existing key. A callable replacement keeps backslashes in
+            # the value literal; a string replacement would parse them as
+            # regex group references.
+            content = pattern.sub(lambda _match: f'{key}="{value}"', content)
         else:
             # Append new key
             content = content.rstrip() + f'\n{key}="{value}"\n'
     else:
         content = f'{key}="{value}"\n'
 
-    DEFAULT_CONFIG_PATH.write_text(content)
+    DEFAULT_SETTINGS_PATH.write_text(content)
     return True
 
 
 def setup_api_key(provider: str = "openrouter") -> bool:
-    """Prompt user for API key and save to config file.
+    """Prompt user for API key and save to settings file.
 
     Args:
         provider: Provider name (default: "openrouter")
@@ -155,7 +186,7 @@ def setup_api_key(provider: str = "openrouter") -> bool:
     from rich.prompt import Prompt
 
     env_var = _get_provider_api_key_envs(provider)[0]
-    key = Prompt.ask(f"Enter your {_get_provider_label(provider)} API key", password=True)
+    key = Prompt.ask(f"Enter your {provider_label(provider)} API key", password=True)
 
     if not key or not key.strip():
         return False
@@ -227,18 +258,9 @@ class GitToolsSettings(BaseSettings):
     )
     @classmethod
     def empty_str_to_default_int(cls, v: Any, info: ValidationInfo) -> Any:
-        """Convert empty strings to default value for int fields."""
+        """Convert empty strings to the field default for int fields."""
         if v == "" or v is None:
-            defaults = {
-                "default_token_limit": 200000,
-                "default_issue_pr_token_limit": 200000,
-                "large_diff_threshold": 5000,
-                "default_max_tokens": 32000,
-                "default_max_retries": 1,
-                "min_file_token_threshold": 1000,
-                "console_width_offset": -2,
-            }
-            return defaults.get(info.field_name, v)
+            return cls.model_fields[info.field_name].default
         return v
 
     @field_validator(
@@ -248,13 +270,9 @@ class GitToolsSettings(BaseSettings):
     )
     @classmethod
     def empty_str_to_default_float(cls, v: Any, info: ValidationInfo) -> Any:
-        """Convert empty strings to default value for float fields."""
+        """Convert empty strings to the field default for float fields."""
         if v == "" or v is None:
-            defaults = {
-                "default_temperature": 0.2,
-                "default_retry_delay": 1.0,
-            }
-            return defaults.get(info.field_name, v)
+            return cls.model_fields[info.field_name].default
         return v
 
     @field_validator("default_provider", mode="before")
@@ -262,7 +280,7 @@ class GitToolsSettings(BaseSettings):
     def empty_str_to_default_provider(cls, v: Any) -> Any:
         """Convert empty provider values to the default provider."""
         if v == "" or v is None:
-            return "openrouter"
+            return cls.model_fields["default_provider"].default
         return normalize_provider_name(str(v))
 
     @field_validator("default_provider")
@@ -301,6 +319,16 @@ class GitToolsSettings(BaseSettings):
 
 # Singleton instance for application-wide access
 settings = GitToolsSettings()
+
+
+def reload_settings() -> None:
+    """Re-read the settings files into the module-level singleton.
+
+    The interactive menu can edit settings and then run a content command in
+    the same process; generators read this singleton, so it must be refreshed
+    in place after the settings detour.
+    """
+    settings.__dict__.update(GitToolsSettings().__dict__)
 
 
 class BaseLLMConfig(BaseSettings):

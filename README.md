@@ -5,8 +5,7 @@ AI-powered CLI tool for conventional commit generation, issue/PR documentation, 
 ## Installation
 
 ```bash
-uv tool install -e .
-git-tools --install-completion
+uv tool install -e . && git-tools --install-completion
 ```
 
 If the tool is already installed and you want to refresh the installed tool environment:

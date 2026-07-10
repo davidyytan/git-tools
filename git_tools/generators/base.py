@@ -20,7 +20,11 @@ from rich.markup import escape
 from rich.panel import Panel
 
 from git_tools.settings.settings import normalize_provider_name, settings
-from git_tools.settings.mappings import PROVIDERS
+from git_tools.settings.mappings import (
+    LIVE_MODEL_PROVIDERS,
+    PROVIDERS,
+    refresh_live_models,
+)
 
 # Rich console for styled output
 # - soft_wrap: prevents trailing spaces from creating phantom lines
@@ -361,6 +365,9 @@ class BaseGenerator:
         """
         provider = normalize_provider_name(provider)
         provider_config = self.get_provider_config(provider)
+        # Live providers resolve models against the endpoint's real catalogue
+        # (one fetch per process; static fallback when the endpoint is down).
+        refresh_live_models(provider)
         models = PROVIDERS[provider]["models"]
 
         # Model selection: CLI param > interactive prompt > default
@@ -400,8 +407,11 @@ class BaseGenerator:
             for model_data in models.values():
                 if model_data["model_name"] == settings.default_model:
                     return settings.default_model
-            # OpenRouter is open-ended: trust any configured slug as-is.
-            if normalize_provider_name(provider) == "openrouter":
+            # Open-ended (OpenRouter) and live-discovered providers trust the
+            # configured model as-is: the endpoint validates it, not the
+            # static fallback list.
+            provider_lower = normalize_provider_name(provider)
+            if provider_lower == "openrouter" or provider_lower in LIVE_MODEL_PROVIDERS:
                 return settings.default_model
         # Fallback to first model
         return list(models.values())[0]["model_name"]
@@ -669,8 +679,8 @@ class BaseGenerator:
 
         ``GIT_TOOLS_REASONING_EFFORT`` (via ``settings.default_reasoning_effort``)
         wins for models that declare ``reasoning_effort`` in their provider
-        definition; otherwise the model's per-model default applies (e.g. gpt-5.5
-        defaults to ``xhigh``).
+        definition; otherwise the model's per-model default applies (e.g. the
+        gpt-5 family defaults to ``xhigh``).
         """
         if not model_config or not model_config.get("reasoning_effort"):
             return None
@@ -693,7 +703,7 @@ class BaseGenerator:
         + visible tokens together, so it relies on the global ``default_max_tokens``
         (32k) being large enough to leave room for the answer. A stable
         ``Session_id`` header keeps the run on one upstream session, and
-        ``reasoning_effort`` (default ``xhigh`` for gpt-5.5) is forwarded when set.
+        ``reasoning_effort`` (default ``xhigh`` for the gpt-5 family) is forwarded when set.
         """
         from langchain_openai import ChatOpenAI
 

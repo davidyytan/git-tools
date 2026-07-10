@@ -68,7 +68,7 @@ Supported providers:
 
 - `openrouter` with `OPENROUTER_API_KEY`
 - `kimicli` with `KIMICODE_API_KEY`
-- `cliproxyapi` — local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.5` at `xhigh` reasoning. `CLIPROXYAPI_API_KEY` is optional (defaults to the `cliproxyapi` placeholder the proxy ships with); set it only if your proxy uses a different key.
+- `cliproxyapi` — local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.6-sol` at `xhigh` reasoning. The model picker lists whatever the proxy actually serves (live `/models` discovery; the built-in list is only the offline fallback). `CLIPROXYAPI_API_KEY` is optional (defaults to the `cliproxyapi` placeholder the proxy ships with); set it only if your proxy uses a different key.
 
 The active provider is selected with `GIT_TOOLS_PROVIDER`.
 
@@ -79,7 +79,7 @@ export GIT_TOOLS_PROVIDER="kimicli"
 export KIMICODE_API_KEY="your-kimi-api-key"
 ```
 
-For a local CLIProxyAPI proxy (Codex/GPT-5), just point at the proxy — the client key defaults to `cliproxyapi`, so you only need to select the provider. The default model is `gpt-5.5` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` for effort-capable models if desired:
+For a local CLIProxyAPI proxy (Codex/GPT-5), just point at the proxy — the client key defaults to `cliproxyapi`, so you only need to select the provider. The default model is `gpt-5.6-sol` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` for effort-capable models if desired:
 
 ```bash
 export GIT_TOOLS_PROVIDER="cliproxyapi"
@@ -87,7 +87,7 @@ export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
 # export CLIPROXYAPI_API_KEY="my-key"   # only if your proxy uses a non-default key
 ```
 
-Provider metadata and the curated model lists for `kimicli` and `cliproxyapi` are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain.
+Provider metadata and the curated model lists for `kimicli` and `cliproxyapi` are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain. For `cliproxyapi` the static list is only the offline fallback — the picker and model validation refresh from the proxy's live `/models` catalogue.
 
 OpenRouter is open-ended: run `git-tools settings`, choose **Model → Enter a new model…**, and type any slug (for example `z-ai/glm-5.2`). Custom slugs are saved to `~/.git-tools/models.json` so they show up in the picker next time. When nothing is configured, OpenRouter defaults to `anthropic/claude-sonnet-4.6`. You can also set a model directly with `--model <slug>` or `GIT_TOOLS_DEFAULT_MODEL`.
 

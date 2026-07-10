@@ -21,7 +21,12 @@ from git_tools.settings.settings import (
     reload_settings,
     settings,
 )
-from git_tools.settings.mappings import PROVIDERS, add_user_openrouter_model
+from git_tools.settings.mappings import (
+    LIVE_MODEL_PROVIDERS,
+    PROVIDERS,
+    add_user_openrouter_model,
+    refresh_live_models,
+)
 from git_tools.generators.base import TYPER_STYLE, console, success, warning, error
 
 # Override Typer's console with configurable width offset for terminal border wrapping
@@ -150,7 +155,10 @@ def _resolve_current_model(provider: str, configured_model: str | None) -> str:
     provider = normalize_provider_name(provider)
     if configured_model:
         # Open-ended providers (OpenRouter) honor any configured slug as-is.
-        if provider in OPEN_MODEL_PROVIDERS:
+        # So do live-discovered ones: their real catalogue is the endpoint's,
+        # not the static fallback — displacing a live-only model here would
+        # show the wrong model and persist it on the next provider switch.
+        if provider in OPEN_MODEL_PROVIDERS or provider in LIVE_MODEL_PROVIDERS:
             return configured_model
         provider_model_names = [
             model["model_name"] for model in PROVIDERS[provider]["models"].values()
@@ -916,6 +924,8 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
         # one; keep it only when the new provider's catalogue knows it, else
         # reset to the provider default — and persist so content commands
         # never send the old provider's slug to the new endpoint.
+        # Live providers check against the endpoint's real catalogue.
+        refresh_live_models(selection)
         model_config = _find_model_config(selection, state["model"])
         new_model = (
             model_config["model_name"] if model_config else _provider_default_model(selection)
@@ -930,7 +940,12 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
     from .settings.settings import save_setting
 
     provider = state["provider"]
+    # Live providers pick from what the endpoint actually serves right now;
+    # on fetch failure the static fallback catalogue stays in place.
+    live = refresh_live_models(provider)
     if value is None:
+        if live:
+            console.print("[dim]model list: live from the provider[/dim]")
         provider_models = PROVIDERS[provider]["models"]
         default_model = state["model"]
         if default_model not in [m["model_name"] for m in provider_models.values()]:

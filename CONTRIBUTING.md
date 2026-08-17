@@ -30,9 +30,9 @@ or:
 cp git-tools.env.example git-tools.env
 ```
 
-Provider metadata and model lists are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy. OpenRouter is open-ended — add model slugs via `git-tools settings` (saved to `~/.git-tools/models.json`) and it defaults to `anthropic/claude-sonnet-4.6`. `kimicli` and `cliproxyapi` keep fixed curated model lists.
+Provider metadata, aliases, live-catalog capabilities, and static fallback models are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy. Every provider can refresh its OpenAI-compatible `/models` catalog and accept manually entered model IDs via `git-tools settings` (saved by provider in `~/.git-tools/models.json`). OpenRouter defaults to `anthropic/claude-sonnet-4.6`.
 
-`git-tools settings` writes user overrides to `~/.git-tools/settings.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
+`git-tools settings` writes user overrides to `~/.git-tools/settings.env` and manually entered provider model IDs to `~/.git-tools/models.json`.
 
 ## Branch and PR Flow
 

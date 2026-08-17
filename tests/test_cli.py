@@ -8,7 +8,12 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from git_tools.cli import app, _build_settings_choices, _build_model_choices
+from git_tools.cli import (
+    app,
+    _build_model_choices,
+    _build_provider_choices,
+    _build_settings_choices,
+)
 
 
 class CliTests(unittest.TestCase):
@@ -80,6 +85,19 @@ class CliTests(unittest.TestCase):
                 else _provider_default_model("openrouter")
             )
             self.assertIn(f'GIT_TOOLS_DEFAULT_MODEL="{expected}"', content)
+
+    def test_settings_provider_accepts_agent_canonical_kimicode_alias(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.env"
+            with patch.object(settings_module, "DEFAULT_SETTINGS_PATH", path):
+                result = self.runner.invoke(
+                    app, ["settings", "provider", "kimicode"]
+                )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn('GIT_TOOLS_PROVIDER="kimicli"', path.read_text())
 
     def test_settings_direct_value_rejects_out_of_range(self) -> None:
         result = self.runner.invoke(app, ["settings", "temperature", "9"])
@@ -206,14 +224,32 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(titles[-1], "← Back")
 
-    def test_model_choices_show_effort_only_when_declared(self) -> None:
+    def test_provider_choices_are_built_from_registry_metadata(self) -> None:
+        choices = _build_provider_choices("kimicli")
+        titles = [choice.title for choice in choices]
+        values = [choice.value for choice in choices]
+
+        self.assertEqual(values, ["openrouter", "kimicli", "cliproxyapi"])
+        self.assertIn(
+            "OpenRouter [openrouter] — https://openrouter.ai/api/v1", titles[0]
+        )
+        self.assertIn("Kimi Code [kimicli]", titles[1])
+        self.assertIn("(current)", titles[1])
+        self.assertIn("CLIProxyAPI [cliproxyapi]", titles[2])
+
+    def test_model_choices_show_effort_and_manual_entry_for_all_providers(self) -> None:
         cliproxy_titles = [
             choice.title for choice in _build_model_choices("cliproxyapi")
         ]
-        kimi_titles = [choice.title for choice in _build_model_choices("kimicli")]
+        kimi_titles = [choice.title for choice in _build_model_choices("kimicode")]
+        openrouter_titles = [
+            choice.title for choice in _build_model_choices("openrouter")
+        ]
 
         self.assertIn("gpt-5.5 (effort: xhigh)", cliproxy_titles)
-        self.assertEqual(kimi_titles, ["kimi-k2.5"])
+        for titles in (cliproxy_titles, kimi_titles, openrouter_titles):
+            self.assertEqual(titles[-1], "Enter a model ID manually…")
+        self.assertEqual(kimi_titles[0], "kimi-k2.5")
 
 
 if __name__ == "__main__":

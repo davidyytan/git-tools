@@ -13,7 +13,7 @@ from typing import Any, Optional, Tuple
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
 
-from .mappings import PROVIDERS
+from .mappings import PROVIDER_ALIASES, PROVIDERS
 
 # Whitelist of allowed configuration classes for security
 ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig"}
@@ -47,8 +47,13 @@ _migrate_legacy_settings_file()
 
 
 def normalize_provider_name(provider: str) -> str:
-    """Return the canonical provider key used by the PROVIDERS map."""
-    return str(provider).strip().lower()
+    """Return the canonical provider key used by the PROVIDERS map.
+
+    Agent-core/agent-cli provider spellings such as ``kimicode`` are accepted
+    as aliases while existing git-tools settings keep their compatible key.
+    """
+    normalized = str(provider).strip().lower()
+    return PROVIDER_ALIASES.get(normalized, normalized)
 
 
 def _get_env_file_paths() -> list[Path]:
@@ -91,14 +96,10 @@ def _get_provider_api_key_envs(provider: str) -> list[str]:
 
 
 def provider_label(provider: str) -> str:
-    """Return the human-readable display name for a provider."""
-    labels = {
-        "openrouter": "OpenRouter",
-        "kimicli": "Kimi CLI",
-        "cliproxyapi": "CLIProxyAPI",
-    }
+    """Return the human-readable display name from provider metadata."""
     provider_lower = normalize_provider_name(provider)
-    return labels.get(provider_lower, provider.title())
+    definition = PROVIDERS.get(provider_lower, {})
+    return str(definition.get("label") or provider_lower.title())
 
 
 def provider_api_key_env(provider: str) -> str:

@@ -24,7 +24,8 @@ from git_tools.settings.settings import (
 from git_tools.settings.mappings import (
     LIVE_MODEL_PROVIDERS,
     PROVIDERS,
-    add_user_openrouter_model,
+    add_user_model,
+    provider_allows_manual_model,
     refresh_live_models,
 )
 from git_tools.generators.base import TYPER_STYLE, console, success, warning, error
@@ -91,10 +92,6 @@ def _has_interactive_terminal() -> bool:
 
 REASONING_EFFORT_CHOICES = ("xhigh", "high", "medium", "low")
 
-# Providers with an open-ended catalogue: the model picker offers free-text
-# entry instead of restricting the user to a fixed list.
-OPEN_MODEL_PROVIDERS = ("openrouter",)
-
 # Sentinel Choice value that triggers free-text model entry in the settings menu.
 ADD_MODEL_SENTINEL = "__git_tools_add_model__"
 
@@ -154,11 +151,11 @@ def _resolve_current_model(provider: str, configured_model: str | None) -> str:
     """Return a provider-valid model name, falling back to the provider default."""
     provider = normalize_provider_name(provider)
     if configured_model:
-        # Open-ended providers (OpenRouter) honor any configured slug as-is.
-        # So do live-discovered ones: their real catalogue is the endpoint's,
-        # not the static fallback — displacing a live-only model here would
-        # show the wrong model and persist it on the next provider switch.
-        if provider in OPEN_MODEL_PROVIDERS or provider in LIVE_MODEL_PROVIDERS:
+        # Live/manual providers honor any configured model ID as-is. Their real
+        # catalogue is the endpoint's, not the static fallback — displacing a
+        # live-only or explicitly entered model here would show the wrong value
+        # and persist it on the next provider switch.
+        if provider in LIVE_MODEL_PROVIDERS or provider_allows_manual_model(provider):
             return configured_model
         provider_model_names = [
             model["model_name"] for model in PROVIDERS[provider]["models"].values()
@@ -212,20 +209,85 @@ def _format_model_display(provider: str, model: str | None) -> str:
     return model or _provider_default_model(provider)
 
 
-def _build_model_choices(provider: str) -> list[Choice]:
-    """Build model choices with per-model effort visible when present.
+def _build_provider_choices(current_provider: str) -> list[Choice]:
+    """Build provider rows from registry metadata, similar to agent-cli."""
+    current_provider = normalize_provider_name(current_provider)
+    choices: list[Choice] = []
+    for provider, definition in PROVIDERS.items():
+        label = str(definition.get("label") or provider)
+        endpoint = str(definition.get("default_base_url") or "custom endpoint")
+        current = " (current)" if provider == current_provider else ""
+        choices.append(
+            Choice(f"{label} [{provider}] — {endpoint}{current}", value=provider)
+        )
+    return choices
 
-    Open-ended providers (OpenRouter) also get an "enter a new model" option so
-    users can type any slug rather than pick from a fixed list.
-    """
+
+def _build_model_choices(provider: str) -> list[Choice]:
+    """Build provider-aware model choices with manual-entry fallback."""
     provider = normalize_provider_name(provider)
     choices = [
         Choice(_format_model_choice(model_config), value=model_config["model_name"])
         for model_config in PROVIDERS[provider]["models"].values()
     ]
-    if provider in OPEN_MODEL_PROVIDERS:
-        choices.append(Choice("Enter a new model…", value=ADD_MODEL_SENTINEL))
+    if provider_allows_manual_model(provider):
+        choices.append(Choice("Enter a model ID manually…", value=ADD_MODEL_SENTINEL))
     return choices
+
+
+def _ask_model_choice(
+    provider: str,
+    *,
+    current_model: str,
+    default_model: str,
+) -> str | None:
+    """Pick a model, using searchable autocomplete for large live catalogs."""
+    choices = [*_build_model_choices(provider), _back_choice()]
+    prompt = (
+        f"Select model (current: {current_model}, "
+        f"default: {_provider_default_model(provider)}):"
+    )
+
+    if len(choices) <= 15:
+        selected = _ask_with_back(
+            questionary.select(
+                prompt,
+                choices=choices,
+                default=default_model,
+                style=TYPER_STYLE,
+                qmark="❯",
+                pointer="›",
+                instruction="",
+            )
+        )
+        return None if selected is None or selected == _BACK else str(selected)
+
+    # OpenRouter and local proxies can expose hundreds of models. Searching is
+    # faster and keeps the menu bounded; an unmatched typed value naturally
+    # becomes the manual model ID for providers that allow one.
+    titles = [str(choice.title) for choice in choices]
+    values = {str(choice.title): choice.value for choice in choices}
+    default_title = next(
+        (
+            str(choice.title)
+            for choice in choices
+            if choice.value == default_model
+        ),
+        "",
+    )
+    selected = _ask_with_back(
+        questionary.autocomplete(
+            prompt,
+            choices=titles,
+            default=default_title,
+            style=TYPER_STYLE,
+            qmark="❯",
+        )
+    )
+    if selected is None:
+        return None
+    resolved = values.get(str(selected), selected)
+    return None if resolved == _BACK else str(resolved).strip() or None
 
 
 def _build_effort_choices(
@@ -897,7 +959,7 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
         selection = _ask_with_back(
             questionary.select(
                 f"Select provider (current: {state['provider']}, default: {_SETTING_DEFAULTS['provider']}):",
-                choices=[*providers, _back_choice()],
+                choices=[*_build_provider_choices(state["provider"]), _back_choice()],
                 default=state["provider"] if state["provider"] in providers else _SETTING_DEFAULTS["provider"],
                 style=TYPER_STYLE,
                 qmark="❯",
@@ -950,23 +1012,18 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
         default_model = state["model"]
         if default_model not in [m["model_name"] for m in provider_models.values()]:
             default_model = _provider_default_model(provider)
-        model_choice = _ask_with_back(
-            questionary.select(
-                f"Select model (current: {state['model']}, default: {_provider_default_model(provider)}):",
-                choices=[*_build_model_choices(provider), _back_choice()],
-                default=default_model,
-                style=TYPER_STYLE,
-                qmark="❯",
-                pointer="›",
-                instruction="",
-            )
+        model_choice = _ask_model_choice(
+            provider,
+            current_model=state["model"],
+            default_model=default_model,
         )
-        if model_choice is None or model_choice == _BACK:
+        if model_choice is None:
             return
         if model_choice == ADD_MODEL_SENTINEL:
             new_model = _ask_with_back(
                 questionary.text(
-                    "Enter model slug (e.g. anthropic/claude-sonnet-4.6):",
+                    f"Enter {provider} model ID:",
+                    default=state["model"],
                     style=TYPER_STYLE,
                     qmark="❯",
                     instruction="",
@@ -975,23 +1032,27 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
             model_choice = new_model.strip() if new_model and new_model.strip() else None
             if not model_choice:
                 return
-            add_user_openrouter_model(model_choice)
+            add_user_model(provider, model_choice)
+        elif not _find_model_config(provider, model_choice):
+            # Searchable autocomplete permits arbitrary typed values. Treat an
+            # unmatched value as the provider's manual model ID.
+            add_user_model(provider, model_choice)
     else:
         model_choice = value.strip()
         if not model_choice:
             error("Model cannot be empty.")
             raise typer.Exit(1)
-        if provider in OPEN_MODEL_PROVIDERS:
-            add_user_openrouter_model(model_choice)
-        else:
-            model_config = _find_model_config(provider, model_choice)
-            if not model_config:
-                names = ", ".join(
-                    model["model_name"] for model in PROVIDERS[provider]["models"].values()
-                )
-                error(f"Unknown model for {provider}: {model_choice}. One of: {names}")
-                raise typer.Exit(1)
+        model_config = _find_model_config(provider, model_choice)
+        if model_config:
             model_choice = model_config["model_name"]
+        elif provider_allows_manual_model(provider):
+            add_user_model(provider, model_choice)
+        else:
+            names = ", ".join(
+                model["model_name"] for model in PROVIDERS[provider]["models"].values()
+            )
+            error(f"Unknown model for {provider}: {model_choice}. One of: {names}")
+            raise typer.Exit(1)
 
     save_setting("GIT_TOOLS_DEFAULT_MODEL", model_choice)
     state["model"] = model_choice

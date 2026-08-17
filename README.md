@@ -38,7 +38,7 @@ Configuration and local state live here:
 - `~/.git-tools/settings.env`
   Written by `git-tools settings`. Stores user-level provider, API key, and default overrides. Delete `~/.git-tools/` to reset all user settings from scratch. (A legacy `config.env` is migrated to `settings.env` automatically on first run.)
 - `~/.git-tools/models.json`
-  Written by `git-tools settings` when you add a custom OpenRouter model. Holds your saved OpenRouter model slugs so they reappear in the picker. Created at runtime; never committed.
+  Written by `git-tools settings` when you enter a model ID manually. Holds saved model IDs grouped by provider so they reappear in the picker. Created at runtime; never committed.
 - `./git-tools.env`
   Optional repo-local env override file for the current working directory.
 
@@ -67,10 +67,10 @@ cp git-tools.env.example git-tools.env
 Supported providers:
 
 - `openrouter` with `OPENROUTER_API_KEY`
-- `kimicli` with `KIMICODE_API_KEY`
-- `cliproxyapi` — local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.6-sol` at `xhigh` reasoning. The model picker lists whatever the proxy actually serves (live `/models` discovery; the built-in list is only the offline fallback). `CLIPROXYAPI_API_KEY` is optional (defaults to the `cliproxyapi` placeholder the proxy ships with); set it only if your proxy uses a different key.
+- `kimicli` with `KIMICODE_API_KEY` (`kimicode` and `kimi` are accepted aliases)
+- `cliproxyapi` — local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.6-sol` at `xhigh` reasoning. `CLIPROXYAPI_API_KEY` is optional (defaults to the `cliproxyapi` placeholder the proxy ships with); set it only if your proxy uses a different key.
 
-The active provider is selected with `GIT_TOOLS_PROVIDER`.
+The active provider is selected with `GIT_TOOLS_PROVIDER`. Provider choices, labels, endpoints, and model-catalog capabilities come from the provider registry. For every provider, the model picker attempts live OpenAI-compatible `/models` discovery using that provider's endpoint and key, keeps static models as an offline fallback, and offers manual model-ID entry. Large catalogs use searchable autocomplete.
 
 You can also export the variables directly, for example:
 
@@ -87,11 +87,11 @@ export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
 # export CLIPROXYAPI_API_KEY="my-key"   # only if your proxy uses a non-default key
 ```
 
-Provider metadata and the curated model lists for `kimicli` and `cliproxyapi` are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain. For `cliproxyapi` the static list is only the offline fallback — the picker and model validation refresh from the proxy's live `/models` catalogue.
+Provider metadata and static fallback models are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain. Live catalogs are endpoint- and credential-specific, so changing either causes a fresh discovery. A failed fetch leaves the fallback choices intact.
 
-OpenRouter is open-ended: run `git-tools settings`, choose **Model → Enter a new model…**, and type any slug (for example `z-ai/glm-5.2`). Custom slugs are saved to `~/.git-tools/models.json` so they show up in the picker next time. When nothing is configured, OpenRouter defaults to `anthropic/claude-sonnet-4.6`. You can also set a model directly with `--model <slug>` or `GIT_TOOLS_DEFAULT_MODEL`.
+Every provider supports manual model IDs: run `git-tools settings`, choose **Model → Enter a model ID manually…**, and type the exact ID. Manual IDs are saved under that provider in `~/.git-tools/models.json` so they remain available even when a live catalog does not list them. OpenRouter defaults to `anthropic/claude-sonnet-4.6` when nothing is configured. You can also set a model directly with `git-tools settings model <id>`, `--model <id>`, or `GIT_TOOLS_DEFAULT_MODEL`.
 
-`git-tools settings` writes provider, model, and default overrides to `~/.git-tools/settings.env` (and OpenRouter model slugs to `~/.git-tools/models.json`).
+`git-tools settings` writes provider, model, and default overrides to `~/.git-tools/settings.env`, and manually entered model IDs to `~/.git-tools/models.json`.
 
 For release workflow and branch policy details, see [GitHub Setup](docs/github-setup.md), [Git Flow Guide](docs/git-flow-guide.md), [Classic Flow](docs/git-flow-classic.md), [Classic — Reviewed](docs/git-flow-classic-reviewed.md), [Variant — Release-led](docs/git-flow-variant-release-led.md), and [Variant — Reviewed](docs/git-flow-variant-reviewed.md).
 
@@ -282,7 +282,7 @@ git-tools
 | `--defaults` | | Write config using detected defaults without prompting |
 | `--force` | | Update an existing Commitizen config in place |
 
-Provider metadata and model lists are defined in `git_tools/settings/mappings.py`. OpenRouter models are open-ended and managed via `git-tools settings` (saved to `~/.git-tools/models.json`).
+Provider metadata, live-catalog capabilities, and static fallback models are defined in `git_tools/settings/mappings.py`. Manually entered model IDs for any provider are managed via `git-tools settings` and saved to `~/.git-tools/models.json`.
 
 ## Useful Git Commands
 

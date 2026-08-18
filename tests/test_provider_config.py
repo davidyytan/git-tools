@@ -83,6 +83,41 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(config.api_key, "sk-kimi-test")
         self.assertEqual(config.base_url, "https://kimi.example/v1")
 
+    def test_display_token_usage_accepts_nullable_kimi_details(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+        response = {
+            "response_metadata": {
+                "token_usage": {
+                    "prompt_tokens": 120,
+                    "completion_tokens": 30,
+                    "total_tokens": 150,
+                    "completion_tokens_details": None,
+                    "cost_details": None,
+                }
+            }
+        }
+
+        with patch("git_tools.generators.base.console.print") as print_mock:
+            generator.display_token_usage(response)
+
+        panel = print_mock.call_args.args[0]
+        rendered = str(panel.renderable)
+        self.assertIn("120", rendered)
+        self.assertIn("30", rendered)
+        self.assertIn("150", rendered)
+        self.assertNotIn("Reasoning", rendered)
+
+    def test_display_token_usage_ignores_malformed_metadata(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+
+        with patch("git_tools.generators.base.console.print") as print_mock:
+            generator.display_token_usage({"response_metadata": None})
+            generator.display_token_usage(
+                {"response_metadata": {"token_usage": None}}
+            )
+
+        print_mock.assert_not_called()
+
     def test_create_kimicli_client_sets_headers_and_extra_body(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = KimiCLIConfig(

@@ -1212,16 +1212,27 @@ class BaseGenerator:
         Args:
             response: Response dict from LLM invocation
         """
-        token_usage = response.get("response_metadata", {}).get("token_usage")
-        if not token_usage:
+        response_metadata = response.get("response_metadata")
+        if not isinstance(response_metadata, dict):
             return
+        token_usage = response_metadata.get("token_usage")
+        if not isinstance(token_usage, dict) or not token_usage:
+            return
+
+        # Providers may explicitly return null for optional nested usage fields.
+        completion_details = token_usage.get("completion_tokens_details")
+        if not isinstance(completion_details, dict):
+            completion_details = {}
+        cost_details = token_usage.get("cost_details")
+        if not isinstance(cost_details, dict):
+            cost_details = {}
 
         # Build token usage content
         lines = []
         prompt_tokens = token_usage.get("prompt_tokens")
         completion_tokens = token_usage.get("completion_tokens")
         total_tokens = token_usage.get("total_tokens")
-        reasoning_tokens = token_usage.get("completion_tokens_details", {}).get("reasoning_tokens")
+        reasoning_tokens = completion_details.get("reasoning_tokens")
 
         if prompt_tokens is not None:
             lines.append(f"[{STYLE_DIM}]Prompt:[/{STYLE_DIM}] [{STYLE_PRIMARY}]{prompt_tokens:,}[/{STYLE_PRIMARY}]")
@@ -1234,7 +1245,7 @@ class BaseGenerator:
 
         # Cost information
         cost = token_usage.get("cost")
-        upstream_cost = token_usage.get("cost_details", {}).get("upstream_inference_cost")
+        upstream_cost = cost_details.get("upstream_inference_cost")
 
         if cost is not None or upstream_cost is not None:
             lines.append("")

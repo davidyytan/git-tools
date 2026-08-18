@@ -7,6 +7,7 @@ loading API keys from environment files and validating settings.
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -143,36 +144,52 @@ def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | 
     return False, None
 
 
-def save_setting(key: str, value: str) -> bool:
-    """Save a setting to the settings file.
-
-    Args:
-        key: Environment variable name (e.g., 'GIT_TOOLS_DEFAULT_MODEL')
-        value: Value to save
-
-    Returns:
-        True if saved successfully, False otherwise
-    """
-    # Ensure config directory exists
-    DEFAULT_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    # Read existing content or start fresh
-    if DEFAULT_SETTINGS_PATH.exists():
-        content = DEFAULT_SETTINGS_PATH.read_text()
-        pattern = re.compile(rf'^{key}\s*=.*$', re.MULTILINE)
+def _render_settings_updates(content: str, updates: dict[str, str]) -> str:
+    """Return settings file content with all updates applied in memory."""
+    for key, value in updates.items():
+        pattern = re.compile(rf'^{re.escape(key)}\s*=.*$', re.MULTILINE)
+        line = f'{key}="{value}"'
         if pattern.search(content):
-            # Update existing key. A callable replacement keeps backslashes in
-            # the value literal; a string replacement would parse them as
-            # regex group references.
-            content = pattern.sub(lambda _match: f'{key}="{value}"', content)
+            # A callable replacement keeps backslashes in values literal; a
+            # string replacement would parse them as regex group references.
+            content = pattern.sub(lambda _match, replacement=line: replacement, content)
         else:
-            # Append new key
-            content = content.rstrip() + f'\n{key}="{value}"\n'
-    else:
-        content = f'{key}="{value}"\n'
+            content = content.rstrip() + ("\n" if content.strip() else "") + line + "\n"
+    return content
 
-    DEFAULT_SETTINGS_PATH.write_text(content)
+
+def save_settings(updates: dict[str, str]) -> bool:
+    """Atomically apply multiple settings with a single file replacement."""
+    if not updates:
+        return True
+
+    DEFAULT_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    content = DEFAULT_SETTINGS_PATH.read_text() if DEFAULT_SETTINGS_PATH.exists() else ""
+    rendered = _render_settings_updates(content, updates)
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=DEFAULT_SETTINGS_PATH.parent,
+            prefix=f".{DEFAULT_SETTINGS_PATH.name}.",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.replace(DEFAULT_SETTINGS_PATH)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
     return True
+
+
+def save_setting(key: str, value: str) -> bool:
+    """Save one setting atomically to the settings file."""
+    return save_settings({key: value})
 
 
 def setup_api_key(provider: str = "openrouter") -> bool:
@@ -226,7 +243,7 @@ class GitToolsSettings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GIT_TOOLS_REASONING_EFFORT"),
     )
-    default_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    default_temperature: float = Field(default=0.6, ge=0.0, le=2.0)
     default_max_tokens: int = Field(default=32000, ge=1)
     default_max_retries: int = Field(default=1, ge=0)
     default_retry_delay: float = Field(default=1.0, ge=0.0)

@@ -50,11 +50,11 @@ Run the settings command to configure the provider, API key, and model defaults:
 git-tools settings
 ```
 
-This opens an interactive picker (press Esc or choose ← Back to go up a level) and saves settings to `~/.git-tools/settings.env`. You can also edit a single setting directly:
+This opens an interactive picker (press Esc or choose ← Back to go up a level) and saves settings to `~/.git-tools/settings.env`. Choosing a provider prompts for its key first, then detects and offers that provider's models. You can also edit a single setting directly:
 
 ```bash
 git-tools settings provider openrouter
-git-tools settings temperature 0.2
+git-tools settings temperature 0.6
 git-tools settings model anthropic/claude-sonnet-4.6
 ```
 
@@ -87,7 +87,7 @@ export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
 # export CLIPROXYAPI_API_KEY="my-key"   # only if your proxy uses a non-default key
 ```
 
-Provider metadata and static fallback models are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain. Live catalogs are endpoint- and credential-specific, so changing either causes a fresh discovery. A failed fetch leaves the fallback choices intact.
+Provider metadata and static fallback models are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain. Live catalogs are endpoint- and credential-specific, so changing either causes a fresh discovery. A failed refresh may retain the last successful catalog for the same endpoint/key; changed or invalid configuration resets safely to saved/manual and static fallback choices.
 
 Every provider supports manual model IDs: run `git-tools settings`, choose **Model → Enter a model ID manually…**, and type the exact ID. Manual IDs are saved under that provider in `~/.git-tools/models.json` so they remain available even when a live catalog does not list them. OpenRouter defaults to `anthropic/claude-sonnet-4.6` when nothing is configured. You can also set a model directly with `git-tools settings model <id>`, `--model <id>`, or `GIT_TOOLS_DEFAULT_MODEL`.
 
@@ -123,7 +123,7 @@ git-tools commit --workflow-kind open-release
 git-tools settings
 ```
 
-`git-tools settings` is interactive. Use it to choose the provider, save the matching API key, and set default model and request settings. Press Esc (or pick ← Back) to go up one menu level. `git-tools settings <name> [value]` edits a single setting directly, e.g. `git-tools settings temperature 0.2`.
+`git-tools settings` is interactive. Choosing **Provider** now runs the complete setup in order: provider → API key (blank keeps an existing/default key) → live model detection → model choice. The standalone **API Key** and **Model** entries remain available for later changes. Press Esc (or pick ← Back) to go up one menu level. `git-tools settings <name> [value]` edits a single setting directly, e.g. `git-tools settings temperature 0.6`.
 
 ### Generate issue documentation
 

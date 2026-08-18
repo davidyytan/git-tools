@@ -655,7 +655,10 @@ class BaseGenerator:
             },
         }
 
-        self._add_optional_params(kwargs, temperature, max_tokens)
+        # Kimi Code currently rejects every other value (HTTP 400: "only 0.6
+        # is allowed for this model"). Enforce the provider requirement even if
+        # a stale setting or explicit --temp override supplies another value.
+        self._add_optional_params(kwargs, 0.6, max_tokens)
         return ChatOpenAI(**kwargs)
 
     def _get_model_config(

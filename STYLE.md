@@ -294,12 +294,12 @@ $ git-tools issue
   Model: gpt-5.5
   Effort: xhigh (model default)
   API Key (cliproxyapi): configured
-  Temperature: 0.2
+  Temperature: 0.6
   Max Tokens: 32000
   Max Retries: 1
 › Done
 ❯ Temperature                       <- User selects temperature
-❯ Temperature (current: 0.2, ...):  <- Questionary → Questionary (no spacing)
+❯ Temperature (current: 0.6, ...):  <- Questionary → Questionary (no spacing)
   0.5
                                     <- Questionary → Success
 ✓ Temperature set to 0.5

@@ -104,6 +104,9 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(kwargs["base_url"], "https://api.kimi.com/coding/v1")
         self.assertEqual(kwargs["default_headers"], {"User-Agent": "KimiCLI/1.3"})
         self.assertEqual(kwargs["extra_body"], {"thinking": {"type": "disabled"}})
+        # Kimi Code rejects every other value, so an explicit stale override is
+        # normalized to the provider-required temperature.
+        self.assertEqual(kwargs["temperature"], 0.6)
 
     @patch.dict(os.environ, {"CLIPROXYAPI_API_KEY": "cliproxyapi"}, clear=False)
     def test_check_api_key_configured_supports_cliproxyapi_env(self) -> None:
@@ -216,6 +219,12 @@ class ProviderConfigTests(unittest.TestCase):
         fresh = GitToolsSettings()
         self.assertEqual(fresh.default_reasoning_effort, "medium")
 
+    @patch.dict(os.environ, {"GIT_TOOLS_DEFAULT_TEMPERATURE": ""}, clear=False)
+    def test_settings_default_temperature_is_point_six(self) -> None:
+        from git_tools.settings.settings import GitToolsSettings
+
+        self.assertEqual(GitToolsSettings().default_temperature, 0.6)
+
     @patch.dict(os.environ, {"GIT_TOOLS_DEFAULT_MAX_TOKENS": ""}, clear=False)
     def test_settings_default_max_tokens_is_32k(self) -> None:
         from git_tools.settings.settings import GitToolsSettings
@@ -251,6 +260,48 @@ class ProviderConfigTests(unittest.TestCase):
                     settings_module.save_setting("GIT_TOOLS_DEFAULT_MODEL", r"a\1b")
                 )
             self.assertIn('GIT_TOOLS_DEFAULT_MODEL="a\\1b"', path.read_text())
+
+    def test_save_settings_atomically_applies_multiple_updates(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.env"
+            path.write_text('UNRELATED="keep"\nGIT_TOOLS_PROVIDER="openrouter"\n')
+            with patch.object(settings_module, "DEFAULT_SETTINGS_PATH", path):
+                self.assertTrue(
+                    settings_module.save_settings(
+                        {
+                            "KIMICODE_API_KEY": r"a\1b",
+                            "GIT_TOOLS_PROVIDER": "kimicli",
+                            "GIT_TOOLS_DEFAULT_MODEL": "kimi-k2.5",
+                        }
+                    )
+                )
+
+            content = path.read_text()
+            self.assertIn('UNRELATED="keep"', content)
+            self.assertIn('KIMICODE_API_KEY="a\\1b"', content)
+            self.assertIn('GIT_TOOLS_PROVIDER="kimicli"', content)
+            self.assertIn('GIT_TOOLS_DEFAULT_MODEL="kimi-k2.5"', content)
+
+    def test_save_settings_replace_failure_keeps_original_and_cleans_temp(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.env"
+            original = 'GIT_TOOLS_PROVIDER="openrouter"\n'
+            path.write_text(original)
+            with (
+                patch.object(settings_module, "DEFAULT_SETTINGS_PATH", path),
+                patch.object(Path, "replace", side_effect=OSError("rename failed")),
+            ):
+                with self.assertRaisesRegex(OSError, "rename failed"):
+                    settings_module.save_settings(
+                        {"GIT_TOOLS_PROVIDER": "kimicli"}
+                    )
+
+            self.assertEqual(path.read_text(), original)
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*")), [])
 
     def test_settings_env_wins_over_surviving_legacy_file(self) -> None:
         from git_tools.settings import settings as settings_module

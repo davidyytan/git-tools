@@ -1,9 +1,11 @@
 """Tests for provider-wide live model discovery and manual fallbacks."""
 
 import copy
+import io
 import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -51,13 +53,38 @@ class TestFetchLiveModels(unittest.TestCase):
 
     def test_returns_empty_on_error_bad_shape_or_missing_base_url(self) -> None:
         with patch("urllib.request.urlopen", side_effect=OSError("down")):
-            self.assertEqual(fetch_live_models("http://x/v1", "k"), [])
+            network = fetch_live_models("http://x/v1", "k")
+        self.assertEqual(network, [])
+        self.assertEqual(network.error_kind, "network")
+
         with patch(
             "urllib.request.urlopen",
             return_value=_fake_urlopen_response({"unexpected": 1}),
         ):
-            self.assertEqual(fetch_live_models("http://x/v1", "k"), [])
-        self.assertEqual(fetch_live_models("", "k"), [])
+            malformed = fetch_live_models("http://x/v1", "k")
+        self.assertEqual(malformed, [])
+        self.assertEqual(malformed.error_kind, "malformed")
+
+        missing = fetch_live_models("", "k")
+        self.assertEqual(missing, [])
+        self.assertEqual(missing.error_kind, "malformed")
+
+    def test_http_401_is_classified_as_auth_failure(self) -> None:
+        response = urllib.error.HTTPError(
+            "https://api.kimi.com/coding/v1/models",
+            401,
+            "Unauthorized",
+            {},
+            io.BytesIO(b'{"error":"invalid key"}'),
+        )
+        with patch("urllib.request.urlopen", side_effect=response):
+            result = fetch_live_models(
+                "https://api.kimi.com/coding/v1", "bad-key"
+            )
+
+        self.assertEqual(result, [])
+        self.assertEqual(result.error_kind, "auth")
+        self.assertEqual(result.status, 401)
 
 
 class TestRefreshLiveModels(unittest.TestCase):
@@ -70,6 +97,7 @@ class TestRefreshLiveModels(unittest.TestCase):
         self._saved_user_models = copy.deepcopy(mappings._USER_MODELS)
         mappings._LIVE_REFRESHED.clear()
         mappings._LIVE_REFRESH_IDENTITIES.clear()
+        mappings._LIVE_REFRESH_ERRORS.clear()
 
     def tearDown(self) -> None:
         for provider, models in self._saved_models.items():
@@ -80,6 +108,7 @@ class TestRefreshLiveModels(unittest.TestCase):
         mappings._USER_MODELS.update(self._saved_user_models)
         mappings._LIVE_REFRESHED.clear()
         mappings._LIVE_REFRESH_IDENTITIES.clear()
+        mappings._LIVE_REFRESH_ERRORS.clear()
 
     def test_every_registered_provider_supports_dynamic_catalogs(self) -> None:
         self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS))
@@ -195,6 +224,46 @@ class TestRefreshLiveModels(unittest.TestCase):
             self.assertIn("kimi-manual", PROVIDERS["kimicli"]["models"])
             self.assertIn("kimi-live", PROVIDERS["kimicli"]["models"])
             self.assertEqual(json.loads(path.read_text())["kimicli"], ["kimi-manual"])
+
+    def test_configuration_failure_diagnostic_does_not_echo_secret(self) -> None:
+        secret = "sk-secret-that-must-not-appear"
+        with patch(
+            "git_tools.settings.settings.load_provider_config",
+            side_effect=ValueError(f"invalid input: {secret}"),
+        ):
+            self.assertFalse(refresh_live_models("kimicli", force=True))
+
+        failure = mappings.get_live_model_refresh_error("kimicli")
+        self.assertIsNotNone(failure)
+        self.assertNotIn(secret, failure.message)
+        self.assertIn("configuration is invalid or incomplete", failure.message)
+
+    def test_configuration_failure_drops_old_live_catalog(self) -> None:
+        config = SimpleNamespace(base_url="http://x/v1", api_key="k1")
+        with (
+            patch(
+                "git_tools.settings.settings.load_provider_config",
+                return_value=config,
+            ),
+            patch.object(
+                mappings,
+                "fetch_live_models",
+                return_value=["gpt-5.6-sol", "old-account-only"],
+            ),
+        ):
+            self.assertTrue(refresh_live_models("cliproxyapi"))
+
+        with patch(
+            "git_tools.settings.settings.load_provider_config",
+            side_effect=ValueError("missing API key"),
+        ):
+            self.assertFalse(refresh_live_models("cliproxyapi", force=True))
+
+        self.assertEqual(
+            list(PROVIDERS["cliproxyapi"]["models"]),
+            ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
+        )
+        self.assertNotIn("cliproxyapi", mappings._LIVE_REFRESHED)
 
     def test_failed_fetch_after_identity_change_drops_old_live_catalog(self) -> None:
         config = SimpleNamespace(base_url="http://x/v1", api_key="k1")

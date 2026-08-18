@@ -14,6 +14,9 @@ fallback, while manually entered model IDs are saved in
 import copy
 import hashlib
 import json
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -29,6 +32,45 @@ USER_MODELS_PATH = Path.home() / ".git-tools" / "models.json"
 # Live-discovered CLIProxyAPI models matching these prefixes are
 # effort-capable and receive this per-model default.
 _LIVE_EFFORT_DEFAULT = "xhigh"
+_AUTH_STATUSES = frozenset({401, 402, 403})
+
+
+class LiveModelList(list[str]):
+    """Model IDs plus bounded failure details for interactive diagnostics."""
+
+    def __init__(
+        self,
+        values: List[str] | None = None,
+        *,
+        error_kind: str | None = None,
+        error: str | None = None,
+        status: int | None = None,
+    ) -> None:
+        super().__init__(values or [])
+        self.error_kind = error_kind
+        self.error = error
+        self.status = status
+
+
+@dataclass(frozen=True)
+class LiveModelRefreshError:
+    """Why a provider catalog could not be refreshed."""
+
+    kind: str
+    message: str
+    status: int | None = None
+    retained_live_catalog: bool = False
+
+
+@dataclass(frozen=True)
+class ProviderCatalogSnapshot:
+    """Restorable in-process catalog and refresh state for one provider."""
+
+    models: Dict[str, Any]
+    refreshed: bool
+    identity: tuple[str, str] | None
+    error: LiveModelRefreshError | None
+
 
 # Built-in provider definitions (source of truth). ``default_base_url`` is UI
 # metadata only; the actual runtime value still comes from each config class so
@@ -189,17 +231,23 @@ _FALLBACK_MODELS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def fetch_live_models(base_url: str, api_key: str, timeout: float = 4.0) -> List[str]:
-    """GET ``{base_url}/models`` and return model IDs (``[]`` on failure).
+def fetch_live_models(
+    base_url: str,
+    api_key: str,
+    timeout: float = 4.0,
+) -> LiveModelList:
+    """GET ``{base_url}/models`` and return IDs plus failure metadata.
 
-    The transport is provider-neutral and follows the OpenAI-compatible catalog
-    shape used by the current providers. Failures — endpoint down, bad key, or
-    malformed response — degrade to the static/manual fallback catalog.
+    The list remains backward-compatible with callers that only need model IDs,
+    while interactive settings can distinguish authentication, network, HTTP,
+    and malformed-catalog failures instead of silently showing a fallback as if
+    it were the complete live catalog.
     """
-    import urllib.request
-
     if not base_url:
-        return []
+        return LiveModelList(
+            error_kind="malformed",
+            error="provider base URL is empty",
+        )
     url = base_url.rstrip("/") + "/models"
     req = urllib.request.Request(url)
     req.add_header("Accept", "application/json")
@@ -208,23 +256,84 @@ def fetch_live_models(base_url: str, api_key: str, timeout: float = 4.0) -> List
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except Exception:
-        return []
+    except urllib.error.HTTPError as exc:
+        status = int(exc.code)
+        kind = "auth" if status in _AUTH_STATUSES else "server" if status >= 500 else "http"
+        return LiveModelList(
+            error_kind=kind,
+            error=f"model catalog request failed with HTTP {status}",
+            status=status,
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return LiveModelList(
+            error_kind="network",
+            error=str(exc) or type(exc).__name__,
+        )
+    except (json.JSONDecodeError, UnicodeError, TypeError, ValueError) as exc:
+        return LiveModelList(error_kind="malformed", error=str(exc))
+
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, list):
-        return []
+        return LiveModelList(
+            error_kind="malformed",
+            error="model catalog response does not contain a data array",
+        )
     ids = [
         str(model.get("id")).strip()
         for model in data
         if isinstance(model, dict) and model.get("id")
     ]
-    return sorted(dict.fromkeys(model_id for model_id in ids if model_id))
+    unique = sorted(dict.fromkeys(model_id for model_id in ids if model_id))
+    if not unique:
+        return LiveModelList(
+            error_kind="malformed",
+            error="provider returned no usable model entries",
+        )
+    return LiveModelList(unique)
 
 
 # Providers refreshed this process. The identity map prevents a successful
 # catalog fetched with one endpoint/key from being reused after either changes.
 _LIVE_REFRESHED: set[str] = set()
 _LIVE_REFRESH_IDENTITIES: Dict[str, tuple[str, str]] = {}
+_LIVE_REFRESH_ERRORS: Dict[str, LiveModelRefreshError] = {}
+
+
+def get_live_model_refresh_error(provider: str) -> LiveModelRefreshError | None:
+    """Return the last catalog refresh error for a provider, if any."""
+    return _LIVE_REFRESH_ERRORS.get(_normalize_provider_key(provider))
+
+
+def snapshot_provider_catalog(provider: str) -> ProviderCatalogSnapshot:
+    """Capture provider catalog state before temporary credential discovery."""
+    provider = _normalize_provider_key(provider)
+    return ProviderCatalogSnapshot(
+        models=copy.deepcopy(PROVIDERS[provider]["models"]),
+        refreshed=provider in _LIVE_REFRESHED,
+        identity=_LIVE_REFRESH_IDENTITIES.get(provider),
+        error=_LIVE_REFRESH_ERRORS.get(provider),
+    )
+
+
+def restore_provider_catalog(
+    provider: str,
+    snapshot: ProviderCatalogSnapshot,
+) -> None:
+    """Restore provider catalog state after a cancelled/failed transaction."""
+    provider = _normalize_provider_key(provider)
+    PROVIDERS[provider]["models"] = copy.deepcopy(snapshot.models)
+    if snapshot.refreshed:
+        _LIVE_REFRESHED.add(provider)
+    else:
+        _LIVE_REFRESHED.discard(provider)
+    if snapshot.identity is None:
+        _LIVE_REFRESH_IDENTITIES.pop(provider, None)
+    else:
+        _LIVE_REFRESH_IDENTITIES[provider] = snapshot.identity
+    if snapshot.error is None:
+        _LIVE_REFRESH_ERRORS.pop(provider, None)
+    else:
+        _LIVE_REFRESH_ERRORS[provider] = snapshot.error
 
 
 def _catalog_identity(base_url: str, api_key: str) -> tuple[str, str]:
@@ -261,7 +370,18 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
 
     try:
         config = load_provider_config(provider)
-    except Exception:
+    except Exception as exc:
+        _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
+            kind="configuration",
+            # Pydantic validation text can echo rejected input values. Keep the
+            # interactive diagnostic useful without ever retaining credentials.
+            message=f"{type(exc).__name__}: provider configuration is invalid or incomplete",
+        )
+        # Configuration is no longer sufficient to identify the account. Never
+        # retain a live catalog fetched under an earlier credential.
+        PROVIDERS[provider]["models"] = _fallback_models(provider)
+        _LIVE_REFRESHED.discard(provider)
+        _LIVE_REFRESH_IDENTITIES.pop(provider, None)
         return False
 
     base_url = config.base_url or ""
@@ -276,6 +396,16 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
 
     live = fetch_live_models(base_url, api_key)
     if not live:
+        retained_live_catalog = (
+            provider in _LIVE_REFRESHED
+            and _LIVE_REFRESH_IDENTITIES.get(provider) == identity
+        )
+        _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
+            kind=getattr(live, "error_kind", None) or "unknown",
+            message=getattr(live, "error", None) or "live model discovery failed",
+            status=getattr(live, "status", None),
+            retained_live_catalog=retained_live_catalog,
+        )
         # If this provider was previously refreshed under a different endpoint
         # or credential, do not leak that old catalog into the new identity.
         if (
@@ -304,6 +434,7 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
     PROVIDERS[provider]["models"] = merged
     _LIVE_REFRESHED.add(provider)
     _LIVE_REFRESH_IDENTITIES[provider] = identity
+    _LIVE_REFRESH_ERRORS.pop(provider, None)
     return True
 
 
@@ -353,13 +484,19 @@ def provider_allows_manual_model(provider: str) -> bool:
 __all__ = [
     "DEFAULT_OPENROUTER_MODEL",
     "LIVE_MODEL_PROVIDERS",
+    "LiveModelList",
+    "LiveModelRefreshError",
     "MANUAL_MODEL_PROVIDERS",
     "PROVIDER_ALIASES",
+    "ProviderCatalogSnapshot",
     "PROVIDERS",
     "USER_MODELS_PATH",
     "add_user_model",
     "add_user_openrouter_model",
     "fetch_live_models",
+    "get_live_model_refresh_error",
     "provider_allows_manual_model",
     "refresh_live_models",
+    "restore_provider_catalog",
+    "snapshot_provider_catalog",
 ]

@@ -5,6 +5,7 @@ and comprehensive issue/pull request documentation using LLM providers.
 """
 
 import logging
+import os
 import sys
 from enum import Enum
 from typing import Annotated, Any, Callable, Optional
@@ -18,6 +19,8 @@ from rich.console import Console
 from git_tools.settings.settings import (
     GitToolsSettings,
     normalize_provider_name,
+    provider_api_key_env,
+    provider_label,
     reload_settings,
     settings,
 )
@@ -25,8 +28,11 @@ from git_tools.settings.mappings import (
     LIVE_MODEL_PROVIDERS,
     PROVIDERS,
     add_user_model,
+    get_live_model_refresh_error,
     provider_allows_manual_model,
     refresh_live_models,
+    restore_provider_catalog,
+    snapshot_provider_catalog,
 )
 from git_tools.generators.base import TYPER_STYLE, console, success, warning, error
 
@@ -223,13 +229,32 @@ def _build_provider_choices(current_provider: str) -> list[Choice]:
     return choices
 
 
-def _build_model_choices(provider: str) -> list[Choice]:
-    """Build provider-aware model choices with manual-entry fallback."""
+def _build_model_choices(
+    provider: str,
+    *,
+    current_model: str | None = None,
+) -> list[Choice]:
+    """Build provider-aware choices with the current model first and marked."""
     provider = normalize_provider_name(provider)
-    choices = [
-        Choice(_format_model_choice(model_config), value=model_config["model_name"])
-        for model_config in PROVIDERS[provider]["models"].values()
-    ]
+    choices: list[Choice] = []
+    current_choice: Choice | None = None
+    for model_config in PROVIDERS[provider]["models"].values():
+        model_id = model_config["model_name"]
+        title = _format_model_choice(model_config)
+        choice = Choice(
+            f"{title} (current)" if model_id == current_model else title,
+            value=model_id,
+        )
+        if model_id == current_model:
+            current_choice = choice
+        else:
+            choices.append(choice)
+
+    if current_model:
+        choices.insert(
+            0,
+            current_choice or Choice(f"{current_model} (current)", value=current_model),
+        )
     if provider_allows_manual_model(provider):
         choices.append(Choice("Enter a model ID manually…", value=ADD_MODEL_SENTINEL))
     return choices
@@ -242,9 +267,12 @@ def _ask_model_choice(
     default_model: str,
 ) -> str | None:
     """Pick a model, using searchable autocomplete for large live catalogs."""
-    choices = [*_build_model_choices(provider), _back_choice()]
+    choices = [
+        *_build_model_choices(provider, current_model=current_model),
+        _back_choice(),
+    ]
     prompt = (
-        f"Select model (current: {current_model}, "
+        f"Select model (current: {current_model or 'unset'}, "
         f"default: {_provider_default_model(provider)}):"
     )
 
@@ -951,10 +979,44 @@ def _load_settings_state() -> dict[str, Any]:
     }
 
 
+def _prompt_provider_api_key(provider: str) -> tuple[bool, str | None]:
+    """Ask for a provider key before catalog discovery.
+
+    Returns ``(proceed, new_key)``. Blank keeps an existing environment/file or
+    provider-default key and returns ``None`` as ``new_key``. A typed key is not
+    persisted yet: the caller temporarily applies it for discovery and saves it
+    only after model selection completes.
+    """
+    from .settings.settings import check_api_key_configured
+
+    configured, _ = check_api_key_configured(provider)
+    label = provider_label(provider)
+    suffix = " (blank keeps current)" if configured else ""
+    value = _ask_with_back(
+        questionary.password(
+            f"Enter your {label} API key{suffix}:",
+            style=TYPER_STYLE,
+            qmark="❯",
+        )
+    )
+    if value is None:
+        return False, None
+
+    key = value.strip()
+    if key:
+        return True, key
+    if configured:
+        return True, None
+
+    warning(f"{label} needs an API key before models can be detected.")
+    return False, None
+
+
 def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
-    from .settings.settings import check_api_key_configured, save_setting
+    from .settings.settings import check_api_key_configured, save_setting, save_settings
 
     providers = list(PROVIDERS.keys())
+    interactive_flow = value is None
     if value is None:
         selection = _ask_with_back(
             questionary.select(
@@ -976,17 +1038,79 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
             raise typer.Exit(1)
 
     provider_changed = selection != state["provider"]
+
+    if interactive_flow:
+        proceed, new_key = _prompt_provider_api_key(selection)
+        if not proceed:
+            return
+
+        env_var = provider_api_key_env(selection)
+        old_env_present = env_var in os.environ
+        old_env_value = os.environ.get(env_var)
+        catalog_snapshot = snapshot_provider_catalog(selection)
+        if new_key is not None:
+            # Provider config reads process env first. Apply the candidate key
+            # for discovery. On success it remains authoritative in this process;
+            # cancellation or an exception restores the caller's old value.
+            os.environ[env_var] = new_key
+        try:
+            current_model = state["model"] if not provider_changed else ""
+            new_model = _choose_provider_model(selection, current_model)
+        except BaseException:
+            restore_provider_catalog(selection, catalog_snapshot)
+            if new_key is not None:
+                if old_env_present:
+                    os.environ[env_var] = old_env_value or ""
+                else:
+                    os.environ.pop(env_var, None)
+            raise
+        if new_model is None:
+            restore_provider_catalog(selection, catalog_snapshot)
+            if new_key is not None:
+                if old_env_present:
+                    os.environ[env_var] = old_env_value or ""
+                else:
+                    os.environ.pop(env_var, None)
+            return
+
+        # Persist provider, optional key, and model in one atomic file replace.
+        # A write failure restores the exact process environment used before
+        # setup, so the whole operation remains transactional.
+        updates = {
+            "GIT_TOOLS_PROVIDER": selection,
+            "GIT_TOOLS_DEFAULT_MODEL": new_model,
+        }
+        if new_key is not None:
+            updates = {env_var: new_key, **updates}
+        try:
+            save_settings(updates)
+        except BaseException:
+            restore_provider_catalog(selection, catalog_snapshot)
+            if new_key is not None:
+                if old_env_present:
+                    os.environ[env_var] = old_env_value or ""
+                else:
+                    os.environ.pop(env_var, None)
+            raise
+        _remember_manual_model(selection, new_model)
+        state["provider"] = selection
+        state["model"] = new_model
+        state["api_configured"] = bool(new_key) or check_api_key_configured(selection)[0]
+        console.print()
+        success(f"Provider set to {selection}")
+        if new_key is not None:
+            success(f"{provider_label(selection)} API key saved.")
+        success(f"Model set to {new_model}")
+        return
+
+    # Direct `settings provider <name>` remains non-interactive and preserves
+    # the previous behavior: switch immediately and select a valid fallback.
     save_setting("GIT_TOOLS_PROVIDER", selection)
     state["provider"] = selection
     state["api_configured"], _ = check_api_key_configured(selection)
     console.print()
     success(f"Provider set to {selection}")
     if provider_changed:
-        # A model carried over from the old provider is meaningless on the new
-        # one; keep it only when the new provider's catalogue knows it, else
-        # reset to the provider default — and persist so content commands
-        # never send the old provider's slug to the new endpoint.
-        # Live providers check against the endpoint's real catalogue.
         refresh_live_models(selection)
         model_config = _find_model_config(selection, state["model"])
         new_model = (
@@ -998,45 +1122,91 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
         state["model"] = new_model
 
 
+def _print_model_catalog_status(provider: str, live: bool) -> None:
+    """Explain whether the interactive model list is live or a fallback."""
+    if live:
+        console.print("[dim]model list: live from the provider[/dim]")
+        return
+
+    failure = get_live_model_refresh_error(provider)
+    label = provider_label(provider)
+    if failure is None:
+        warning(
+            f"Could not load {label}'s live model catalog; "
+            "showing available saved/fallback models."
+        )
+        return
+
+    available = (
+        "showing the last successful catalog"
+        if failure.retained_live_catalog
+        else "showing available saved/fallback models"
+    )
+    if failure.kind == "auth":
+        status = f"HTTP {failure.status}" if failure.status else "authentication failed"
+        key_env = provider_api_key_env(provider)
+        source = " in the process environment" if os.environ.get(key_env) else ""
+        warning(
+            f"{label} model auto-detection failed ({status}). Check "
+            f"{key_env}{source}; {available}."
+        )
+        return
+
+    status = f"HTTP {failure.status}" if failure.status else failure.kind
+    detail = " ".join(failure.message.split())[:160]
+    warning(
+        f"{label} model auto-detection failed ({status}: {detail}); {available}."
+    )
+
+
+def _remember_manual_model(provider: str, model: str) -> None:
+    """Best-effort persistence for a selected model absent from the catalog."""
+    if _find_model_config(provider, model):
+        return
+    try:
+        add_user_model(provider, model)
+    except OSError as exc:
+        warning(f"Model selected, but its picker history could not be saved: {exc}")
+
+
+def _choose_provider_model(provider: str, current_model: str) -> str | None:
+    """Discover and choose a model for one provider without persisting it."""
+    live = refresh_live_models(provider, force=True)
+    _print_model_catalog_status(provider, live)
+    default_model = current_model or _provider_default_model(provider)
+    model_choice = _ask_model_choice(
+        provider,
+        current_model=current_model,
+        default_model=default_model,
+    )
+    if model_choice is None:
+        return None
+    if model_choice == ADD_MODEL_SENTINEL:
+        new_model = _ask_with_back(
+            questionary.text(
+                f"Enter {provider} model ID:",
+                default=current_model,
+                style=TYPER_STYLE,
+                qmark="❯",
+                instruction="",
+            )
+        )
+        model_choice = new_model.strip() if new_model and new_model.strip() else None
+        if not model_choice:
+            return None
+    # Manual IDs are persisted only after the caller commits the selected model.
+    # This keeps cancellation and provider setup write failures side-effect free.
+    return model_choice
+
+
 def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
     from .settings.settings import save_setting
 
     provider = state["provider"]
-    # Live providers pick from what the endpoint actually serves right now;
-    # on fetch failure the static fallback catalogue stays in place.
-    live = refresh_live_models(provider)
     if value is None:
-        if live:
-            console.print("[dim]model list: live from the provider[/dim]")
-        provider_models = PROVIDERS[provider]["models"]
-        default_model = state["model"]
-        if default_model not in [m["model_name"] for m in provider_models.values()]:
-            default_model = _provider_default_model(provider)
-        model_choice = _ask_model_choice(
-            provider,
-            current_model=state["model"],
-            default_model=default_model,
-        )
+        model_choice = _choose_provider_model(provider, state["model"])
         if model_choice is None:
             return
-        if model_choice == ADD_MODEL_SENTINEL:
-            new_model = _ask_with_back(
-                questionary.text(
-                    f"Enter {provider} model ID:",
-                    default=state["model"],
-                    style=TYPER_STYLE,
-                    qmark="❯",
-                    instruction="",
-                )
-            )
-            model_choice = new_model.strip() if new_model and new_model.strip() else None
-            if not model_choice:
-                return
-            add_user_model(provider, model_choice)
-        elif not _find_model_config(provider, model_choice):
-            # Searchable autocomplete permits arbitrary typed values. Treat an
-            # unmatched value as the provider's manual model ID.
-            add_user_model(provider, model_choice)
     else:
         model_choice = value.strip()
         if not model_choice:
@@ -1045,9 +1215,7 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
         model_config = _find_model_config(provider, model_choice)
         if model_config:
             model_choice = model_config["model_name"]
-        elif provider_allows_manual_model(provider):
-            add_user_model(provider, model_choice)
-        else:
+        elif not provider_allows_manual_model(provider):
             names = ", ".join(
                 model["model_name"] for model in PROVIDERS[provider]["models"].values()
             )
@@ -1055,6 +1223,7 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
             raise typer.Exit(1)
 
     save_setting("GIT_TOOLS_DEFAULT_MODEL", model_choice)
+    _remember_manual_model(provider, model_choice)
     state["model"] = model_choice
     console.print()
     success(f"Model set to {model_choice}")
@@ -1135,7 +1304,11 @@ def _edit_api_key(state: dict[str, Any], value: Optional[str] = None) -> None:
             raise typer.Exit(1)
         return
 
-    save_setting(provider_api_key_env(provider), key)
+    env_var = provider_api_key_env(provider)
+    save_setting(env_var, key)
+    # Make the new key authoritative for any model discovery in this process;
+    # environment variables otherwise outrank the just-written settings file.
+    os.environ[env_var] = key
     state["api_configured"] = True
     console.print()
     success("API key saved.")

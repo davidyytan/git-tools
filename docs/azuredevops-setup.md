@@ -15,6 +15,26 @@ run the same `git_tools.generators.bumpgen` versioning engine.
 - You do not need an Azure DevOps bot user, SSH key, or personal access token.
   The pipeline pushes through Azure DevOps' automatic Build Service identity.
 
+## Naming Convention
+
+Use a short lowercase slug for the Azure DevOps project, such as `myproject`.
+The examples below assume one signing key shared by repositories in that
+project:
+
+| Resource | Recommended name | Scope |
+| --- | --- | --- |
+| Pipeline YAML file | `azure-pipelines/version-bump-git-flow-classic.yml` | Per repo |
+| Azure pipeline definition | `<repo-slug>-version-bump-classic` | Per repo |
+| GPG key identity | `MyProject Versioning Automation` | Per project |
+| GPG key email | `myproject-versioning@automation.invalid` | Per project |
+| Secure File | `myproject-versioning-gpg-private.asc` | Per project |
+| Build Service identity | `<Project> Build Service (<Organization>)` | Automatic per project |
+
+Keep variable keys such as `GIT_BOT_NAME`, `GIT_BOT_EMAIL`, and
+`GPG_SECURE_FILE` unchanged. Only their values vary. If security policy
+requires one key per repository, replace `myproject` with the repository slug
+in the key email and Secure File name.
+
 ## 1. Copy and Configure the Pipeline File
 
 From the target repository root, initialize Git on `master` if needed:
@@ -50,14 +70,18 @@ GIT_TOOLS_REF: master
 Configure the Git author and Secure File name:
 
 ```yaml
-GIT_BOT_NAME: Git-Tools Bot
-GIT_BOT_EMAIL: git-tools-bot@automation.invalid
-GPG_SECURE_FILE: git-tools-bot-gpg-private.asc
+GIT_BOT_NAME: MyProject Versioning Automation
+GIT_BOT_EMAIL: myproject-versioning@automation.invalid
+GPG_SECURE_FILE: myproject-versioning-gpg-private.asc
 ```
 
 `GIT_BOT_NAME` and `GIT_BOT_EMAIL` control the author shown on generated
 commits. They do not need to represent an Azure DevOps account. The email
 should match the GPG key identity generated in the next step.
+
+**Reuse scope:** the same name and email can be reused across repositories and
+projects when they use the same signing identity. Use different values if a
+project or repository has its own GPG key or compliance identity.
 
 ## 2. Generate the GPG Secure File
 
@@ -67,17 +91,23 @@ Generate a dedicated signing key locally:
 gpg --batch \
   --passphrase '' \
   --quick-generate-key \
-  "Git-Tools Bot <git-tools-bot@automation.invalid>" \
+  "MyProject Versioning Automation <myproject-versioning@automation.invalid>" \
   rsa3072 sign 2y
 ```
 
 The empty passphrase allows the pipeline agent to sign non-interactively.
 Adjust the two-year expiration to match the organization's key-rotation policy.
 
+**Reuse scope:** a GPG signing key can be reused by multiple repositories and
+across Azure DevOps projects. For stronger isolation, use one key per project
+or one per repository. One key per project is a practical default: repositories
+in that project share the signing identity, while different projects can
+rotate or revoke their keys independently.
+
 Confirm that the private key exists:
 
 ```bash
-gpg --list-secret-keys "git-tools-bot@automation.invalid"
+gpg --list-secret-keys "myproject-versioning@automation.invalid"
 ```
 
 From the target repository root, ignore private-key exports before creating
@@ -92,17 +122,17 @@ Export the key into the repository directory:
 ```bash
 gpg --armor \
   --export-secret-keys \
-  "git-tools-bot@automation.invalid" \
-  > git-tools-bot-gpg-private.asc
+  "myproject-versioning@automation.invalid" \
+  > myproject-versioning-gpg-private.asc
 ```
 
 Confirm that Git ignores the private key:
 
 ```bash
-git check-ignore git-tools-bot-gpg-private.asc
+git check-ignore myproject-versioning-gpg-private.asc
 ```
 
-The command should print `git-tools-bot-gpg-private.asc`. Do not continue to
+The command should print `myproject-versioning-gpg-private.asc`. Do not continue to
 `git add -A` unless the file is ignored. You will upload it to Azure DevOps
 after creating the pipeline.
 
@@ -140,6 +170,13 @@ After the first push:
 5. Select the `master` branch.
 6. Select `/azure-pipelines/version-bump-git-flow-classic.yml`.
 7. Select **Save**. Do not run the pipeline yet.
+8. Rename the pipeline to `<repo-slug>-version-bump-classic` so it is easy to
+   distinguish from pipelines for other repositories in the project.
+
+**Reuse scope:** create a separate Azure pipeline definition for each
+repository, even when every definition uses identical YAML contents. Do not
+create two active versioning pipelines for the same repository and branches,
+because both could try to create the same bump and tag.
 
 The pipeline clones the public `git-tools` repository over HTTPS and runs the
 same versioning engine used by GitHub Actions.
@@ -150,20 +187,26 @@ In Azure DevOps:
 
 1. Open **Pipelines → Library → Secure files**.
 2. Select **+ Secure file**.
-3. Upload `git-tools-bot-gpg-private.asc` from the repository directory.
+3. Upload `myproject-versioning-gpg-private.asc` from the repository directory.
 4. Confirm that Azure DevOps shows the filename as:
 
    ```text
-   git-tools-bot-gpg-private.asc
+   myproject-versioning-gpg-private.asc
    ```
 
 The filename must exactly match the pipeline setting:
 
 ```yaml
-GPG_SECURE_FILE: git-tools-bot-gpg-private.asc
+GPG_SECURE_FILE: myproject-versioning-gpg-private.asc
 ```
 
 Do not store the private key in an ordinary pipeline variable.
+
+**Reuse scope:** Secure Files belong to an Azure DevOps project. Within the
+same project, upload the key once and authorize each repository's pipeline to
+use that Secure File. For a repository in a different project, upload the key
+to that project's Library separately, even when reusing the same GPG key and
+filename.
 
 After upload:
 
@@ -171,7 +214,7 @@ After upload:
 - remove the exported file from the repository directory after upload:
 
   ```bash
-  rm git-tools-bot-gpg-private.asc
+  rm myproject-versioning-gpg-private.asc
   ```
 
 - never force-add or commit the `.asc` file.
@@ -179,7 +222,7 @@ After upload:
 ## 6. Authorize the Pipeline to Use the Secure File
 
 1. Open **Pipelines → Library → Secure files**.
-2. Select `git-tools-bot-gpg-private.asc`.
+2. Select `myproject-versioning-gpg-private.asc`.
 3. Open the **Pipeline permissions** section.
 4. Select **+** to add an authorized pipeline.
 5. Select the versioning pipeline and confirm the authorization.
@@ -194,6 +237,10 @@ Azure DevOps automatically creates a license-free pipeline identity:
 ```text
 <Project name> Build Service (<Organization>)
 ```
+
+**Reuse scope:** pipelines and repositories in the same Azure DevOps project
+use this project Build Service identity. Each Azure DevOps project has its own
+Build Service identity; it is not shared across projects.
 
 Open:
 
@@ -210,6 +257,13 @@ Select the project Build Service identity and set **Allow** for:
 - `Contribute`
 - `Create branch`
 - `Create tag`
+
+**Reuse scope:** permissions are evaluated for each repository. For least
+privilege, grant them separately on every repository that uses the versioning
+pipeline. If every repository in the project should use this automation, an
+administrator may instead grant the permissions at **All repositories** so
+repos inherit them. Permissions must be configured again in each Azure DevOps
+project for that project's Build Service identity.
 
 Do not select the general **Project Collection Build Service Accounts** group.
 Do not grant **Bypass policies when pushing** unless an explicit repository

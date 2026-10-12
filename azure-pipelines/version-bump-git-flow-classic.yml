@@ -44,11 +44,11 @@ variables:
   # Branch that carries the ADO subject fix; point at master on
   # davidyytan/git-tools once the feature line merges for real.
   GIT_TOOLS_REF: fix/ado-merged-pr-subject-prefix
-  # Commit author for bump commits; purely cosmetic, no account needed.
-  GIT_BOT_NAME: Git-Tools Bot            # <-- adjust
-  GIT_BOT_EMAIL: git-tools-bot@automation.invalid  # <-- adjust; must match the GPG key user ID
-  # Secure File name holding the bot GPG private key (ASCII-armored).
-  GPG_SECURE_FILE: git-tools-bot-gpg-private.asc
+  # Project-scoped signing identity; no Azure DevOps user account is needed.
+  GIT_BOT_NAME: MyProject Versioning Automation       # <-- replace MyProject
+  GIT_BOT_EMAIL: myproject-versioning@automation.invalid  # <-- match the GPG key user ID
+  # Exact project-scoped filename under Pipelines > Library > Secure files.
+  GPG_SECURE_FILE: myproject-versioning-gpg-private.asc
 
 steps:
   - checkout: self

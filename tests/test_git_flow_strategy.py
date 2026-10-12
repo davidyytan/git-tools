@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from git_tools.generators.bumpgen import decide_version_strategy
+from git_tools.generators.bumpgen import (
+    decide_version_strategy,
+    is_bump_eligible,
+    normalize_workflow_subject,
+)
 
 
 class GitFlowStrategyTests(unittest.TestCase):
@@ -646,6 +650,163 @@ class GitFlowStrategyTests(unittest.TestCase):
             self._git(root, "checkout", "-b", "develop")
             self._git(root, "checkout", "-b", "release/1.0.0")
             self._commit_empty(root, "chore: merge develop for backmerge")
+
+            decision = decide_version_strategy(root, "release/1.0.0", flow="variant")
+
+            self.assertFalse(decision.skip)
+            self.assertFalse(decision.invalid)
+            self.assertEqual(decision.mode, "backmerge-prep-rc")
+            self.assertFalse(decision.create_tag)
+
+    def test_normalize_workflow_subject_strips_both_platform_markers(self) -> None:
+        self.assertEqual(
+            normalize_workflow_subject("Merged PR 42: Release 1.6.0"),
+            "Release 1.6.0",
+        )
+        self.assertEqual(
+            normalize_workflow_subject("Merged PR 9: feat: add thing"),
+            "feat: add thing",
+        )
+        self.assertEqual(
+            normalize_workflow_subject("Merged PR 12: Release 1.6.0 (#7)"),
+            "Release 1.6.0",
+        )
+        self.assertEqual(
+            normalize_workflow_subject("Release 1.6.0 (#7)"),
+            "Release 1.6.0",
+        )
+        self.assertEqual(normalize_workflow_subject("feat: add thing"), "feat: add thing")
+
+    def test_is_bump_eligible_recognizes_azure_devops_prefixed_subject(self) -> None:
+        self.assertTrue(is_bump_eligible("Merged PR 9: feat: add thing\n\nbody text"))
+        self.assertFalse(is_bump_eligible("Merged PR 9: update readme\n\nbody text"))
+
+    def test_start_subject_with_azure_devops_prefix_opens_next_develop_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "0.1.0", message="fix: keep shipping alpha work")
+            self._git(root, "checkout", "-b", "develop")
+            self._commit_empty(root, "Merged PR 7: Start 0.2.0")
+
+            decision = decide_version_strategy(root, "develop", flow="classic")
+
+            self.assertFalse(decision.skip)
+            self.assertFalse(decision.invalid)
+            self.assertEqual(decision.mode, "develop-start-cycle")
+            self.assertEqual(
+                decision.args,
+                "--yes --increment MINOR --prerelease alpha --increment-mode exact",
+            )
+            self.assertTrue(decision.create_tag)
+
+    def test_release_subject_with_azure_devops_prefix_is_rejected_on_develop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.7.0-alpha.2", message="fix: keep shipping alpha work")
+            self._git(root, "checkout", "-b", "develop")
+            self._commit_empty(root, "Merged PR 42: Release 1.6.0")
+
+            decision = decide_version_strategy(root, "develop", flow="classic")
+
+            self.assertTrue(decision.invalid)
+            self.assertIn("reserved for release promotion to master", decision.error)
+            self.assertIn("Backmerge Release 1.6.0", decision.error)
+
+    def test_hotfix_subject_with_azure_devops_prefix_is_rejected_on_develop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.7.0-alpha.2", message="fix: keep shipping alpha work")
+            self._git(root, "checkout", "-b", "develop")
+            self._commit_empty(root, "Merged PR 43: Hotfix 1.6.1")
+
+            decision = decide_version_strategy(root, "develop", flow="classic")
+
+            self.assertTrue(decision.invalid)
+            self.assertIn("reserved for hotfix promotion to master", decision.error)
+            self.assertIn("Backmerge Hotfix 1.6.1", decision.error)
+
+    def test_develop_bumps_alpha_for_conventional_subject_with_azure_devops_prefix(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.6.0", message="fix: production stabilization")
+            self._git(root, "tag", "1.6.0")
+            self._git(root, "checkout", "-b", "develop")
+            (root / "next-cycle.txt").write_text("start the next cycle\n", encoding="utf-8")
+            self._commit_all(root, "Merged PR 9: feat: start the next develop cycle")
+
+            decision = decide_version_strategy(root, "develop", flow="classic")
+
+            self.assertFalse(decision.skip)
+            self.assertFalse(decision.invalid)
+            self.assertEqual(decision.mode, "develop-alpha")
+            self.assertEqual(
+                decision.args,
+                "--yes --prerelease alpha --default-increment PATCH",
+            )
+            self.assertTrue(decision.create_tag)
+
+    def test_develop_skips_generated_bump_subject_with_azure_devops_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.6.0-alpha.0", message="feat: keep shipping alpha work")
+            self._git(root, "checkout", "-b", "develop")
+            self._commit_empty(root, "Merged PR 9: bump: version 1.6.0 -> 1.6.1")
+
+            decision = decide_version_strategy(root, "develop", flow="classic")
+
+            self.assertTrue(decision.skip)
+            self.assertEqual(
+                decision.reason,
+                "latest commit was generated by the version bump workflow",
+            )
+
+    def test_hotfix_skips_release_management_subject_with_azure_devops_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.0.0", message="fix: production stabilization")
+            self._git(root, "tag", "1.0.0")
+            self._git(root, "checkout", "-b", "hotfix/session-timeout")
+            (root / "timeout.txt").write_text("increase timeout threshold\n", encoding="utf-8")
+            self._commit_all(root, "Merged PR 5: chore(release): promote 1.0.1-rc.0")
+
+            decision = decide_version_strategy(root, "hotfix/session-timeout", flow="classic")
+
+            self.assertTrue(decision.skip)
+            self.assertFalse(decision.invalid)
+            self.assertEqual(
+                decision.reason,
+                "release-management commits do not bump hotfix branches",
+            )
+
+    def test_release_backmerge_with_azure_devops_prefix_advances_alpha(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.7.0-alpha.2", message="fix: keep shipping alpha work")
+            self._git(root, "checkout", "-b", "develop")
+            (root / "release-fix.txt").write_text("carry release fix back\n", encoding="utf-8")
+            self._commit_all(root, "Merged PR 12: Backmerge Release 1.6.0")
+
+            decision = decide_version_strategy(root, "develop", flow="classic")
+
+            self.assertFalse(decision.skip)
+            self.assertFalse(decision.invalid)
+            self.assertEqual(decision.mode, "develop-backmerge-release")
+            self.assertEqual(
+                decision.args,
+                "--yes --increment PATCH --prerelease alpha --no-tag",
+            )
+            self.assertFalse(decision.create_tag)
+
+    def test_release_backmerge_prep_with_azure_devops_prefix_continues_rc_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.0.0-rc.1")
+            self._git(root, "tag", "1.0.0-rc.1")
+            self._git(root, "checkout", "-b", "develop")
+            self._git(root, "checkout", "-b", "release/1.0.0")
+            self._commit_empty(root, "Merged PR 5: chore: merge develop for backmerge")
 
             decision = decide_version_strategy(root, "release/1.0.0", flow="variant")
 

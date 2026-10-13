@@ -323,7 +323,7 @@ uv run dvc exp pull origin <experiment-name-or-hash>
 uv run dvc exp apply <experiment-name-or-hash>
 ```
 
-To pull every experiment ref from GitHub:
+To pull every experiment ref from the Git remote:
 
 ```bash
 git fetch origin --all --tags
@@ -339,7 +339,7 @@ uv run dvc repro --dry
 uv run dvc exp show
 ```
 
-GitHub `origin` stores Git commits and DVC experiment refs. A DVC remote stores actual data/cache. If no DVC remote exists, the teammate also needs the real data copied manually.
+Git `origin` stores Git commits and DVC experiment refs. A DVC remote stores actual data/cache. If no DVC remote exists, the teammate also needs the real data copied manually.
 
 To rerun an old experiment, apply it to the workspace, then run the pipeline again:
 

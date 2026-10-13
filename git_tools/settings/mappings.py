@@ -249,11 +249,11 @@ def fetch_live_models(
             error="provider base URL is empty",
         )
     url = base_url.rstrip("/") + "/models"
-    req = urllib.request.Request(url)
-    req.add_header("Accept", "application/json")
-    if api_key:
-        req.add_header("Authorization", f"Bearer {api_key}")
     try:
+        req = urllib.request.Request(url)
+        req.add_header("Accept", "application/json")
+        if api_key:
+            req.add_header("Authorization", f"Bearer {api_key}")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:

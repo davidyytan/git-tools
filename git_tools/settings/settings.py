@@ -29,19 +29,29 @@ PROVIDER_DEFAULT_API_KEYS = {"cliproxyapi": "cliproxyapi"}
 # full reset is just `rm -rf ~/.git-tools`.
 DEFAULT_SETTINGS_PATH = Path.home() / ".git-tools" / "settings.env"
 
-# Pre-rename location: settings used to live in config.env. It is moved to
-# settings.env once on import; the legacy path stays in the search list only as
-# a fallback in case that move fails (e.g. permissions).
+# Pre-rename locations. The .git-tools location takes priority when both exist;
+# develop used the XDG config directory before settings moved to .git-tools.
+# Legacy files remain readable if migration fails (e.g. permissions).
 LEGACY_SETTINGS_PATH = Path.home() / ".git-tools" / "config.env"
+XDG_LEGACY_SETTINGS_PATH = (
+    Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    / "git-tools"
+    / "config.env"
+)
 
 
 def _migrate_legacy_settings_file() -> None:
-    """One-time move of ~/.git-tools/config.env to ~/.git-tools/settings.env."""
-    if LEGACY_SETTINGS_PATH.exists() and not DEFAULT_SETTINGS_PATH.exists():
-        try:
-            LEGACY_SETTINGS_PATH.replace(DEFAULT_SETTINGS_PATH)
-        except OSError:
-            pass
+    """Move the highest-priority legacy file without replacing existing settings."""
+    if DEFAULT_SETTINGS_PATH.exists():
+        return
+    for legacy_path in (LEGACY_SETTINGS_PATH, XDG_LEGACY_SETTINGS_PATH):
+        if legacy_path.exists():
+            try:
+                DEFAULT_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                legacy_path.replace(DEFAULT_SETTINGS_PATH)
+            except OSError:
+                pass
+            return
 
 
 _migrate_legacy_settings_file()
@@ -62,8 +72,11 @@ def _get_env_file_paths() -> list[Path]:
 
     Search order (last found wins in pydantic-settings):
     1. {cwd}/git-tools.env (local development, lowest priority)
-    2. ~/.git-tools/config.env (legacy, consulted only until settings.env exists)
-    3. ~/.git-tools/settings.env (user-global, highest priority)
+    2. $XDG_CONFIG_HOME/git-tools/config.env (defaults to ~/.config/git-tools)
+    3. ~/.git-tools/config.env (legacy, higher priority than XDG)
+    4. ~/.git-tools/settings.env (user-global, highest priority)
+
+    Both legacy locations are consulted only until settings.env exists.
 
     The legacy file is dropped from the list as soon as settings.env exists, so
     a stale config.env left behind by a failed migration can never shadow
@@ -75,8 +88,10 @@ def _get_env_file_paths() -> list[Path]:
         List of Path objects to search for env file
     """
     paths = [Path.cwd() / "git-tools.env"]
-    if LEGACY_SETTINGS_PATH.exists() and not DEFAULT_SETTINGS_PATH.exists():
-        paths.append(LEGACY_SETTINGS_PATH)
+    if not DEFAULT_SETTINGS_PATH.exists():
+        for legacy_path in (XDG_LEGACY_SETTINGS_PATH, LEGACY_SETTINGS_PATH):
+            if legacy_path.exists():
+                paths.append(legacy_path)
     paths.append(DEFAULT_SETTINGS_PATH)
     return paths
 

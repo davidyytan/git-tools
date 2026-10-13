@@ -1227,11 +1227,11 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
             return is_azure
 
         if is_azure:
-            info("Origin remote URL identified as an Azure DevOps repository")
+            info("Origin remote: Azure DevOps repository")
         elif origin_url:
-            info("Origin remote URL identified as a non-Azure DevOps repository")
+            info("Origin remote: Non-Azure DevOps repository")
         else:
-            info("Origin remote URL not found")
+            info("Origin remote: Not configured")
 
         return self.prompt_confirm(
             "Apply the 4000-character PR description limit?", default=is_azure

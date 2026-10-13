@@ -36,11 +36,24 @@ git-tools init
 Configuration and local state live here:
 
 - `~/.git-tools/settings.env`
-  Written by `git-tools settings`. Stores user-level provider, API key, and default overrides. Delete `~/.git-tools/` to reset all user settings from scratch. (A legacy `config.env` is migrated to `settings.env` automatically on first run.)
+  Written by `git-tools settings`. Stores user-level provider, API key, and default overrides. To reset user settings, remove `~/.git-tools/` and any remaining legacy files listed below; otherwise a legacy file can migrate again. Also unset environment overrides. (Legacy `~/.git-tools/config.env` or `$XDG_CONFIG_HOME/git-tools/config.env`, defaulting to `~/.config/git-tools/config.env`, migrates automatically when `settings.env` does not exist. The `.git-tools` legacy location takes priority if both exist; a failed move remains readable as a fallback.)
 - `~/.git-tools/models.json`
   Written by `git-tools settings` when you enter a model ID manually. Holds saved model IDs grouped by provider so they reappear in the picker. Created at runtime; never committed.
 - `./git-tools.env`
   Optional repo-local env override file for the current working directory.
+
+## Documentation: Choose Your Path
+
+- **[Direct CLI and Interactive Usage](docs/usage.md)** — commands plus arrow-key,
+  Enter, and prompt-by-prompt walkthroughs.
+- **[GitHub](docs/github/README.md)** — GitHub Actions setup and all four flow guides.
+- **[Azure DevOps](docs/azure-devops/README.md)** — Azure Pipelines setup and all four flow guides.
+- **[Flow comparison](docs/git-flow-guide.md)** — classic vs release-led, reviewed
+  variants, and shared title/version policy.
+- **[DVC](docs/dvc.md)** — hosting-neutral data and experiment workflow.
+
+Each platform supplies two example adapters; reviewed flows share their base
+adapter. Copy and configure only one adapter in the target repository.
 
 ## Configuration
 
@@ -93,11 +106,18 @@ Every provider supports manual model IDs: run `git-tools settings`, choose **Mod
 
 `git-tools settings` writes provider, model, and default overrides to `~/.git-tools/settings.env`, and manually entered model IDs to `~/.git-tools/models.json`.
 
-For release workflow and branch policy details, see [GitHub Setup](docs/github-setup.md), [Git Flow Guide](docs/git-flow-guide.md), [Classic Flow](docs/git-flow-classic.md), [Classic — Reviewed](docs/git-flow-classic-reviewed.md), [Variant — Release-led](docs/git-flow-variant-release-led.md), and [Variant — Reviewed](docs/git-flow-variant-reviewed.md).
+For release workflow and branch policy details, choose [GitHub](docs/github/README.md)
+or [Azure DevOps](docs/azure-devops/README.md), then select one of the four flows.
+See the [flow comparison](docs/git-flow-guide.md) for shared policy.
 
 This repo uses `.cz.toml` as the authoritative Commitizen config and version source. `cz.toml` is not supported. `pyproject.toml` and `uv.lock` are auxiliary sync targets during bumps when they already expose matching version fields, but they are never treated as the source of truth.
 
 ## Usage
+
+Choose **direct commands** below or follow the [interactive walkthrough](docs/usage.md).
+Run `git-tools` without a subcommand, use Up/Down and Enter at **Select command:**,
+and choose `commit`, `issue`, `pr`, `bump`, `init`, or `settings`. Git operations
+such as staging, checkout, and push still run in the shell.
 
 ### Generate commit message
 
@@ -152,7 +172,10 @@ git-tools pr --backmerge-hotfix-pr --workflow-version 1.6.1
 
 `git-tools pr` stays in the ordinary PR mode by default (Conventional Commit title; base branch auto-detected). Fixed-title PR helpers (`--start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, `--backmerge-hotfix-pr`) generate the correct workflow titles automatically. When repo state alone cannot safely infer the tuple, pass `--workflow-version X.Y.Z`.
 
-For the full naming policy, branch flow, and step-by-step workflow, see [GitHub Setup](docs/github-setup.md), [Git Flow Guide](docs/git-flow-guide.md), [Classic Flow](docs/git-flow-classic.md), [Classic — Reviewed](docs/git-flow-classic-reviewed.md), [Variant — Release-led](docs/git-flow-variant-release-led.md), and [Variant — Reviewed](docs/git-flow-variant-reviewed.md).
+For step-by-step branch and PR procedures, use the [GitHub](docs/github/README.md)
+or [Azure DevOps](docs/azure-devops/README.md) guides. For the same operations
+through terminal selections, see [interactive usage](docs/usage.md#generate-a-pull-request-or-issue).
+PR/issue generation creates text locally; it does not submit or complete PRs.
 
 ### Bump version
 
@@ -242,6 +265,7 @@ git-tools
 | `--backmerge-release-pr/--no-backmerge-release-pr` | | Use fixed-title backmerge guidance for `release/* -> develop` |
 | `--backmerge-hotfix-pr/--no-backmerge-hotfix-pr` | | Use fixed-title backmerge guidance for `hotfix/* -> develop` |
 | `--workflow-version` | | Provide the exact `X.Y.Z` tuple for Start or Backmerge PR modes when inference is ambiguous |
+| `--azure-limit/--no-azure-limit` | | Force/disable Azure's 4,000 UTF-16-unit description limit; otherwise direct mode detects `origin`, and interactive mode confirms the detected default |
 | `--model` | `-m` | Model name |
 | `--temp` | `-t` | Temperature (0.0-2.0) |
 | `--max-tokens` | | Maximum tokens for completion |

@@ -9,6 +9,7 @@ import logging
 import re
 import subprocess
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import questionary
@@ -18,8 +19,12 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 
-from git_tools.config.config import settings
-from git_tools.config.mappings import PROVIDERS
+from git_tools.settings.settings import normalize_provider_name, settings
+from git_tools.settings.mappings import (
+    LIVE_MODEL_PROVIDERS,
+    PROVIDERS,
+    refresh_live_models,
+)
 
 # Rich console for styled output
 # - soft_wrap: prevents trailing spaces from creating phantom lines
@@ -82,6 +87,11 @@ TYPER_STYLE = Style([
 
 # Note: Logging is configured in main.py at application startup
 
+# Stable per-process session id for CLIProxyAPI prompt-cache affinity. CLIProxyAPI
+# keys reasoning/cache continuity off the Session_id header, so one id per run keeps
+# a single git-tools invocation on the same upstream session.
+_CLIPROXY_SESSION_ID = f"git-tools-{uuid.uuid4().hex[:16]}"
+
 # Initialize tiktoken encoder once at module level
 _ENCODER = tiktoken.get_encoding("cl100k_base")
 _SPECIAL_TOKENS = _ENCODER.special_tokens_set
@@ -122,13 +132,13 @@ def _get_openrouter_extra_body(
 ) -> Dict[str, Any]:
     """Return model-specific extra_body for OpenRouter.
 
-    Reads provider configuration from mappings.json if available, otherwise
-    falls back to the provided base_extra_body.
+    Reads provider configuration from the model's provider definition if
+    available, otherwise falls back to the provided base_extra_body.
 
     Args:
         model_name: The model name/identifier
         base_extra_body: Default extra_body configuration
-        model_config: Optional model configuration from mappings.json
+        model_config: Optional per-model config from the PROVIDERS map
 
     Returns:
         Dict with provider routing configuration
@@ -305,8 +315,13 @@ class BaseGenerator:
         Returns:
             True if API key is available (existing or newly set up), False otherwise
         """
-        from git_tools.config.config import check_api_key_configured, setup_api_key
+        from git_tools.settings.settings import (
+            check_api_key_configured,
+            provider_label,
+            setup_api_key,
+        )
 
+        provider = normalize_provider_name(provider)
         is_configured, _ = check_api_key_configured(provider)
         if is_configured:
             return True
@@ -316,18 +331,14 @@ class BaseGenerator:
 
         # In non-interactive mode, can't prompt for setup
         if not self._interactive:
-            error("Run 'git-tools config' to configure your API key.")
+            error("Run 'git-tools settings' to configure your API key.")
             return False
 
         # Interactive mode - offer setup
-        provider_label = {
-            "openrouter": "OpenRouter",
-            "kimicli": "Kimi CLI",
-        }.get(provider.lower(), provider)
-        if self.prompt_confirm(f"Set up your {provider_label} API key now?", default=True):
-            from git_tools.config.config import DEFAULT_CONFIG_PATH
+        if self.prompt_confirm(f"Set up your {provider_label(provider)} API key now?", default=True):
+            from git_tools.settings.settings import DEFAULT_SETTINGS_PATH
             if setup_api_key(provider):
-                success(f"API key saved to {DEFAULT_CONFIG_PATH}")
+                success(f"API key saved to {DEFAULT_SETTINGS_PATH}")
                 return True
             else:
                 warning("API key setup cancelled.")
@@ -336,11 +347,11 @@ class BaseGenerator:
 
     def get_provider_config(self, provider: str) -> Any:
         """Load provider config ONLY when requested"""
-        provider_lower = provider.lower()
+        provider_lower = normalize_provider_name(provider)
         if provider_lower not in self._provider_configs:
-            from git_tools.config.config import load_provider_config
+            from git_tools.settings.settings import load_provider_config
 
-            self._provider_configs[provider_lower] = load_provider_config(provider)
+            self._provider_configs[provider_lower] = load_provider_config(provider_lower)
         return self._provider_configs[provider_lower]
 
     def select_model_params(
@@ -352,7 +363,11 @@ class BaseGenerator:
         - Interactive mode: prompts for input
         - Non-interactive mode: uses provider defaults
         """
+        provider = normalize_provider_name(provider)
         provider_config = self.get_provider_config(provider)
+        # Live providers resolve models against the endpoint's real catalogue
+        # (one fetch per process; static fallback when the endpoint is down).
+        refresh_live_models(provider)
         models = PROVIDERS[provider]["models"]
 
         # Model selection: CLI param > interactive prompt > default
@@ -361,7 +376,7 @@ class BaseGenerator:
         elif self._interactive:
             selected_model = self._interactive_model_selection(models)
         else:
-            selected_model = self._get_default_model(models)
+            selected_model = self._get_default_model(models, provider)
 
         # Temperature: CLI param > interactive prompt > settings default
         if self._cli_temperature is not None:
@@ -381,7 +396,7 @@ class BaseGenerator:
 
         return selected_model, temperature, max_tokens
 
-    def _get_default_model(self, models: Dict[str, Any]) -> str:
+    def _get_default_model(self, models: Dict[str, Any], provider: str = "") -> str:
         """Get the default model - from settings first, then first available."""
         # Check if settings default_model exists in available models
         if settings.default_model:
@@ -392,6 +407,12 @@ class BaseGenerator:
             for model_data in models.values():
                 if model_data["model_name"] == settings.default_model:
                     return settings.default_model
+            # Open-ended (OpenRouter) and live-discovered providers trust the
+            # configured model as-is: the endpoint validates it, not the
+            # static fallback list.
+            provider_lower = normalize_provider_name(provider)
+            if provider_lower == "openrouter" or provider_lower in LIVE_MODEL_PROVIDERS:
+                return settings.default_model
         # Fallback to first model
         return list(models.values())[0]["model_name"]
 
@@ -538,6 +559,7 @@ class BaseGenerator:
     ) -> bool:
         """Initialize LangChain chat client for the selected provider"""
         try:
+            provider = normalize_provider_name(provider)
             provider_config = self.get_provider_config(provider)
             model_details = PROVIDERS[provider]["models"].get(model, {})
             model_to_use = model_details.get("model_name", model)
@@ -548,6 +570,10 @@ class BaseGenerator:
                 )
             elif provider == "kimicli":
                 self.chatclient = self._create_kimicli_client(
+                    model_to_use, provider_config, temperature, max_tokens
+                )
+            elif provider == "cliproxyapi":
+                self.chatclient = self._create_cliproxy_client(
                     model_to_use, provider_config, temperature, max_tokens
                 )
             else:
@@ -629,7 +655,84 @@ class BaseGenerator:
             },
         }
 
-        self._add_optional_params(kwargs, temperature, max_tokens)
+        # Kimi Code currently rejects every other value (HTTP 400: "only 0.6
+        # is allowed for this model"). Enforce the provider requirement even if
+        # a stale setting or explicit --temp override supplies another value.
+        self._add_optional_params(kwargs, 0.6, max_tokens)
+        return ChatOpenAI(**kwargs)
+
+    def _get_model_config(
+        self, provider: str, model_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return the PROVIDERS model entry whose model_name matches.
+
+        Used to read per-model knobs (e.g. OpenRouter provider routing or the
+        CLIProxyAPI reasoning_effort default) for a resolved model name.
+        """
+        models = PROVIDERS.get(provider, {}).get("models", {})
+        for model_data in models.values():
+            if model_data.get("model_name") == model_name:
+                return model_data
+        return None
+
+    def _resolve_reasoning_effort(
+        self, model_config: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Resolve reasoning effort: env/settings override > per-model default.
+
+        ``GIT_TOOLS_REASONING_EFFORT`` (via ``settings.default_reasoning_effort``)
+        wins for models that declare ``reasoning_effort`` in their provider
+        definition; otherwise the model's per-model default applies (e.g. the
+        gpt-5 family defaults to ``xhigh``).
+        """
+        if not model_config or not model_config.get("reasoning_effort"):
+            return None
+        if settings.default_reasoning_effort:
+            return settings.default_reasoning_effort.strip().lower() or None
+        return str(model_config["reasoning_effort"]).strip().lower() or None
+
+    def _create_cliproxy_client(
+        self,
+        model_to_use: str,
+        provider_config: Any,
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+    ):
+        """Create ChatOpenAI client for the CLIProxyAPI endpoint.
+
+        CLIProxyAPI fronts CLI-authenticated Codex/GPT-5 models. Those reasoning
+        models reject a custom ``temperature`` (only the server default is valid),
+        so it is omitted for the gpt-5 family. The completion cap covers reasoning
+        + visible tokens together, so it relies on the global ``default_max_tokens``
+        (32k) being large enough to leave room for the answer. A stable
+        ``Session_id`` header keeps the run on one upstream session, and
+        ``reasoning_effort`` (default ``xhigh`` for the gpt-5 family) is forwarded when set.
+        """
+        from langchain_openai import ChatOpenAI
+
+        model_config = self._get_model_config("cliproxyapi", model_to_use)
+
+        kwargs: Dict[str, Any] = {
+            "model": model_to_use,
+            "api_key": provider_config.api_key,
+            "base_url": provider_config.base_url,
+            "default_headers": {"Session_id": _CLIPROXY_SESSION_ID},
+            "max_tokens": max_tokens if max_tokens is not None else settings.default_max_tokens,
+            "max_retries": settings.default_max_retries,
+        }
+
+        # gpt-5 / Codex reasoning models reject a custom temperature; omit it so the
+        # server default applies. Non-reasoning models keep the configured value.
+        is_reasoning_model = str(model_to_use).strip().lower().startswith("gpt-5")
+        if not is_reasoning_model:
+            kwargs["temperature"] = (
+                temperature if temperature is not None else settings.default_temperature
+            )
+
+        reasoning_effort = self._resolve_reasoning_effort(model_config)
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
         return ChatOpenAI(**kwargs)
 
     def get_staged_diff(self) -> Optional[str]:
@@ -1109,16 +1212,27 @@ class BaseGenerator:
         Args:
             response: Response dict from LLM invocation
         """
-        token_usage = response.get("response_metadata", {}).get("token_usage")
-        if not token_usage:
+        response_metadata = response.get("response_metadata")
+        if not isinstance(response_metadata, dict):
             return
+        token_usage = response_metadata.get("token_usage")
+        if not isinstance(token_usage, dict) or not token_usage:
+            return
+
+        # Providers may explicitly return null for optional nested usage fields.
+        completion_details = token_usage.get("completion_tokens_details")
+        if not isinstance(completion_details, dict):
+            completion_details = {}
+        cost_details = token_usage.get("cost_details")
+        if not isinstance(cost_details, dict):
+            cost_details = {}
 
         # Build token usage content
         lines = []
         prompt_tokens = token_usage.get("prompt_tokens")
         completion_tokens = token_usage.get("completion_tokens")
         total_tokens = token_usage.get("total_tokens")
-        reasoning_tokens = token_usage.get("completion_tokens_details", {}).get("reasoning_tokens")
+        reasoning_tokens = completion_details.get("reasoning_tokens")
 
         if prompt_tokens is not None:
             lines.append(f"[{STYLE_DIM}]Prompt:[/{STYLE_DIM}] [{STYLE_PRIMARY}]{prompt_tokens:,}[/{STYLE_PRIMARY}]")
@@ -1131,7 +1245,7 @@ class BaseGenerator:
 
         # Cost information
         cost = token_usage.get("cost")
-        upstream_cost = token_usage.get("cost_details", {}).get("upstream_inference_cost")
+        upstream_cost = cost_details.get("upstream_inference_cost")
 
         if cost is not None or upstream_cost is not None:
             lines.append("")

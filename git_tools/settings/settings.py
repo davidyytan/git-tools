@@ -7,19 +7,54 @@ loading API keys from environment files and validating settings.
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
 
-from .mappings import PROVIDERS
+from .mappings import PROVIDER_ALIASES, PROVIDERS
 
 # Whitelist of allowed configuration classes for security
-ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig"}
+ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig"}
 
-# Default config file location (XDG standard)
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "git-tools" / "config.env"
+# Providers whose API key is a fixed placeholder rather than a secret (local
+# proxies). git-tools defaults these so the user need not set them: CLIProxyAPI
+# ships with the client key "cliproxyapi". An explicit env/config value still
+# overrides the default when the proxy is configured with a different key.
+PROVIDER_DEFAULT_API_KEYS = {"cliproxyapi": "cliproxyapi"}
+
+# Default settings file location. A single self-contained ~/.git-tools/ folder so a
+# full reset is just `rm -rf ~/.git-tools`.
+DEFAULT_SETTINGS_PATH = Path.home() / ".git-tools" / "settings.env"
+
+# Pre-rename location: settings used to live in config.env. It is moved to
+# settings.env once on import; the legacy path stays in the search list only as
+# a fallback in case that move fails (e.g. permissions).
+LEGACY_SETTINGS_PATH = Path.home() / ".git-tools" / "config.env"
+
+
+def _migrate_legacy_settings_file() -> None:
+    """One-time move of ~/.git-tools/config.env to ~/.git-tools/settings.env."""
+    if LEGACY_SETTINGS_PATH.exists() and not DEFAULT_SETTINGS_PATH.exists():
+        try:
+            LEGACY_SETTINGS_PATH.replace(DEFAULT_SETTINGS_PATH)
+        except OSError:
+            pass
+
+
+_migrate_legacy_settings_file()
+
+
+def normalize_provider_name(provider: str) -> str:
+    """Return the canonical provider key used by the PROVIDERS map.
+
+    Agent-core/agent-cli provider spellings such as ``kimicode`` are accepted
+    as aliases while existing git-tools settings keep their compatible key.
+    """
+    normalized = str(provider).strip().lower()
+    return PROVIDER_ALIASES.get(normalized, normalized)
 
 
 def _get_env_file_paths() -> list[Path]:
@@ -27,21 +62,27 @@ def _get_env_file_paths() -> list[Path]:
 
     Search order (last found wins in pydantic-settings):
     1. {cwd}/git-tools.env (local development, lowest priority)
-    2. ~/.config/git-tools/config.env (XDG standard, highest priority)
+    2. ~/.git-tools/config.env (legacy, consulted only until settings.env exists)
+    3. ~/.git-tools/settings.env (user-global, highest priority)
+
+    The legacy file is dropped from the list as soon as settings.env exists, so
+    a stale config.env left behind by a failed migration can never shadow
+    settings.env for first-match readers like check_api_key_configured.
 
     Environment variables (e.g., OPENROUTER_API_KEY) always take precedence.
 
     Returns:
         List of Path objects to search for env file
     """
-    return [
-        Path.cwd() / "git-tools.env",
-        Path.home() / ".config" / "git-tools" / "config.env",
-    ]
+    paths = [Path.cwd() / "git-tools.env"]
+    if LEGACY_SETTINGS_PATH.exists() and not DEFAULT_SETTINGS_PATH.exists():
+        paths.append(LEGACY_SETTINGS_PATH)
+    paths.append(DEFAULT_SETTINGS_PATH)
+    return paths
 
 
 def _get_provider_definition(provider: str) -> dict[str, Any]:
-    provider_lower = provider.lower()
+    provider_lower = normalize_provider_name(provider)
     if provider_lower not in PROVIDERS:
         raise ValueError(f"Unknown provider: {provider}")
     return PROVIDERS[provider_lower]
@@ -49,24 +90,22 @@ def _get_provider_definition(provider: str) -> dict[str, Any]:
 
 def _get_provider_api_key_envs(provider: str) -> list[str]:
     provider_def = _get_provider_definition(provider)
-    envs = []
     primary_env = provider_def.get("api_key_env")
-    fallback_env = provider_def.get("api_key_env_fallback")
-    if primary_env:
-        envs.append(primary_env)
-    if fallback_env and fallback_env not in envs:
-        envs.append(fallback_env)
-    if not envs:
-        envs.append(f"{provider.upper()}_API_KEY")
-    return envs
+    if not primary_env:
+        raise ValueError(f"Provider '{provider}' must define api_key_env")
+    return [primary_env]
 
 
-def _get_provider_label(provider: str) -> str:
-    labels = {
-        "openrouter": "OpenRouter",
-        "kimicli": "Kimi CLI",
-    }
-    return labels.get(provider.lower(), provider.title())
+def provider_label(provider: str) -> str:
+    """Return the human-readable display name from provider metadata."""
+    provider_lower = normalize_provider_name(provider)
+    definition = PROVIDERS.get(provider_lower, {})
+    return str(definition.get("label") or provider_lower.title())
+
+
+def provider_api_key_env(provider: str) -> str:
+    """Return the primary API-key environment variable for a provider."""
+    return _get_provider_api_key_envs(provider)[0]
 
 
 def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | None]:
@@ -97,41 +136,64 @@ def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | 
                 except OSError:
                     continue
 
+    # Local-proxy providers ship a usable default key, so treat them as
+    # configured even when nothing is set explicitly.
+    if default_key := PROVIDER_DEFAULT_API_KEYS.get(normalize_provider_name(provider)):
+        return True, default_key
+
     return False, None
 
 
-def save_setting(key: str, value: str) -> bool:
-    """Save a setting to the config file.
-
-    Args:
-        key: Environment variable name (e.g., 'GIT_TOOLS_DEFAULT_MODEL')
-        value: Value to save
-
-    Returns:
-        True if saved successfully, False otherwise
-    """
-    # Ensure config directory exists
-    DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    # Read existing content or start fresh
-    if DEFAULT_CONFIG_PATH.exists():
-        content = DEFAULT_CONFIG_PATH.read_text()
-        pattern = re.compile(rf'^{key}\s*=.*$', re.MULTILINE)
+def _render_settings_updates(content: str, updates: dict[str, str]) -> str:
+    """Return settings file content with all updates applied in memory."""
+    for key, value in updates.items():
+        pattern = re.compile(rf'^{re.escape(key)}\s*=.*$', re.MULTILINE)
+        line = f'{key}="{value}"'
         if pattern.search(content):
-            # Update existing key
-            content = pattern.sub(f'{key}="{value}"', content)
+            # A callable replacement keeps backslashes in values literal; a
+            # string replacement would parse them as regex group references.
+            content = pattern.sub(lambda _match, replacement=line: replacement, content)
         else:
-            # Append new key
-            content = content.rstrip() + f'\n{key}="{value}"\n'
-    else:
-        content = f'{key}="{value}"\n'
+            content = content.rstrip() + ("\n" if content.strip() else "") + line + "\n"
+    return content
 
-    DEFAULT_CONFIG_PATH.write_text(content)
+
+def save_settings(updates: dict[str, str]) -> bool:
+    """Atomically apply multiple settings with a single file replacement."""
+    if not updates:
+        return True
+
+    DEFAULT_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    content = DEFAULT_SETTINGS_PATH.read_text() if DEFAULT_SETTINGS_PATH.exists() else ""
+    rendered = _render_settings_updates(content, updates)
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=DEFAULT_SETTINGS_PATH.parent,
+            prefix=f".{DEFAULT_SETTINGS_PATH.name}.",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.replace(DEFAULT_SETTINGS_PATH)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
     return True
 
 
+def save_setting(key: str, value: str) -> bool:
+    """Save one setting atomically to the settings file."""
+    return save_settings({key: value})
+
+
 def setup_api_key(provider: str = "openrouter") -> bool:
-    """Prompt user for API key and save to config file.
+    """Prompt user for API key and save to settings file.
 
     Args:
         provider: Provider name (default: "openrouter")
@@ -142,7 +204,7 @@ def setup_api_key(provider: str = "openrouter") -> bool:
     from rich.prompt import Prompt
 
     env_var = _get_provider_api_key_envs(provider)[0]
-    key = Prompt.ask(f"Enter your {_get_provider_label(provider)} API key", password=True)
+    key = Prompt.ask(f"Enter your {provider_label(provider)} API key", password=True)
 
     if not key or not key.strip():
         return False
@@ -177,8 +239,12 @@ class GitToolsSettings(BaseSettings):
         validation_alias=AliasChoices("GIT_TOOLS_PROVIDER", "GIT_TOOLS_DEFAULT_PROVIDER"),
     )
     default_model: Optional[str] = Field(default=None)
-    default_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    default_max_tokens: int = Field(default=8000, ge=1)
+    default_reasoning_effort: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("GIT_TOOLS_REASONING_EFFORT"),
+    )
+    default_temperature: float = Field(default=0.6, ge=0.0, le=2.0)
+    default_max_tokens: int = Field(default=32000, ge=1)
     default_max_retries: int = Field(default=1, ge=0)
     default_retry_delay: float = Field(default=1.0, ge=0.0)
 
@@ -210,18 +276,9 @@ class GitToolsSettings(BaseSettings):
     )
     @classmethod
     def empty_str_to_default_int(cls, v: Any, info: ValidationInfo) -> Any:
-        """Convert empty strings to default value for int fields."""
+        """Convert empty strings to the field default for int fields."""
         if v == "" or v is None:
-            defaults = {
-                "default_token_limit": 200000,
-                "default_issue_pr_token_limit": 200000,
-                "large_diff_threshold": 5000,
-                "default_max_tokens": 8000,
-                "default_max_retries": 1,
-                "min_file_token_threshold": 1000,
-                "console_width_offset": -2,
-            }
-            return defaults.get(info.field_name, v)
+            return cls.model_fields[info.field_name].default
         return v
 
     @field_validator(
@@ -231,13 +288,9 @@ class GitToolsSettings(BaseSettings):
     )
     @classmethod
     def empty_str_to_default_float(cls, v: Any, info: ValidationInfo) -> Any:
-        """Convert empty strings to default value for float fields."""
+        """Convert empty strings to the field default for float fields."""
         if v == "" or v is None:
-            defaults = {
-                "default_temperature": 0.2,
-                "default_retry_delay": 1.0,
-            }
-            return defaults.get(info.field_name, v)
+            return cls.model_fields[info.field_name].default
         return v
 
     @field_validator("default_provider", mode="before")
@@ -245,8 +298,8 @@ class GitToolsSettings(BaseSettings):
     def empty_str_to_default_provider(cls, v: Any) -> Any:
         """Convert empty provider values to the default provider."""
         if v == "" or v is None:
-            return "openrouter"
-        return str(v).strip().lower()
+            return cls.model_fields["default_provider"].default
+        return normalize_provider_name(str(v))
 
     @field_validator("default_provider")
     @classmethod
@@ -263,6 +316,14 @@ class GitToolsSettings(BaseSettings):
             return None
         return v
 
+    @field_validator("default_reasoning_effort", mode="before")
+    @classmethod
+    def normalize_reasoning_effort(cls, v: Any) -> Any:
+        """Treat empty strings as unset and normalize casing (e.g. 'xhigh')."""
+        if v is None or v == "":
+            return None
+        return str(v).strip().lower() or None
+
     @property
     def default_temperature_range(self) -> Tuple[float, float]:
         """Return temperature range as a tuple."""
@@ -276,6 +337,16 @@ class GitToolsSettings(BaseSettings):
 
 # Singleton instance for application-wide access
 settings = GitToolsSettings()
+
+
+def reload_settings() -> None:
+    """Re-read the settings files into the module-level singleton.
+
+    The interactive menu can edit settings and then run a content command in
+    the same process; generators read this singleton, so it must be refreshed
+    in place after the settings detour.
+    """
+    settings.__dict__.update(GitToolsSettings().__dict__)
 
 
 class BaseLLMConfig(BaseSettings):
@@ -322,7 +393,7 @@ class OpenRouterConfig(BaseLLMConfig):
     api_key: str = Field(
         ...,
         min_length=1,
-        validation_alias=AliasChoices("OPENROUTER_API_KEY"),
+        validation_alias="OPENROUTER_API_KEY",
     )
     base_url: Optional[str] = Field(
         default="https://openrouter.ai/api/v1",
@@ -340,11 +411,40 @@ class KimiCLIConfig(BaseLLMConfig):
     api_key: str = Field(
         ...,
         min_length=1,
-        validation_alias=AliasChoices("MOONSHOT_API_KEY", "KIMICLI_API_KEY"),
+        validation_alias="KIMICODE_API_KEY",
     )
     base_url: Optional[str] = Field(
         default="https://api.kimi.com/coding/v1",
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "KIMICLI_BASE_URL"),
+    )
+
+    class Config:
+        env_file = _get_env_file_paths()
+        extra = "ignore"
+
+
+class CLIProxyAPIConfig(BaseLLMConfig):
+    """Configuration for the CLIProxyAPI OpenAI-compatible endpoint.
+
+    CLIProxyAPI (https://github.com/router-for-me/CLIProxyAPI) exposes a local
+    OpenAI-compatible proxy in front of CLI-authenticated models such as the
+    Codex/GPT-5 family. Because git-tools runs on the host, the default base URL
+    points at localhost; override it with GIT_TOOLS_API_BASE if the proxy lives
+    elsewhere (e.g. http://host.docker.internal:8317/v1 from inside a container).
+
+    The client key defaults to the ``cliproxyapi`` placeholder the proxy ships
+    with, so it need not be set; override CLIPROXYAPI_API_KEY only if the proxy
+    was configured with a different key.
+    """
+
+    api_key: str = Field(
+        default=PROVIDER_DEFAULT_API_KEYS["cliproxyapi"],
+        min_length=1,
+        validation_alias="CLIPROXYAPI_API_KEY",
+    )
+    base_url: Optional[str] = Field(
+        default="http://localhost:8317/v1",
+        validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "CLIPROXYAPI_BASE_URL"),
     )
 
     class Config:
@@ -364,7 +464,7 @@ def load_provider_config(provider: str) -> BaseLLMConfig:
     Raises:
         ValueError: If provider is unknown or config class is not whitelisted
     """
-    provider_lower = provider.lower()
+    provider_lower = normalize_provider_name(provider)
     if provider_lower not in PROVIDERS:
         raise ValueError(f"Unknown provider: {provider}")
 

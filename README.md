@@ -5,8 +5,7 @@ AI-powered CLI tool for conventional commit generation, issue/PR documentation, 
 ## Installation
 
 ```bash
-uv tool install -e .
-git-tools --install-completion
+uv tool install -e . && git-tools --install-completion
 ```
 
 If the tool is already installed and you want to refresh the installed tool environment:
@@ -21,7 +20,7 @@ After install, the main entrypoints are:
 
 ```bash
 # Configure provider, API key, and defaults
-git-tools config
+git-tools settings
 
 # Interactive menu
 git-tools
@@ -36,22 +35,28 @@ git-tools init
 
 Configuration and local state live here:
 
-- `~/.config/git-tools/config.env`
-  Written by `git-tools config`. Stores user-level provider, API key, and default overrides.
+- `~/.git-tools/settings.env`
+  Written by `git-tools settings`. Stores user-level provider, API key, and default overrides. Delete `~/.git-tools/` to reset all user settings from scratch. (A legacy `config.env` is migrated to `settings.env` automatically on first run.)
+- `~/.git-tools/models.json`
+  Written by `git-tools settings` when you enter a model ID manually. Holds saved model IDs grouped by provider so they reappear in the picker. Created at runtime; never committed.
 - `./git-tools.env`
   Optional repo-local env override file for the current working directory.
-- `./mappings.json`
-  Optional repo-local provider/model default map. If absent, `git-tools` falls back to `mappings.json.example`.
 
 ## Configuration
 
-Run the config command to configure the provider, API key, and model defaults:
+Run the settings command to configure the provider, API key, and model defaults:
 
 ```bash
-git-tools config
+git-tools settings
 ```
 
-This saves settings to `~/.config/git-tools/config.env`.
+This opens an interactive picker (press Esc or choose ← Back to go up a level) and saves settings to `~/.git-tools/settings.env`. Choosing a provider prompts for its key first, then detects and offers that provider's models. You can also edit a single setting directly:
+
+```bash
+git-tools settings provider openrouter
+git-tools settings temperature 0.6
+git-tools settings model anthropic/claude-sonnet-4.6
+```
 
 Alternatively, copy the example env file and choose a provider:
 
@@ -62,26 +67,31 @@ cp git-tools.env.example git-tools.env
 Supported providers:
 
 - `openrouter` with `OPENROUTER_API_KEY`
-- `kimicli` with `MOONSHOT_API_KEY`
+- `kimicli` with `KIMICODE_API_KEY` (`kimicode` and `kimi` are accepted aliases)
+- `cliproxyapi` — local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.6-sol` at `xhigh` reasoning. `CLIPROXYAPI_API_KEY` is optional (defaults to the `cliproxyapi` placeholder the proxy ships with); set it only if your proxy uses a different key.
 
-The active provider is selected with `GIT_TOOLS_PROVIDER`.
+The active provider is selected with `GIT_TOOLS_PROVIDER`. Provider choices, labels, endpoints, and model-catalog capabilities come from the provider registry. For every provider, the model picker attempts live OpenAI-compatible `/models` discovery using that provider's endpoint and key, keeps static models as an offline fallback, and offers manual model-ID entry. Large catalogs use searchable autocomplete.
 
 You can also export the variables directly, for example:
 
 ```bash
 export GIT_TOOLS_PROVIDER="kimicli"
-export MOONSHOT_API_KEY="your-kimi-api-key"
+export KIMICODE_API_KEY="your-kimi-api-key"
 ```
 
-Provider and model defaults come from `mappings.json` when present, otherwise from `mappings.json.example`.
-
-If you want repo-local provider/model defaults, copy and edit `mappings.json`:
+For a local CLIProxyAPI proxy (Codex/GPT-5), just point at the proxy — the client key defaults to `cliproxyapi`, so you only need to select the provider. The default model is `gpt-5.6-sol` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` for effort-capable models if desired:
 
 ```bash
-cp mappings.json.example mappings.json
+export GIT_TOOLS_PROVIDER="cliproxyapi"
+export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
+# export CLIPROXYAPI_API_KEY="my-key"   # only if your proxy uses a non-default key
 ```
 
-`git-tools config` does not edit `mappings.json`; it only writes user overrides to `~/.config/git-tools/config.env`.
+Provider metadata and static fallback models are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain. Live catalogs are endpoint- and credential-specific, so changing either causes a fresh discovery. A failed refresh may retain the last successful catalog for the same endpoint/key; changed or invalid configuration resets safely to saved/manual and static fallback choices.
+
+Every provider supports manual model IDs: run `git-tools settings`, choose **Model → Enter a model ID manually…**, and type the exact ID. Manual IDs are saved under that provider in `~/.git-tools/models.json` so they remain available even when a live catalog does not list them. OpenRouter defaults to `anthropic/claude-sonnet-4.6` when nothing is configured. You can also set a model directly with `git-tools settings model <id>`, `--model <id>`, or `GIT_TOOLS_DEFAULT_MODEL`.
+
+`git-tools settings` writes provider, model, and default overrides to `~/.git-tools/settings.env`, and manually entered model IDs to `~/.git-tools/models.json`.
 
 For release workflow and branch policy details, see [GitHub Setup](docs/github-setup.md), [Git Flow Guide](docs/git-flow-guide.md), [Classic Flow](docs/git-flow-classic.md), [Classic — Reviewed](docs/git-flow-classic-reviewed.md), [Variant — Release-led](docs/git-flow-variant-release-led.md), and [Variant — Reviewed](docs/git-flow-variant-reviewed.md).
 
@@ -110,10 +120,10 @@ git-tools commit --workflow-kind open-release
 ### Configure provider and defaults
 
 ```bash
-git-tools config
+git-tools settings
 ```
 
-`git-tools config` is interactive. Use it to choose the provider, save the matching API key, and set default model and request settings.
+`git-tools settings` is interactive. Choosing **Provider** now runs the complete setup in order: provider → API key (blank keeps an existing/default key) → live model detection → model choice. The standalone **API Key** and **Model** entries remain available for later changes. Press Esc (or pick ← Back) to go up one menu level. `git-tools settings <name> [value]` edits a single setting directly, e.g. `git-tools settings temperature 0.6`.
 
 ### Generate issue documentation
 
@@ -237,9 +247,9 @@ git-tools
 | `--max-tokens` | | Maximum tokens for completion |
 | `--token-limit` | `-l` | Token limit for diff processing |
 
-### Config
+### Settings
 
-`git-tools config` is interactive and currently has no user-facing CLI flags.
+`git-tools settings` is interactive when run bare. It also accepts direct arguments: `git-tools settings <name> [value]` where `<name>` is one of `provider`, `model`, `effort`, `api-key`, `temperature`, `max-tokens`, `max-retries`.
 
 ### Bump
 
@@ -272,7 +282,7 @@ git-tools
 | `--defaults` | | Write config using detected defaults without prompting |
 | `--force` | | Update an existing Commitizen config in place |
 
-Model routing is configurable through `mappings.json`.
+Provider metadata, live-catalog capabilities, and static fallback models are defined in `git_tools/settings/mappings.py`. Manually entered model IDs for any provider are managed via `git-tools settings` and saved to `~/.git-tools/models.json`.
 
 ## Useful Git Commands
 

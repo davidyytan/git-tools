@@ -21,7 +21,7 @@ uv tool install -e .
 Configure a provider in one of these ways:
 
 ```bash
-git-tools config
+git-tools settings
 ```
 
 or:
@@ -30,15 +30,9 @@ or:
 cp git-tools.env.example git-tools.env
 ```
 
-Provider and model defaults come from `mappings.json` when present, otherwise `mappings.json.example`.
+Provider metadata, aliases, live-catalog capabilities, and static fallback models are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy. Every provider can refresh its OpenAI-compatible `/models` catalog and accept manually entered model IDs via `git-tools settings` (saved by provider in `~/.git-tools/models.json`). OpenRouter defaults to `anthropic/claude-sonnet-4.6`.
 
-If you want local repo-specific defaults:
-
-```bash
-cp mappings.json.example mappings.json
-```
-
-`git-tools config` writes user overrides to `~/.config/git-tools/config.env`. It does not edit `mappings.json`.
+`git-tools settings` writes user overrides to `~/.git-tools/settings.env` and manually entered provider model IDs to `~/.git-tools/models.json`.
 
 ## Branch and PR Flow
 
@@ -147,8 +141,8 @@ If you change provider configuration, prompt files, or workflow examples, also c
 
 When you change one of these areas, update the others in the same PR when needed:
 
-- provider config in `git_tools/config/`
-- provider defaults in `mappings.json.example`
+- provider settings in `git_tools/settings/`
+- provider and model definitions in `git_tools/settings/mappings.py`
 - user-facing env examples in `git-tools.env.example`
 - prompt files in `git_tools/prompts/`
 - workflow examples in `.github/workflows/`

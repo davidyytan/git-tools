@@ -1213,12 +1213,16 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
     def _should_apply_azure_limit(self) -> bool:
         """Resolve the Azure PR description limit.
 
-        Resolution order: CLI param > interactive prompt > origin detection.
+        Resolution order: CLI param > saved disable > origin detection/confirmation.
+        Saved auto detects origin; interactive answers apply to this run only.
         Interactive prompts state what was detected and default to the
         detected value; non-interactive runs use detection silently.
         """
         if self._cli_azure_limit is not None:
             return self._cli_azure_limit
+
+        if settings.azure_pr_limit == "false":
+            return False
 
         origin_url = self._get_origin_url()
         is_azure = self._is_azure_devops_url(origin_url)
@@ -1234,7 +1238,7 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
             info("Origin remote: Not configured")
 
         return self.prompt_confirm(
-            "Apply the 4000-character PR description limit?", default=is_azure
+            f"Apply the {settings.azure_pr_max_chars}-character PR description limit?", default=is_azure
         )
 
     def _enforce_azure_pr_description_limit(
@@ -1246,20 +1250,21 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         is appended. When the description still exceeds the limit after the
         retry, warn but keep the content: nothing is truncated or discarded.
         """
+        limit = settings.azure_pr_max_chars
         count = count_ado_chars(parsed)
-        if count <= AZURE_PR_DESCRIPTION_LIMIT:
+        if count <= limit:
             return parsed
 
         info(
-            f"PR description is {count}/{AZURE_PR_DESCRIPTION_LIMIT} characters; "
+            f"PR description is {count}/{limit} characters; "
             "requesting a condensed rewrite."
         )
         retry_system_msg = (
             f"{system_msg}\n\n"
             "The previously generated PR description was "
-            f"{count} characters, exceeding the Azure DevOps limit of "
-            f"{AZURE_PR_DESCRIPTION_LIMIT} characters. Rewrite the PR description "
-            f"to fit within {AZURE_PR_DESCRIPTION_LIMIT} characters. Preserve the "
+            f"{count} characters, exceeding the configured Azure PR limit of "
+            f"{limit} characters. Rewrite the PR description "
+            f"to fit within {limit} characters. Preserve the "
             "`## Title:` line exactly. Keep the most important details from the "
             "provided diffs and/or commits and do not invent new information. "
             "Wrap the rewritten PR in a single code block with triple backticks."
@@ -1273,10 +1278,10 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
                 parsed = repaired
                 count = count_ado_chars(parsed)
 
-        if count > AZURE_PR_DESCRIPTION_LIMIT:
+        if count > limit:
             warning(
-                f"PR description is {count}/{AZURE_PR_DESCRIPTION_LIMIT} characters, "
-                "which exceeds the Azure DevOps limit. Copied anyway."
+                f"PR description is {count}/{limit} characters, "
+                "which exceeds the configured Azure PR limit. Copied anyway."
             )
         return parsed
 
@@ -1562,7 +1567,13 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         apply_azure_limit = False
         if self.generation_type == "pr" and self._should_apply_azure_limit():
             apply_azure_limit = True
-            system_msg = f"{system_msg}\n\n{AZURE_PR_DESCRIPTION_INSTRUCTION}"
+            instruction = AZURE_PR_DESCRIPTION_INSTRUCTION
+            if settings.azure_pr_max_chars != AZURE_PR_DESCRIPTION_LIMIT:
+                instruction += (
+                    f" The user's preferred limit is {settings.azure_pr_max_chars} "
+                    "UTF-16 units; keep the generated PR within that smaller limit."
+                )
+            system_msg = f"{system_msg}\n\n{instruction}"
 
         # In interactive mode, ask if user wants to use external providers
         # In non-interactive mode, always use external providers

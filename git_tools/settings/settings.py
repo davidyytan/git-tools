@@ -263,6 +263,18 @@ class GitToolsSettings(BaseSettings):
     default_max_retries: int = Field(default=1, ge=0)
     default_retry_delay: float = Field(default=1.0, ge=0.0)
 
+    # Azure PR preferences (global; auto detects each repository's origin).
+    azure_pr_limit: str = Field(default="auto")
+    azure_pr_max_chars: int = Field(default=4000, ge=1, le=4000)
+
+    @field_validator("azure_pr_limit", mode="before")
+    @classmethod
+    def validate_azure_pr_limit(cls, value: Any) -> str:
+        mode = str(value).strip().lower() if value not in (None, "") else "auto"
+        if mode not in {"auto", "false"}:
+            raise ValueError("azure_pr_limit must be auto or false")
+        return mode
+
     # Token limits
     default_token_limit: int = Field(default=200000, ge=1)
     default_issue_pr_token_limit: int = Field(default=200000, ge=1)
@@ -280,6 +292,7 @@ class GitToolsSettings(BaseSettings):
     )
 
     @field_validator(
+        "azure_pr_max_chars",
         "default_token_limit",
         "default_issue_pr_token_limit",
         "large_diff_threshold",

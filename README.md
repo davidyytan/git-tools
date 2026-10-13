@@ -337,3 +337,15 @@ For development setup, branch naming, validation steps, and contribution expecta
 ## Code of Conduct
 
 Community expectations and reporting guidance are in [Code of Conduct](CODE_OF_CONDUCT.md).
+
+### Saved Azure PR Preferences
+
+Use `git-tools settings azure-pr-limit auto` (detect Azure origin) or
+`git-tools settings azure-pr-limit false` (disable automatic limiting).
+Set the preferred size with `git-tools settings azure-pr-max-chars 2000` or
+`4000` (allowed range 1–4000 UTF-16 units). Defaults are `auto` and `4000`.
+Both persist in the existing `~/.git-tools/settings.env`. There is no saved
+always-on mode; CLI `--azure-limit/--no-azure-limit` remains a one-run override.
+
+Interactive path: `git-tools` → **settings** → **Azure PR Limit** or
+**Azure PR Max Chars**. See the [complete walkthrough](docs/usage.md#save-azure-pr-preferences).

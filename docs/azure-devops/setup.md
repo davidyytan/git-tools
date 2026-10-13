@@ -500,3 +500,11 @@ pipeline for validation. Protect `master` and `develop` and, for reviewed
 flows, stabilization branches. An administrator must reconcile required-PR
 policies with the automation's direct version commits; grant only the minimal
 approved branch-scoped exception if necessary, not blanket bypass to humans.
+
+## Saved PR Limit Preferences
+
+Save origin-based detection or disable it with `git-tools settings azure-pr-limit
+auto` / `false`. Save a preferred size with `git-tools settings azure-pr-max-chars
+2000` (default 4000; range 1–4000 UTF-16 units). These use the existing user
+settings file; there is no saved always-on mode. CLI flags override the mode for
+one run. See [direct and interactive instructions](../usage.md#save-azure-pr-preferences).

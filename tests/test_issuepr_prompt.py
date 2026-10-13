@@ -1386,7 +1386,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         self.assertEqual(mocks["generate_content"].call_count, 2)
         retry_system_msg = mocks["generate_content"].call_args_list[1][0][1]
         self.assertIn("Rewrite the PR description", retry_system_msg)
-        self.assertIn("exceeding the Azure DevOps limit", retry_system_msg)
+        self.assertIn("exceeding the configured Azure PR limit", retry_system_msg)
         mocks["warning"].assert_not_called()
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
@@ -1407,7 +1407,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         self.assertEqual(mocks["generate_content"].call_count, 2)
         mocks["warning"].assert_called_once()
         warning_message = mocks["warning"].call_args[0][0]
-        self.assertIn("exceeds the Azure DevOps limit", warning_message)
+        self.assertIn("exceeds the configured Azure PR limit", warning_message)
         self.assertIn("Copied anyway", warning_message)
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]

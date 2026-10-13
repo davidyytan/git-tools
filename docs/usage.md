@@ -181,9 +181,10 @@ Start/backmerge tuple cannot be safely inferred.
 5. If commits are available, at **Select input source**, choose **Diffs only**,
    **Commit messages only**, or **Both diffs and commits**. Answer the token limit
    and **Add additional context?** prompts when shown.
-6. For PR output, inspect the reported `origin` detection and answer **Apply the
-   4000-character PR description limit?**. Choose Yes for Azure DevOps, including
-   an Azure Server URL not automatically recognized.
+6. For PR output in saved `auto` mode, inspect the reported `origin` detection and answer **Apply the
+   <configured-limit>-character PR description limit?**. Choose Yes for Azure DevOps, including
+   an Azure Server URL not automatically recognized. Saved `false` skips this
+   question; `--azure-limit` can override it for one run.
 7. Follow the model/generation prompts, inspect the result, and use **Copy to
    clipboard?** if offered.
 8. Paste the title and description into GitHub or Azure Repos. Verify the source,
@@ -208,8 +209,10 @@ If a required flag has no menu equivalent, use the direct command.
 Direct PR generation automatically detects common Azure `origin` URLs.
 `--azure-limit` forces the limit; `--no-azure-limit` disables it. Use the override
 for custom Azure Server URLs or when generating text for a different host than
-`origin`. Interactive generation asks with the detected default. The limit is
-4,000 UTF-16 units for the generated description before the separately appended
+`origin`. Interactive generation in saved `auto` mode asks with the detected default;
+saved `false` disables automatic limiting. The preferred limit defaults to
+4,000 UTF-16 units and can be reduced in settings. It covers the generated
+description before the separately appended
 commit-log block; supplementary Unicode characters count as two units.
 The tool retries oversized descriptions once, but always check the final pasted
 content, especially when including the commit log. See
@@ -240,3 +243,40 @@ A local bump can change version files, create a commit, and create a tag. It doe
 not replace the CI flow strategy, which applies branch and promotion gates.
 Do not race a manual version bump against an active CI versioning pipeline;
 follow the selected platform guide and pull CI's version commit before more work.
+
+## Save Azure PR Preferences
+
+Preferences use the existing `~/.git-tools/settings.env`; no additional file is
+created. Configure them once with direct commands:
+
+```bash
+git-tools settings azure-pr-limit auto
+git-tools settings azure-pr-max-chars 2000
+# Disable automatic limiting instead:
+git-tools settings azure-pr-limit false
+```
+
+Or run `git-tools` → **settings** → **Azure PR Limit** → select **auto (detect
+origin)** or **false (disabled)**. To set the number, select **Azure PR Max
+Chars**, type `2000` or `4000`, and press Enter. These settings edits persist;
+the Yes/No question during PR generation still affects only the current run.
+
+Saved values are:
+
+```dotenv
+GIT_TOOLS_AZURE_PR_LIMIT="auto"
+GIT_TOOLS_AZURE_PR_MAX_CHARS="2000"
+```
+
+Only `auto` and `false` are accepted; there is no saved `true` mode. The number
+must be an integer from 1 through 4000 UTF-16 units (default 4000). `auto` detects
+each repository's origin; interactive generation confirms the detected default.
+`false` skips automatic limiting and its confirmation. Explicit `--azure-limit`
+or `--no-azure-limit` overrides the saved mode for one run; forcing the limit
+still uses the saved number. This supports custom Azure Server URLs without a
+global always-on mode. Environment variables override the saved settings file.
+
+The preferred limit is a generation target, not a hard bound on the final pasted
+text: the tool retries once, warns rather than truncates, and excludes the later
+commit-log append. Azure's service maximum remains 4000 even when your preferred
+limit is smaller.

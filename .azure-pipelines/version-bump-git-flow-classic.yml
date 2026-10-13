@@ -1,7 +1,7 @@
 # Azure Pipelines port of the git-tools version bump workflow (classic Git Flow).
 #
 # This file belongs in the TARGET Azure DevOps repo (not in git-tools itself):
-#   azure-pipelines/version-bump-git-flow-classic.yml
+#   .azure-pipelines/version-bump-git-flow-classic.yml
 #
 # It mirrors .github/workflows/version-bump-git-flow-classic.yml.example:
 #   - develop -> tagged alpha prereleases on the upcoming release line
@@ -17,10 +17,6 @@
 #      named per the GPG_SECURE_FILE variable below.
 #   3. Import this pipeline, then queue it once manually to authorize
 #      pipeline -> repo access if the project protects repository access.
-#
-# NOTE: GIT_TOOLS_REPO/GIT_TOOLS_REF currently point at a temp public mirror
-# (kelliecsw/temp-git-tools) that carries the ADO subject fix for testing;
-# switch back to davidyytan/git-tools at master once that work merges.
 
 trigger:
   branches:
@@ -39,11 +35,9 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
-  # git-tools is cloned from a temp public GitHub mirror for initial testing.
-  GIT_TOOLS_REPO: https://github.com/kelliecsw/temp-git-tools.git
-  # Branch that carries the ADO subject fix; point at master on
-  # davidyytan/git-tools once the feature line merges for real.
-  GIT_TOOLS_REF: fix/ado-merged-pr-subject-prefix
+  # git-tools is cloned from a public GitHub repo.
+  GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
+  GIT_TOOLS_REF: develop
   # Project-scoped signing identity; no Azure DevOps user account is needed.
   GIT_BOT_NAME: MyProject Versioning Automation       # <-- replace MyProject
   GIT_BOT_EMAIL: myproject-versioning@automation.invalid  # <-- match the GPG key user ID

@@ -23,7 +23,7 @@ project:
 
 | Resource | Recommended name | Scope |
 | --- | --- | --- |
-| Pipeline YAML file | `azure-pipelines/version-bump-git-flow-classic.yml` | Per repo |
+| Pipeline YAML file | `.azure-pipelines/version-bump-git-flow-classic.yml` | Per repo |
 | Azure pipeline definition | `<repo-slug>-version-bump-classic` | Per repo |
 | GPG key identity | `MyProject Versioning Automation` | Per project |
 | GPG key email | `myproject-versioning@automation.invalid` | Per project |
@@ -46,25 +46,17 @@ git init -b master
 Copy the classic Azure Pipelines template into the target repository:
 
 ```text
-azure-pipelines/version-bump-git-flow-classic.yml
+.azure-pipelines/version-bump-git-flow-classic.yml
 ```
 
 Azure DevOps does not require a particular YAML folder, but this project uses
-`azure-pipelines/` by convention.
+`.azure-pipelines/` by convention.
 
-During Azure DevOps support testing, configure:
-
-```yaml
-GIT_TOOLS_REPO: https://github.com/kelliecsw/temp-git-tools.git
-GIT_TOOLS_REF: fix/ado-merged-pr-subject-prefix
-```
-
-After the Azure support work is merged into the main `git-tools` repository,
-use:
+Set the workflow to use git-tools public repo develop branch
 
 ```yaml
 GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
-GIT_TOOLS_REF: master
+GIT_TOOLS_REF: develop
 ```
 
 Configure the Git author and Secure File name:
@@ -168,7 +160,7 @@ After the first push:
 3. Select the target repository.
 4. Select **Existing Azure Pipelines YAML file**.
 5. Select the `master` branch.
-6. Select `/azure-pipelines/version-bump-git-flow-classic.yml`.
+6. Select `/.azure-pipelines/version-bump-git-flow-classic.yml`.
 7. Select **Save**. Do not run the pipeline yet.
 8. Rename the pipeline to `<repo-slug>-version-bump-classic` so it is easy to
    distinguish from pipelines for other repositories in the project.

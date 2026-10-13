@@ -12,6 +12,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from rich.markup import escape
 
@@ -43,6 +44,25 @@ def _load_issuepr_prompt_block(filename: str) -> str:
 
 def _format_release_tuple(release: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in release)
+
+
+# Azure DevOps caps the pull request description at 4000 characters.
+AZURE_PR_DESCRIPTION_LIMIT = 4000
+
+AZURE_PR_DESCRIPTION_INSTRUCTION = (
+    "Azure DevOps limits the pull request description to 4000 characters. "
+    "Keep the generated PR description within 4000 characters."
+)
+
+
+def count_ado_chars(text: str) -> int:
+    """Count UTF-16 code units, matching how Azure DevOps measures strings.
+
+    Azure DevOps runs on .NET, so characters outside the Basic Multilingual
+    Plane (e.g. emoji) count as two units. For ASCII text this equals
+    ``len(text)``.
+    """
+    return len(text.encode("utf-16-le")) // 2
 
 
 @dataclass(frozen=True)
@@ -112,6 +132,7 @@ class IssuePullRequestGenerator(BaseGenerator):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         token_limit: Optional[int] = None,
+        azure_limit: Optional[bool] = None,
         interactive: bool = False,
     ):
         super().__init__(
@@ -136,6 +157,7 @@ class IssuePullRequestGenerator(BaseGenerator):
         self._cli_backmerge_hotfix_pr = backmerge_hotfix_pr
         self._cli_workflow_version = workflow_version
         self._cli_context = context
+        self._cli_azure_limit = azure_limit
         self.release_pr = bool(release_pr)
         self.hotfix_pr = bool(hotfix_pr)
         self.start_pr = bool(start_pr)
@@ -1152,6 +1174,112 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         instruction = prompt_map.get(self.generation_type, prompt_map["both"])
         return f"{content}\n\n{instruction}"
 
+    @staticmethod
+    def _is_azure_devops_url(url: Optional[str]) -> bool:
+        """Return True when the remote URL points at Azure DevOps."""
+        candidate = (url or "").strip()
+        if not candidate:
+            return False
+        if "://" not in candidate:
+            # Convert scp-like syntax (git@ssh.dev.azure.com:v3/...) to ssh://.
+            if "@" in candidate and ":" in candidate:
+                candidate = "ssh://" + candidate.replace(":", "/", 1)
+            else:
+                return False
+        try:
+            parsed = urlparse(candidate)
+        except ValueError:
+            return False
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+        if hostname in {"dev.azure.com", "ssh.dev.azure.com"}:
+            return True
+        return hostname.endswith(".visualstudio.com")
+
+    def _get_origin_url(self) -> Optional[str]:
+        """Return the origin remote URL, or None when it cannot be determined."""
+        try:
+            output = subprocess.check_output(
+                ["git", "remote", "get-url", "origin"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            ).strip()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return None
+        return output or None
+
+    def _should_apply_azure_limit(self) -> bool:
+        """Resolve the Azure PR description limit.
+
+        Resolution order: CLI param > interactive prompt > origin detection.
+        Interactive prompts state what was detected and default to the
+        detected value; non-interactive runs use detection silently.
+        """
+        if self._cli_azure_limit is not None:
+            return self._cli_azure_limit
+
+        origin_url = self._get_origin_url()
+        is_azure = self._is_azure_devops_url(origin_url)
+
+        if not self._interactive:
+            return is_azure
+
+        if is_azure:
+            info("Origin remote URL identified as an Azure DevOps repository")
+        elif origin_url:
+            info("Origin remote URL identified as a non-Azure DevOps repository")
+        else:
+            info("Origin remote URL not found")
+
+        return self.prompt_confirm(
+            "Apply the 4000-character PR description limit?", default=is_azure
+        )
+
+    def _enforce_azure_pr_description_limit(
+        self, parsed: str, content: str, system_msg: str
+    ) -> str:
+        """Retry once when the generated PR description exceeds the ADO limit.
+
+        The count covers the generated description before the commit log block
+        is appended. When the description still exceeds the limit after the
+        retry, warn but keep the content: nothing is truncated or discarded.
+        """
+        count = count_ado_chars(parsed)
+        if count <= AZURE_PR_DESCRIPTION_LIMIT:
+            return parsed
+
+        info(
+            f"PR description is {count}/{AZURE_PR_DESCRIPTION_LIMIT} characters; "
+            "requesting a condensed rewrite."
+        )
+        retry_system_msg = (
+            f"{system_msg}\n\n"
+            "The previously generated PR description was "
+            f"{count} characters, exceeding the Azure DevOps limit of "
+            f"{AZURE_PR_DESCRIPTION_LIMIT} characters. Rewrite the PR description "
+            f"to fit within {AZURE_PR_DESCRIPTION_LIMIT} characters. Preserve the "
+            "`## Title:` line exactly. Keep the most important details from the "
+            "provided diffs and/or commits and do not invent new information. "
+            "Wrap the rewritten PR in a single code block with triple backticks."
+        )
+        response = self.generate_content(content, retry_system_msg)
+        if response:
+            repaired = self._normalize_pr_output(
+                self.parse_generated_content(response["content"])
+            )
+            if repaired:
+                parsed = repaired
+                count = count_ado_chars(parsed)
+
+        if count > AZURE_PR_DESCRIPTION_LIMIT:
+            warning(
+                f"PR description is {count}/{AZURE_PR_DESCRIPTION_LIMIT} characters, "
+                "which exceeds the Azure DevOps limit. Copied anyway."
+            )
+        return parsed
+
     def _resolve_fixed_pr_title(self) -> Optional[str]:
         if self.start_pr:
             if self._workflow_pr_context is not None:
@@ -1430,6 +1558,12 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
 
         system_msg = self._build_system_message(content, input_source)
 
+        # Azure DevOps PR description limit: CLI param > prompt > origin detection.
+        apply_azure_limit = False
+        if self.generation_type == "pr" and self._should_apply_azure_limit():
+            apply_azure_limit = True
+            system_msg = f"{system_msg}\n\n{AZURE_PR_DESCRIPTION_INSTRUCTION}"
+
         # In interactive mode, ask if user wants to use external providers
         # In non-interactive mode, always use external providers
         if self._interactive:
@@ -1466,6 +1600,8 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         console.print(Panel(escape(response["content"].strip()), title="[bold]Raw Response[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL))
 
         parsed = self._normalize_pr_output(self.parse_generated_content(response["content"]))
+        if apply_azure_limit and parsed:
+            parsed = self._enforce_azure_pr_description_limit(parsed, content, system_msg)
         pr_commit_log = (
             self.get_pr_commit_log(base_branch)
             if self.generation_type == "pr" and commit_info

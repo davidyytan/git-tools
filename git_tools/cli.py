@@ -674,6 +674,13 @@ def pr(
         Optional[int],
         typer.Option("--token-limit", "-l", help="Token limit for diff processing"),
     ] = None,
+    azure_limit: Annotated[
+        Optional[bool],
+        typer.Option(
+            "--azure-limit/--no-azure-limit",
+            help="Apply the Azure DevOps 4000-character PR description limit (default: detect from the origin remote)",
+        ),
+    ] = None,
     workflow_version: Annotated[
         Optional[str],
         typer.Option(
@@ -736,6 +743,7 @@ def pr(
             temperature=temperature,
             max_tokens=max_tokens,
             token_limit=token_limit,
+            azure_limit=azure_limit,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()

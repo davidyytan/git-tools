@@ -15,6 +15,7 @@ It intentionally stays stdlib-only so it can power:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -590,6 +591,74 @@ class UvLockVersionTarget(VersionTarget):
 
 
 @dataclass(frozen=True)
+class JsonVersionTarget(VersionTarget):
+    """Sync only an npm manifest's own version, never nested packages."""
+
+    path: Path
+    label: str
+    lockfile: bool = False
+    strict_consistency: bool = False
+
+    def apply(
+        self,
+        text: str,
+        *,
+        current_version: str,
+        new_version: str,
+        check_consistency: bool,
+    ) -> tuple[str, bool]:
+        def reject_constant(value: str) -> None:
+            raise ValueError(f"Invalid JSON constant: {value}")
+
+        data = json.loads(text, parse_constant=reject_constant)
+        if not isinstance(data, dict):
+            raise ConfigError(f"Expected a JSON object in {self.path}.")
+
+        owners = [(data, "version")]
+        if self.lockfile:
+            packages = data.get("packages")
+            if isinstance(packages, dict) and "" in packages:
+                owners.append((packages[""], 'packages[""].version'))
+
+        changed = False
+        valid = False
+        for owner, field in owners:
+            if (
+                not isinstance(owner, dict)
+                or not isinstance(owner.get("version"), str)
+                or not owner["version"].strip()
+            ):
+                _warn_auxiliary(f"{self.path}: {field}", "missing or non-string version")
+                continue
+            valid = True
+            if owner["version"] != new_version:
+                owner["version"] = new_version
+                changed = True
+        if not valid:
+            raise ConfigError(f"No valid app version fields in {self.path}.")
+        if not changed:
+            return text, False
+
+        # Preserve the usual npm indentation and trailing newline convention.
+        indent_match = re.search(r'\n([ \t]+)"', text)
+        indent = indent_match.group(1) if indent_match else None
+        updated = json.dumps(data, ensure_ascii=False, indent=indent)
+        if text.endswith("\n"):
+            updated += "\n"
+        return updated, True
+
+
+def _warn_auxiliary(target: object, error: object) -> None:
+    logging.getLogger(__name__).warning(
+        "Skipping auxiliary version sync for %s: %s", target, error
+    )
+
+
+def _is_core_version_path(root: Path, path: Path) -> bool:
+    return path.absolute() == (root / ".cz.toml").absolute()
+
+
+@dataclass(frozen=True)
 class BumpConfig:
     root: Path
     current_version: Version
@@ -789,14 +858,10 @@ class BumpGenerator(BaseGenerator):
 def load_bump_config(root: Path) -> BumpConfig:
     cz_config_path, cz_settings = _load_commitizen_settings(root)
     pyproject_path = root / "pyproject.toml"
-    pyproject_data = _read_toml(pyproject_path)
 
     commitizen_version = _read_nested_string(cz_settings, ("version",))
     commitizen_version_provider = _read_nested_string(cz_settings, ("version_provider",))
     commitizen_version_scheme = _read_nested_string(cz_settings, ("version_scheme",))
-    pyproject_version = _read_nested_string(pyproject_data, ("project", "version"))
-    project_name = _read_nested_string(pyproject_data, ("project", "name"))
-
     if cz_config_path is None:
         raise ConfigError("No managed version found in .cz.toml.")
     if commitizen_version is None:
@@ -810,6 +875,14 @@ def load_bump_config(root: Path) -> BumpConfig:
     current_version = _resolve_configured_version(
         current_version_text, commitizen_version_scheme
     )
+
+    try:
+        pyproject_data = _read_toml(pyproject_path)
+    except Exception as exc:
+        _warn_auxiliary(pyproject_path, exc)
+        pyproject_data = {}
+    pyproject_version = _read_nested_string(pyproject_data, ("project", "version"))
+    project_name = _read_nested_string(pyproject_data, ("project", "name"))
 
     tag_format = _read_nested_string(cz_settings, ("tag_format",)) or DEFAULT_TAG_FORMAT
     major_version_zero = bool(cz_settings.get("major_version_zero", False))
@@ -839,33 +912,60 @@ def load_bump_config(root: Path) -> BumpConfig:
         auto_managed_paths.add(pyproject_path)
 
     uv_lock_path = root / "uv.lock"
-    if uv_lock_path.exists() and project_name:
-        targets.append(
-            UvLockVersionTarget(
-                path=uv_lock_path,
-                label="uv lock package version",
-                package_name=canonicalize_package_name(project_name),
-                strict_consistency=False,
+    try:
+        if uv_lock_path.exists() and project_name:
+            targets.append(
+                UvLockVersionTarget(
+                    path=uv_lock_path,
+                    label="uv lock package version",
+                    package_name=canonicalize_package_name(project_name),
+                    strict_consistency=False,
+                )
             )
-        )
-        auto_managed_paths.add(uv_lock_path)
+            auto_managed_paths.add(uv_lock_path)
+    except Exception as exc:
+        _warn_auxiliary(uv_lock_path, exc)
+
+    for filename in ("package.json", "package-lock.json", "npm-shrinkwrap.json"):
+        path = root / filename
+        # Register absent paths too, so configured regex entries cannot override
+        # JSON-aware selection. Only existing root files are automatic targets.
+        auto_managed_paths.add(path)
+        try:
+            if path.exists():
+                targets.append(
+                    JsonVersionTarget(
+                        path=path,
+                        label="npm app version",
+                        lockfile=filename != "package.json",
+                    )
+                )
+        except Exception as exc:
+            _warn_auxiliary(path, exc)
 
     raw_version_files = cz_settings.get("version_files")
     if isinstance(raw_version_files, list):
         for spec in raw_version_files:
             if not isinstance(spec, str):
+                _warn_auxiliary("version_files entry", "expected a string")
                 continue
-            for path, regex in _resolve_version_file_spec(root, spec, current_version_text):
-                if path in auto_managed_paths:
-                    continue
-                targets.append(
-                    PatternVersionTarget(
-                        path=path,
-                        label=f"version_files entry {spec}",
-                        regex=regex,
-                        strict_consistency=False,
+            try:
+                resolved_targets = _resolve_version_file_spec(root, spec, current_version_text)
+                if not resolved_targets:
+                    _warn_auxiliary(f"version_files entry {spec}", "no matching files")
+                for path, regex in resolved_targets:
+                    if path.resolve() in {managed.resolve() for managed in auto_managed_paths}:
+                        continue
+                    targets.append(
+                        PatternVersionTarget(
+                            path=path,
+                            label=f"version_files entry {spec}",
+                            regex=regex,
+                            strict_consistency=False,
+                        )
                     )
-                )
+            except Exception as exc:
+                _warn_auxiliary(f"version_files entry {spec}", exc)
 
     return BumpConfig(
         root=root,
@@ -1120,19 +1220,24 @@ def plan_version_file_updates(
     new_version_text = str(new_version)
 
     for target in config.version_targets:
-        text = pending.get(target.path)
-        if text is None:
-            text = target.path.read_text(encoding="utf-8")
-        effective_check_consistency = check_consistency and getattr(
-            target, "strict_consistency", True
-        )
-        updated_text, _ = target.apply(
-            text,
-            current_version=current_version,
-            new_version=new_version_text,
-            check_consistency=effective_check_consistency,
-        )
-        pending[target.path] = updated_text
+        try:
+            text = pending.get(target.path)
+            if text is None:
+                text = target.path.read_text(encoding="utf-8")
+            effective_check_consistency = check_consistency and _is_core_version_path(
+                config.root, target.path
+            )
+            updated_text, _ = target.apply(
+                text,
+                current_version=current_version,
+                new_version=new_version_text,
+                check_consistency=effective_check_consistency,
+            )
+            pending[target.path] = updated_text
+        except Exception as exc:
+            if _is_core_version_path(config.root, target.path):
+                raise
+            _warn_auxiliary(target.path, exc)
     return pending
 
 
@@ -1959,11 +2064,16 @@ def run_bump(options: BumpOptions, *, cwd: Path | None = None) -> Version:
 
     updated_paths: list[Path] = []
     for path, contents in pending_updates.items():
-        original = path.read_text(encoding="utf-8")
-        if original == contents:
-            continue
-        path.write_text(contents, encoding="utf-8")
-        updated_paths.append(path)
+        try:
+            original = path.read_text(encoding="utf-8")
+            if original == contents:
+                continue
+            path.write_text(contents, encoding="utf-8")
+            updated_paths.append(path)
+        except Exception as exc:
+            if _is_core_version_path(root, path):
+                raise
+            _warn_auxiliary(path, exc)
 
     if not updated_paths:
         raise ConfigError("No managed version files changed.")
@@ -2130,9 +2240,10 @@ def _resolve_version_file_spec(
     pattern = drive + path_part
     regex = regex_part or re.escape(current_version)
 
+    compiled = re.compile(regex)
     resolved: list[tuple[Path, re.Pattern[str]]] = []
     for match in sorted(glob(os.fspath(root / pattern))):
-        resolved.append((Path(match), re.compile(regex)))
+        resolved.append((Path(match), compiled))
     return resolved
 
 

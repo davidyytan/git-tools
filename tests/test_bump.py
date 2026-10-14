@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from git_tools.generators.bumpgen import (
     canonicalize_package_name,
     ConsistencyError,
     ConfigError,
+    GitError,
     Version,
     build_git_tag_args,
     build_parser,
@@ -502,6 +504,140 @@ class ConfigAndUpdateTests(unittest.TestCase):
                 load_current_version_for_strategy(root)
 
 
+class AuxiliarySyncTests(unittest.TestCase):
+    def _root(self, root: Path, extra: str = "") -> None:
+        (root / ".cz.toml").write_text(
+            '[tool.commitizen]\nversion = "1.2.3"\n' + extra, encoding="utf-8"
+        )
+
+    def _plan(self, root: Path) -> dict[Path, str]:
+        return plan_version_file_updates(
+            load_bump_config(root), Version.parse("1.2.4"), check_consistency=True
+        )
+
+    def test_malformed_pyproject_and_invalid_regex_warn_and_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._root(root, 'version_files = ["missing.txt:[", "good.txt", "bad.txt:^version"]\n')
+            (root / "pyproject.toml").write_text("[broken", encoding="utf-8")
+            (root / "good.txt").write_text("1.2.3", encoding="utf-8")
+            (root / "bad.txt").write_text("version = unknown", encoding="utf-8")
+            with self.assertLogs("git_tools.generators.bumpgen", level="WARNING") as logs:
+                updates = self._plan(root)
+            self.assertIn("pyproject.toml", " ".join(logs.output))
+            self.assertIn("missing.txt", " ".join(logs.output))
+            self.assertIn("bad.txt", " ".join(logs.output))
+            self.assertEqual(updates[root / "good.txt"], "1.2.4")
+            self.assertIn('version = "1.2.4"', updates[root / ".cz.toml"])
+
+    def test_auxiliary_read_failure_warns_and_skips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._root(root)
+            path = root / "package.json"
+            path.write_bytes(b"\xff")
+            with self.assertLogs("git_tools.generators.bumpgen", level="WARNING"):
+                updates = self._plan(root)
+            self.assertNotIn(path, updates)
+            self.assertIn(root / ".cz.toml", updates)
+
+    def test_auxiliary_load_resolution_and_apply_exceptions_are_isolated(self) -> None:
+        for stage in ("load", "resolve", "apply"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._root(root, 'version_files = ["extra.txt"]\n')
+                (root / "extra.txt").write_text("1.2.3", encoding="utf-8")
+                (root / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
+                if stage == "load":
+                    from git_tools.generators import bumpgen
+                    original = bumpgen._read_toml
+                    def read(path: Path) -> dict:
+                        if path.name == "pyproject.toml":
+                            raise PermissionError("load denied")
+                        return original(path)
+                    mocked = patch("git_tools.generators.bumpgen._read_toml", side_effect=read)
+                elif stage == "resolve":
+                    mocked = patch("git_tools.generators.bumpgen._resolve_version_file_spec", side_effect=OSError("resolve denied"))
+                else:
+                    mocked = patch("git_tools.generators.bumpgen.JsonVersionTarget.apply", side_effect=RuntimeError("apply denied"))
+                with mocked, self.assertLogs("git_tools.generators.bumpgen", level="WARNING"):
+                    updates = self._plan(root)
+                self.assertIn('version = "1.2.4"', updates[root / ".cz.toml"])
+
+    def test_malformed_and_missing_json_versions_are_not_created(self) -> None:
+        for text in ('{bad', '[]', '{}', '{"version":null}', '{"version":42}', '{"version":""}', '{"version":"1.2.3","x":NaN}'):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._root(root)
+                path = root / "package.json"
+                path.write_text(text, encoding="utf-8")
+                with self.assertLogs("git_tools.generators.bumpgen", level="WARNING"):
+                    updates = self._plan(root)
+                self.assertNotIn(path, updates)
+                self.assertEqual(path.read_text(encoding="utf-8"), text)
+
+    def test_root_npm_versions_only_and_no_monorepo_recursion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._root(root, 'version_files = ["package*.json:version"]\n')
+            manifest = {"name": "app", "version": "0.1.0", "dependencies": {"express": "1.2.3"}, "workspaces": ["packages/*"]}
+            (root / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+            nested = root / "packages" / "child"
+            nested.mkdir(parents=True)
+            (nested / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
+            tauri = root / "src-tauri"
+            tauri.mkdir()
+            tauri_path = tauri / "tauri.conf.json"
+            tauri_path.write_text('{"version":"../package.json"}', encoding="utf-8")
+            lock = {"version": "0.1.0", "lockfileVersion": 3, "packages": {"": {"version": "0.1.0"}, "node_modules/express": {"version": "1.2.3"}, "packages/child": {"version": "1.2.3"}}, "dependencies": {"express": {"version": "1.2.3"}}}
+            for filename in ("package-lock.json", "npm-shrinkwrap.json"):
+                (root / filename).write_text(json.dumps(lock), encoding="utf-8")
+            updates = self._plan(root)
+            result = json.loads(updates[root / "package.json"])
+            self.assertEqual(result["version"], "1.2.4")
+            self.assertEqual(result["dependencies"], manifest["dependencies"])
+            for filename in ("package-lock.json", "npm-shrinkwrap.json"):
+                result = json.loads(updates[root / filename])
+                expected = json.loads(json.dumps(lock))
+                expected["version"] = expected["packages"][""]["version"] = "1.2.4"
+                self.assertEqual(result, expected)
+            self.assertNotIn(nested / "package.json", updates)
+            self.assertNotIn(tauri_path, updates)
+            self.assertEqual(tauri_path.read_text(encoding="utf-8"), '{"version":"../package.json"}')
+
+    def test_lock_valid_fields_sync_independently(self) -> None:
+        for data, field in (({"packages": {"": {"version": "old"}}}, "root"), ({"version": "old", "packages": {"": {"version": None}}}, "top")):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._root(root)
+                path = root / "package-lock.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertLogs("git_tools.generators.bumpgen", level="WARNING"):
+                    result = json.loads(self._plan(root)[path])
+                if field == "root":
+                    self.assertNotIn("version", result)
+                    self.assertEqual(result["packages"][""]["version"], "1.2.4")
+                else:
+                    self.assertEqual(result["version"], "1.2.4")
+                    self.assertIsNone(result["packages"][""]["version"])
+
+    def test_core_config_and_consistency_remain_strict(self) -> None:
+        for text in ('[broken', '[tool.commitizen]\nversion = "bad"\n', '[tool.commitizen]\ntag_format = "$version"\n'):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                (root / ".cz.toml").write_text(text, encoding="utf-8")
+                (root / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
+                with self.assertRaises(ConfigError):
+                    load_bump_config(root)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._root(root)
+            config = load_bump_config(root)
+            (root / ".cz.toml").write_text('[tool.commitizen]\nversion = "9.0.0"\n', encoding="utf-8")
+            with self.assertRaises(ConsistencyError):
+                plan_version_file_updates(config, Version.parse("1.2.4"), check_consistency=True)
+
+
 class RunBumpTagSafetyTests(unittest.TestCase):
     def _init_repo(self, root: Path, version: str) -> None:
         subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
@@ -552,6 +688,41 @@ class RunBumpTagSafetyTests(unittest.TestCase):
             encoding="utf-8",
         )
         subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+
+    def test_auxiliary_write_failure_still_commits_and_tags_core(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._init_repo(root, "1.2.3")
+            subprocess.run(["git", "commit", "-m", "feat: initial"], cwd=root, check=True, capture_output=True)
+            original_write = Path.write_text
+            def fail_auxiliary(path: Path, *args: object, **kwargs: object) -> int:
+                if path.name == "pyproject.toml":
+                    raise PermissionError("auxiliary write denied")
+                return original_write(path, *args, **kwargs)
+            with patch.object(Path, "write_text", new=fail_auxiliary), self.assertLogs("git_tools.generators.bumpgen", level="WARNING"):
+                result = run_bump(BumpOptions(increment="PATCH", yes=True), cwd=root)
+            self.assertEqual(str(result), "1.2.4")
+            self.assertIn('version = "1.2.4"', (root / ".cz.toml").read_text())
+            self.assertIn('version = "1.2.3"', (root / "pyproject.toml").read_text())
+            tags = subprocess.run(["git", "tag"], cwd=root, check=True, capture_output=True, text=True).stdout
+            self.assertIn("1.2.4", tags)
+            committed = subprocess.run(["git", "show", "--pretty=", "--name-only", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout
+            self.assertEqual(committed.strip(), ".cz.toml")
+
+    def test_core_write_and_git_commit_failures_propagate(self) -> None:
+        for failure in ("write", "git", "tag"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._init_repo(root, "1.2.3")
+                subprocess.run(["git", "commit", "-m", "feat: initial"], cwd=root, check=True, capture_output=True)
+                if failure == "write":
+                    with patch.object(Path, "write_text", side_effect=PermissionError("core denied")), self.assertRaises(PermissionError):
+                        run_bump(BumpOptions(increment="PATCH", yes=True), cwd=root)
+                else:
+                    operation = "git_commit" if failure == "git" else "git_tag"
+                    with patch(f"git_tools.generators.bumpgen.{operation}", side_effect=GitError("git denied")), self.assertRaises(GitError):
+                        run_bump(BumpOptions(increment="PATCH", yes=True), cwd=root)
+                self.assertEqual(subprocess.run(["git", "tag"], cwd=root, check=True, capture_output=True, text=True).stdout, "")
 
     def test_yes_allows_initial_tag_when_repo_has_no_tags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

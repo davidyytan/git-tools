@@ -4,6 +4,18 @@ AI-powered CLI tool for conventional commit generation, issue/PR documentation, 
 
 ## Installation
 
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed,
+run from this checkout:
+
+```bash
+./install.sh
+# Refresh the tool environment when needed:
+./install.sh --reinstall
+```
+
+The script installs this checkout in editable mode and enables shell completion.
+Restart your shell afterward. Alternatively, run the commands directly:
+
 ```bash
 uv tool install -e . && git-tools --install-completion
 ```

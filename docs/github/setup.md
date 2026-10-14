@@ -1,16 +1,24 @@
 # GitHub Setup
 
-[GitHub guides](README.md) · [Setup](setup.md) · [CLI and interactive usage](../usage.md)
+[GitHub guides](README.md) · [Documentation index](../README.md) · [CLI usage](../usage.md)
 
-## Set Up GitHub First
+## Before You Start
 
-- Set up GitHub before you run any local bootstrap commands.
-- This project uses `master`.
-- Before you run `git-tools init`, the default branch must already be `master`.
+- Read this setup before running local bootstrap commands.
+- The checked-in adapters assume branches named `master` and `develop`.
+- Initialize the local repository on `master`. For an empty GitHub repository,
+  set its default branch to `master` after the first push, when that branch
+  exists. For an existing repository, plan migration separately; do not rerun
+  the fresh-repository bootstrap or overwrite its version configuration.
 
-## What GitHub Must Have
+## Copy and Configure the Workflow
 
 ### Workflow file
+
+`git-tools init` writes `.cz.toml`; it does **not** install Actions workflows,
+create branches, configure repository settings/secrets, or push to GitHub.
+The active classic workflow in this source repository versions **git-tools
+itself**. It is not installed into your application by the CLI.
 
 Activate exactly one workflow by copying or renaming one example to a real
 `.yml` file in `.github/workflows/`:
@@ -53,6 +61,11 @@ the target repository (for example, a write-enabled deploy key or bot account).
 tags. Register the matching public keys as appropriate, store private keys
 only in Actions secrets, and do not commit them to the repository.
 
+The supplied workflow does not configure a GPG passphrase input. Use a dedicated
+key suitable for unattended signing, or adapt the import step to supply a
+passphrase securely. Plan expiry, rotation, revocation, and backup; never use
+an unattended automation key as a personal signing key.
+
 Branch protections/rulesets must permit this bot to push signed version
 commits and tags on the workflow's target branches. In reviewed flows, require
 human changes to arrive through PRs while narrowly granting the automation
@@ -61,7 +74,7 @@ checkout credentials; merely granting `GITHUB_TOKEN` write permissions does
 not make an SSH identity writable. Validate bootstrap in a test repository
 before enforcing the final protections.
 
-### Merge settings
+## Merge Settings
 
 This flow supports two GitHub merge styles:
 
@@ -115,26 +128,74 @@ Why:
 - squash and merge-commit styles both work when that final subject is the PR
   title
 
-## Automation Note
+## Operational Safety and Limitations
 
-Current CLI support covers the documented fixed-title workflow:
+- This is a **mutating push workflow**, not a read-only PR check. Use a separate
+  test workflow for PR validation. Never expose its write/signing credentials
+  to untrusted code or permit arbitrary changes to the adapter.
+- The examples trigger on `master`, `develop`, `release/**`, `hotfix/**`,
+  `feature/**`, and `bugfix/**`. Reviewed `release-fix/*` and `hotfix-fix/*`
+  branches are intentionally outside that list; merging their PRs triggers
+  the stabilization branch instead.
+- Full history and tags are required. The adapter evaluates remote branch
+  history as well as `.cz.toml`; shallow checkouts and stale refs can change
+  decisions. Pull bot commits and explicitly fetch tags between dependent steps.
+- The examples do not configure job concurrency. Coordinate version-producing
+  pushes on each branch and wait for publication before the next operation.
+  Concurrent runs can race; rejected publication is not permission to force-push
+  or repeat bootstrap. Inspect the remote refs and [recovery guide](../publication.md).
+- The bot's bump subject makes the next triggered run skip, preventing an
+  ordinary bump loop. This is not a general guarantee against competing
+  versioning workflows or manually changed versions.
+- Reviewed flow is a repository-policy choice, not a compliance certification.
+  Human changes require PRs; generated bot version commits need the approved
+  narrow exception described above.
 
-- `git-tools commit --workflow-kind open-release`
-- `git-tools pr --start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, and `--backmerge-hotfix-pr`
-- pass `--workflow-version X.Y.Z` when Start or Backmerge PR helpers cannot infer the exact tuple safely
+## Bootstrap `master` and `develop`
 
-## Direct CLI and Interactive Navigation
+For a **fresh** target repository, copy and configure the chosen adapter before
+staging the first commit. Do not use this recipe to migrate existing history.
 
-The flow guides show direct commands, including `git-tools init`,
-`git-tools commit`, and `git-tools pr`. As an alternative, run `git-tools`
-without a subcommand in an interactive terminal and navigate to the operation
-you need. Use the same workflow kind, base branch, fixed title, and explicit
-version as the direct examples; use the direct command if an interactive path
-does not expose a required option. See [CLI and interactive usage](../usage.md)
-for navigation details. GitHub settings and ordinary Git commands are still
-performed separately.
+```bash
+git init -b master
+git remote add origin git@github.com:<owner>/<repo>.git
+git-tools init
+git add -A
+git commit -m "Release 0.1.0"
+git push -u origin master
+```
 
-## After GitHub Is Ready
+Review staged files before committing, and never stage signing-key exports.
+Set the remote default branch to `master` after it exists. Direct initialization
+seeds `.cz.toml` at `0.0.1`; initialize `[project].version` to the same baseline
+if present. The first master run should create stable `0.1.0`. The subject
+`Release 0.0.1` is also accepted for bootstrap. Interactive initialization must
+retain the same baseline to obtain this documented result.
+
+Wait for CI to publish successfully, then:
+
+```bash
+git checkout master
+git pull origin master
+git fetch origin --tags
+git checkout -b develop
+git push -u origin develop
+```
+
+Before every dependent operation, pull the bot commit and fetch tags. Promote
+only after the release/hotfix branch contains the expected `rc` version; wait
+for stable publication on `master` before backmerge. Creating a branch or
+opening a PR alone does not bump it.
+
+## Local CLI and PR Descriptions
+
+Direct `git-tools commit` generates and commits by default; use `--no-commit`
+to review output first. `git-tools pr` generates text, not a GitHub PR. Push the
+source branch, create the PR in GitHub, and use the documented base and title.
+See [CLI usage](../usage.md) for direct/interactive options and PR length
+preferences, and [configuration](../configuration.md) for provider settings.
+
+## After Setup
 
 Continue with one of these standalone guides:
 

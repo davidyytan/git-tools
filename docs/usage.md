@@ -1,199 +1,108 @@
-# Direct CLI and Interactive Usage
+# CLI Reference and Interactive Usage
 
-Both entry points use the same local generators. Choose direct commands when
-reproducible flags matter; choose the interactive terminal menu when you want
-prompts to guide you. GitHub and Azure DevOps use the same CLI. Their CI,
-repository permissions, and PR completion instructions are separate:
+Run `git-tools` in the repository you want to work on. See the [project README](../README.md) for installation, the [documentation index](README.md) for platform workflows, and [configuration](configuration.md) for providers, credentials, and `.cz.toml`.
 
-- [GitHub setup and flows](github/README.md)
-- [Azure DevOps setup and flows](azure-devops/README.md)
-- [Flow comparison and shared policy](git-flow-guide.md)
-
-## Install and Start
-
-Follow the [installation instructions](../README.md#installation) first. Run
-commands inside the target Git repository, not the git-tools source checkout.
-Configure an LLM provider for commit/issue/PR generation; initialization and
-version bumping do not require an LLM.
+## Choose an entry point
 
 ```bash
-# Open the terminal menu
-git-tools
-# Or inspect direct commands and their supported flags
-git-tools --help
-git-tools pr --help
+git-tools                  # Interactive menu in a terminal
+git-tools --help            # Command overview
+git-tools commit --help     # Options for one command
 ```
 
-The menu is:
+Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct subcommands do not prompt by default. To request prompts for a particular operation, use the supported but hidden `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`.
 
-```text
-Select command:
-  commit
-  issue
-  pr
-  bump
-  init
-  settings
-  exit
-```
+| Command | What it does | Important side effects |
+| --- | --- | --- |
+| `commit` | Generates a Conventional Commit message from staged changes, or a fixed release opener | **Commits by default in direct mode**; does not push |
+| `issue` | Generates issue text from branch changes and commits | Prints/copies text; does not create a hosted issue |
+| `pr` | Generates a PR description and title guidance | Prints/copies text; does not submit or merge a PR |
+| `bump` | Computes the next version from Conventional Commits | Normally updates managed files, commits them, and creates a tag; does not push |
+| `init` | Writes Commitizen-compatible `.cz.toml` | Does not initialize Git, create branches, commit, tag, or push |
+| `settings` | Edits saved user settings | Writes `~/.git-tools/settings.env`; model discovery can contact the provider |
 
-Use **Up/Down** to highlight an item and **Enter** to select it. These are
-terminal selections, not browser buttons. Yes/No questions also use selectable
-choices. Type into text prompts; searchable model lists accept typed searches.
-Use **Ctrl+C** to cancel. In settings, **Esc** or **← Back** returns to the
-previous level; the standalone settings menu ends with **Done**. Returning from
-settings opened through the main menu brings you back to **Select command:**.
-After a content command finishes, run `git-tools` again for another operation.
-Without an interactive terminal, bare `git-tools` prints help rather than
-opening the menu. Direct commands use defaults and flags instead of the menu,
-though some operations can still request a final confirmation.
+Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first. Initialization and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
 
-## Interactive Navigation Map
+## Shared generation options
 
-```text
-Run git-tools
-     |
-     v
-Select command:  (Up/Down to highlight, Enter to select)
-     |
-     +-- settings -> Provider -> key/model wizard -> save
-     |            -> Model / API Key / generation defaults
-     |            -> PR Limit / PR Max Chars
-     |            -> Back -> Select command:
-     |
-     +-- init   -> initial version -> tag format -> review -> write .cz.toml
-     |
-     +-- commit -> commit mode -> review staged changes -> generate -> confirm commit
-     |
-     +-- pr     -> PR mode -> base branch -> input source/context -> generate text
-     |                                                              |
-     |                                                              v
-     |                                         USER: paste into hosting PR UI
-     |                                               review and complete PR
-     |
-     +-- issue  -> base/input/context -> generate text -> USER: paste into issue UI
-     |
-     +-- bump   -> increment/channel -> signing/preview choices -> review result
-     |
-     +-- exit
-```
+These options apply to `commit`, `issue`, and `pr`. They override configured values for one run; they do not save settings.
 
-Prompts depend on repository state and selected mode; this is a navigation map,
-not a guarantee every row appears in that order. Settings edits persist; a
-content command finishes its run. Shell Git operations and hosting PR completion
-remain user actions. Detailed direct-command equivalents and prompt walkthroughs
-follow below.
+| Option | Meaning and default |
+| --- | --- |
+| `--model`, `-m TEXT` | Model identifier; otherwise the configured/provider default |
+| `--temp`, `-t FLOAT` | Sampling temperature; configured default is `0.6` (settings range `0.0–2.0`; model support varies) |
+| `--max-tokens INTEGER` | Completion token budget; configured default is `32000` |
+| `--token-limit`, `-l INTEGER` | Input diff-processing budget; default is `200000` for commits and independently `200000` for issues/PRs |
 
-## Configure a Provider and Model
+Large inputs may be reduced during processing. A processing budget is not a guarantee that the provider accepts that many input/output tokens. Model-specific capabilities and parameter handling are described in [configuration](configuration.md).
 
-### Direct CLI
+## `commit`
 
-```bash
-git-tools settings provider openrouter
-git-tools settings api-key             # Secure interactive key entry
-git-tools settings model anthropic/claude-sonnet-4.6
-git-tools settings temperature 0.6
-git-tools settings max-tokens 32000
-```
-
-`settings api-key` without a value deliberately prompts so the key need not be
-placed in shell history. Direct provider selection does not perform the full
-interactive key/model wizard: configure the key and model separately. Provider
-names include `openrouter`, `kimicli`, and `cliproxyapi`. See the
-[configuration reference](../README.md#configuration) for endpoints, environment
-variables, and local proxy defaults.
-
-### Interactive Navigation
-
-1. Run `git-tools`, select **settings**, and press Enter. Alternatively run
-   `git-tools settings` to go straight to settings.
-2. At **Select setting to edit:**, select **Provider** (the row also shows the
-   current value).
-3. Choose the desired provider, follow its API-key prompt when required, then
-   select its model. Complete the wizard to save the provider change; cancelling
-   before completion leaves the previous provider configuration intact.
-4. To change a model later, select **Model**. Pick a discovered model, search a
-   large catalog, or choose **Enter a model ID manually…** and enter its exact ID.
-   If discovery fails, saved/manual and static fallback models remain available.
-5. Select **API Key**, **Temperature**, **Max Tokens**, or **Max Retries** to edit
-   those values. **Effort** applies to models that support reasoning effort;
-   its available choices depend on the model.
-6. Choose **← Back** to return to the main menu, or **Done** when using the
-   standalone settings command.
-
-User defaults are saved in `~/.git-tools/settings.env`; manual model IDs are
-saved in `~/.git-tools/models.json`. Process environment variables can override
-saved values. Repo-local `git-tools.env` is another configuration source, not a
-file that is automatically committed or required for CI version bumps.
-
-## Initialize Commitizen Configuration
-
-First initialize Git on the primary branch if needed:
-
-```bash
-git init -b master
-```
-
-### Direct CLI
-
-```bash
-git-tools init
-# Explicit initial version for the documented bootstrap
-git-tools init --version 0.0.1
-```
-
-### Interactive Navigation
-
-1. Run `git-tools` → select **init**.
-2. At **Enter the initial version**, enter the version required by your platform
-   setup guide (the bootstrap baseline is `0.0.1`).
-3. At **Enter the tag format**, use `$version` unless your repository intentionally
-   uses another format containing `$version`.
-4. If major is zero, answer **Treat breaking changes as MINOR while major version
-   is zero?** according to your version policy.
-5. Review the configuration and confirm **Write Commitizen config now?**.
-
-This writes `.cz.toml`; it does not initialize Git, add a remote, commit files,
-create `develop`, or push. Follow the platform setup sequence, and do not replace
-an existing `.cz.toml` casually (`--force` is an explicit overwrite option).
-
-## Generate a Commit
-
-### Direct CLI
+Stage only the changes you intend to include, then generate without committing first:
 
 ```bash
 git add <files>
-git-tools commit
-# Deterministic release-opening subject (can create an empty commit)
+git-tools commit --no-commit --no-copy
+# After reviewing the input and output, generate and commit:
+git-tools commit --commit
+```
+
+| Option | Behavior when omitted in direct mode |
+| --- | --- |
+| `--scope` / `--no-scope` | No Conventional Commit scope |
+| `--footer` / `--no-footer` | No footer |
+| `--commit` / `--no-commit` | **Creates a real commit** with the generated message |
+| `--copy` / `--no-copy` | Automatically attempts clipboard copy when not committing; this is not a separate copy-after-commit action |
+| `--force-sensitive` | Off; refuses generation when staged paths match sensitive-file rules |
+| `--workflow-kind open-release` | Off; uses the fixed subject `chore: open release` instead of an LLM |
+
+Ordinary generation needs a staged diff and does not stage files for you. Sensitive-file checks match filenames/path patterns, not secret contents: they are not a substitute for reviewing the diff or using a secret scanner. In interactive mode you can confirm matched files; direct mode requires unstaging them or explicitly using `--force-sensitive`. This override also allows the selected content to enter the generation workflow.
+
+### Release-opening commit
+
+```bash
+git-tools commit --workflow-kind open-release --no-commit --no-copy
+# Creates the fixed commit, allowing an empty commit:
 git-tools commit --workflow-kind open-release
 ```
 
-### Interactive Navigation
+The fixed mode does not need an LLM. If files are staged, it commits those files too and still checks sensitive paths. An empty release opener alone may not produce a reviewable PR; reviewed flows require actual stabilization changes for their inner review PRs. Follow the chosen [flow guide](git-flow-guide.md), not just the subject convention.
 
-1. Stage the intended files with `git add <files>` in the shell.
-2. Run `git-tools` → select **commit**.
-3. At **Select commit mode**, choose **Conventional Commit** for ordinary work,
-   or **chore: open release** only when the flow calls for an RC-opening commit.
-4. For ordinary generation, review the staged diff and answer the scope/footer
-   questions. Keep **Generate commit message using external providers?** enabled
-   to use the configured LLM; select a model and generation parameters when asked.
-5. Inspect the resulting subject/body before answering **Commit changes directly?**.
-   If you decline, use the generated message yourself. Clipboard prompts depend
-   on the selected path and clipboard availability.
-6. Push the branch using Git, then follow the platform PR instructions.
+## `issue` and `pr`
 
-Inspect staged files before confirming: this operation can create a real commit.
-An empty release-opening commit has no file diff and may not produce a reviewable
-PR by itself. Reviewed flows need an actual stabilization change for an inner PR;
-see their guide's caveat instead of treating an empty commit as reviewed work.
-
-## Generate a Pull Request or Issue
-
-### Direct CLI
+Check out the source branch and refresh the target refs with Git before generating. Choose an explicit base when reproducibility matters.
 
 ```bash
+git-tools issue --base develop --source c --context "Explain the migration"
 git-tools pr --base develop --source b
-git-tools issue --base develop --source c
+git-tools pr --base main --source d --no-pr-limit
+```
+
+| Option | Meaning and default |
+| --- | --- |
+| `--base`, `-b TEXT` | Base branch or commit hash. Ordinary mode auto-detects from checkout reflog, then `origin/HEAD`, then common branch names; final fallback is `main` |
+| `--source`, `-s TEXT` | `d`: diffs; `c`: commit messages; `b`: both (default). An unrecognized value falls back to `b` |
+| `--context`, `-c TEXT` | Additional intent/context; none by default |
+
+The comparison uses committed branch history, not a substitute for `commit`'s staged-diff workflow. Branch detection/validation consults local and `origin` refs; it does not fetch. Invalid or unavailable base input can warn and fall back to a detected base, so inspect the displayed branch summary. Keep local target branches and remote-tracking refs current: commit-range discovery and diffs use the supplied base ref; diffs compare its merge-base with `HEAD` (`<base>...HEAD`).
+
+Ordinary generation needs commits to describe. Fixed workflow modes can use validated repository/version context when no unique commits are present. Both commands display output and automatically attempt clipboard copy in direct mode; interactive mode asks before copying. There are no `--copy` or `--no-copy` flags on `issue`/`pr`.
+
+### PR-only options
+
+| Option | Purpose |
+| --- | --- |
+| `--start-pr` / `--no-start-pr` | Fixed `Start X.Y.Z` guidance for a PR into `develop` |
+| `--release-pr` / `--no-release-pr` | Fixed `Release X.Y.Z` guidance for release promotion |
+| `--hotfix-pr` / `--no-hotfix-pr` | Fixed `Hotfix X.Y.Z` guidance for hotfix promotion |
+| `--backmerge-release-pr` / `--no-backmerge-release-pr` | Fixed `Backmerge Release X.Y.Z` guidance into `develop` |
+| `--backmerge-hotfix-pr` / `--no-backmerge-hotfix-pr` | Fixed `Backmerge Hotfix X.Y.Z` guidance into `develop` |
+| `--workflow-version X.Y.Z` | Explicit release tuple for Start/backmerge modes when inference is unsuitable or unavailable |
+| `--pr-limit` / `--no-pr-limit` | Apply/disable the configured PR-description limit for this run, on any host; aliases: `--azure-limit` / `--no-azure-limit` |
+
+Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override.
+
+```bash
 git-tools pr --base develop --start-pr --workflow-version 1.7.0
 git-tools pr --base master --release-pr
 git-tools pr --base master --hotfix-pr
@@ -201,134 +110,96 @@ git-tools pr --base develop --backmerge-release-pr --workflow-version 1.6.0
 git-tools pr --base develop --backmerge-hotfix-pr --workflow-version 1.6.1
 ```
 
-`--source d` uses diffs, `c` uses commit messages, and `b` uses both. These
-commands compare the checked-out branch with the supplied base. Fixed-title
-modes are mutually exclusive. Supply `--workflow-version X.Y.Z` when the desired
-Start/backmerge tuple cannot be safely inferred.
+Review generated titles and the final merge/squash subject: those subjects drive CI strategy decisions. These flags generate guidance, not hosting actions or branch transitions. See [GitHub flows](github/README.md) or [Azure DevOps flows](azure-devops/README.md) for completion policy.
 
-### Interactive Navigation
+### PR-description length handling
 
-1. Check out the source branch and fetch the latest target refs in the shell.
-2. Run `git-tools` → select **pr** (or **issue** for issue-only generation).
-3. For PRs, at **Select PR mode**, choose the row matching the purpose below.
-4. At **Enter base branch name or commit hash**, confirm the actual target
-   branch. Mode-specific validation may set or check the expected base and ask
-   for a missing workflow version. Do not accept a guessed target blindly.
-5. If commits are available, at **Select input source**, choose **Diffs only**,
-   **Commit messages only**, or **Both diffs and commits**. Answer the token limit
-   and **Add additional context?** prompts when shown.
-6. For PR output in saved `auto` mode, inspect the reported `origin` detection and answer **Apply the
-   <configured-limit>-character PR description limit?**. Choose Yes for Azure DevOps, including
-   an Azure Server URL not automatically recognized. Saved `false` skips this
-   question; `--pr-limit` can override it for one run.
-7. Follow the model/generation prompts, inspect the result, and use **Copy to
-   clipboard?** if offered.
-8. Paste the title and description into GitHub or Azure Repos. Verify the source,
-   target, reviewers, and final merge subject before submitting/completing the PR.
+Saved `auto` mode detects Azure DevOps from the `origin` URL; GitHub/unknown origins default to no limit. Saved `false` disables detection and its interactive question. CLI flags override either setting. Detection may not recognize a self-hosted Azure Server URL; use `--pr-limit` or answer Yes interactively when appropriate.
 
-| Interactive PR mode | Direct flag | Target / expected title |
-| --- | --- | --- |
-| Ordinary PR | No fixed-title flag | Intended target; Conventional Commit title |
-| Start PR | `--start-pr` | `develop`; `Start X.Y.Z` |
-| Release PR | `--release-pr` | `master`; `Release X.Y.Z` |
-| Hotfix PR | `--hotfix-pr` | `master`; `Hotfix X.Y.Z` |
-| Backmerge Release PR | `--backmerge-release-pr` | `develop`; `Backmerge Release X.Y.Z` |
-| Backmerge Hotfix PR | `--backmerge-hotfix-pr` | `develop`; `Backmerge Hotfix X.Y.Z` |
+The default limit is `4000` **UTF-16 units**, configurable downward. An oversized parsed description gets one condensed-generation retry. If it is still oversized, the tool warns and retains/copies it rather than truncating it. This is best-effort handling, not a hard validator; raw-output fallback is not a guarantee of compliant length. Inspect the final description before pasting it.
 
-The `pr` and `issue` menu entries already select the output type, so they do not
-normally display **Select content to generate**. Generation writes text locally;
-it does **not** create issues, submit PRs, or complete merges through hosting APIs.
-If a required flag has no menu equivalent, use the direct command.
+## `bump`
 
-### Azure Description Limit
-
-Direct PR generation automatically detects common Azure `origin` URLs.
-`--pr-limit` forces the limit; `--no-pr-limit` disables it. Use the override
-for custom Azure Server URLs or when generating text for a different host than
-`origin`. Interactive generation in saved `auto` mode asks with the detected default;
-saved `false` disables automatic limiting. The preferred limit defaults to
-4,000 UTF-16 units and can be reduced in settings. It covers the generated
-description; supplementary Unicode characters count as two units. No raw
-commit-log block is appended to displayed or copied PR text.
-The tool retries oversized descriptions once, but always check the final pasted
-content. See
-[Azure setup](azure-devops/setup.md#local-cli-and-pr-descriptions).
-
-## Preview or Run a Local Version Bump
-
-### Direct CLI
+The authoritative version configuration is `.cz.toml`; see [versioning](versioning.md) for best-effort Python/Node sync targets and supported schemes. All auxiliary sync failures warn and skip without blocking the core bump/tag; core configuration and Git failures still stop it. Prefer a clean working tree and index: the bump stages managed files and runs `git commit`, so unrelated already-staged changes can be included.
 
 ```bash
-git-tools bump --dry-run
-# Only apply once you have checked the decision
-git-tools bump --yes --increment MINOR --prerelease alpha --gpg-sign
+git-tools bump --dry-run       # Compute and describe the change, without writes
+git-tools bump --get-next      # Print only the computed next version
+git-tools bump                 # Update, commit, and tag locally
+git-tools bump --increment MINOR --prerelease alpha --gpg-sign
 ```
 
-### Interactive Navigation
+| Option | Meaning and default |
+| --- | --- |
+| `--increment MAJOR\|MINOR\|PATCH` | Explicit increment; otherwise infer from Conventional Commits |
+| `--default-increment MAJOR\|MINOR\|PATCH` | Fallback for Conventional Commit types outside built-in bump rules; unset by default |
+| `--prerelease alpha\|beta\|rc` | Create/continue that prerelease channel; unset means stable release behavior |
+| `--increment-mode linear\|exact` | Prerelease bump behavior; default `linear` |
+| `--allow-no-commit` | Off; allows a bump without new commits, using PATCH when no increment is detected |
+| `--dry-run` | Off; compute and describe without file/Git writes |
+| `--get-next` | Off; compute and print only the next version, without writes |
+| `--yes`, `-y` | Off; permits initial untagged history when no tags or matching prior bump anchor exist; not a general confirmation/repair flag |
+| `--tag` / `--no-tag` | Create the new version tag by default |
+| `--annotated-tag` | Off; request an annotated tag |
+| `--gpg-sign` | Off; explicitly request a signed tag |
+| `--annotated-tag-message TEXT` | Custom annotation/signature message; supplying it implies annotation |
+| `--respect-git-config` / `--ignore-git-config` | Respect Git tag signing configuration by default; ignoring it does not cancel explicit `--gpg-sign` |
+| `--check-consistency` / `--no-check-consistency` | Check the authoritative `.cz.toml` version before writing; on by default. Auxiliary versions remain best-effort |
+| `--major-version-zero` / `--no-major-version-zero` | One-run override of configured breaking-change behavior while major is zero |
 
-1. Run `git-tools` → select **bump**.
-2. At **Select version increment**, choose **Auto-detect from commits**, **PATCH**,
-   **MINOR**, or **MAJOR**.
-3. At **Select release channel**, choose **Stable release**, **alpha**, **beta**,
-   or **rc**. For prereleases, choose the requested **prerelease increment mode**.
-4. Answer the missing-tag and signed-tag questions deliberately.
-5. For a safe first check, answer Yes to **Preview only without changing files or
-   git state?** and inspect the summary.
+By default, breaking changes cause MAJOR (or MINOR under major-version-zero policy), `feat` causes MINOR, and `fix`/`refactor`/`perf` cause PATCH. Other types need an applicable fallback or explicit increment. Prerelease continuation/finalization depends on the current version, channel, and increment mode; inspect the computed result rather than assuming every run increments the release tuple.
 
-A local bump can change version files, create a commit, and create a tag. It does
-not replace the CI flow strategy, which applies branch and promotion gates.
-Do not race a manual version bump against an active CI versioning pipeline;
-follow the selected platform guide and pull CI's version commit before more work.
+History is anchored at the current version's tag, or a matching prior bump commit when the tag is absent. `--yes` does not waive inconsistent tagged history and does not recreate a missing tag. See [publication and recovery](publication.md).
 
-## Save Azure PR Preferences
+Preview modes return before managed-file consistency/write checks, commit hooks, and tag creation. A successful preview is not proof the actual bump will succeed. The write/commit/tag sequence is not transactional: a failure can leave updated/staged files or a bump commit without its tag. Inspect state before retrying. Bump never publishes remote refs.
 
-The limit is also available for GitHub and other hosts as an explicit opt-in.
-Automatic defaults: **Azure DevOps on; GitHub, unknown, and missing origin off**.
-For example:
+## `init`
 
 ```bash
-git-tools settings pr-max-chars 2000
-git-tools pr --base develop --pr-limit
+git-tools init --version 0.0.1 --tag-format '$version'
+git-tools init --defaults
+# Explicitly update an existing .cz.toml:
+git-tools init --force --version 1.2.3
 ```
 
-The generic flags are `--pr-limit/--no-pr-limit`. The old
-`--azure-limit/--no-azure-limit` flags and `azure-pr-limit` /
-`azure-pr-max-chars` settings names remain compatible aliases. Existing
-`GIT_TOOLS_AZURE_PR_*` storage keys are retained; no settings migration or extra
-file is needed. A GitHub length target is user-selected, not a claim about its
-service maximum. The supported target range remains 1–4000 UTF-16 units.
+| Option | Meaning and default |
+| --- | --- |
+| `--config-file .cz.toml` | Only supported target; `.cz.toml` is also the default |
+| `--version TEXT` | Existing valid config version, otherwise latest supported version tag, otherwise `0.0.1`; explicit value overrides detection |
+| `--tag-format TEXT` | Detect from supported tags, otherwise `$version`; must contain `$version`. Quote it to prevent shell expansion |
+| `--major-version-zero` / `--no-major-version-zero` | Defaults to enabled for a zero-major version; disabled for nonzero major |
+| `--defaults` | Accepted compatibility flag; direct init already uses detected values without prompts. It does not suppress explicit `--interactive` prompts |
+| `--force` | Allow updating an existing config; normally refuse to overwrite |
 
-Preferences use the existing `~/.git-tools/settings.env`; no additional file is
-created. Configure them once with direct commands:
+The version syntax selects `semver2` (for example `1.0.0-alpha.0`) or `semver` (for example `1.0.0-a0`). Legacy `cz.toml` and a Commitizen section in `pyproject.toml` are rejected rather than migrated automatically. A valid existing `.cz.toml` updated with `--force` keeps unrelated sections but replaces its Commitizen section; invalid TOML may be overwritten. Review custom Commitizen fields before using it.
+
+## `settings [NAME [VALUE]]`
 
 ```bash
+git-tools settings                         # Interactive settings picker
+git-tools settings temperature             # Edit one setting interactively
+git-tools settings temperature 0.4         # Save a value without prompts
 git-tools settings pr-limit auto
-git-tools settings pr-max-chars 2000
-# Disable automatic limiting instead:
-git-tools settings pr-limit false
+git-tools settings pr-max-chars 3500
 ```
 
-Or run `git-tools` → **settings** → **PR Limit** → select **auto (detect
-origin)** or **false (disabled)**. To set the number, select **PR Max
-Chars**, type `2000` or `4000`, and press Enter. These settings edits persist;
-the Yes/No question during PR generation still affects only the current run.
+Supported names: `provider`, `model`, `effort`, `api-key`, `temperature`, `max-tokens`, `max-retries`, `pr-limit`, and `pr-max-chars`. The last two also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
 
-Saved values are:
+For provider choices, credential handling, model discovery, validation, defaults, and setting precedence, use [configuration](configuration.md). Prefer the masked API-key prompt over passing secrets as command arguments (which may enter shell history/process listings).
 
-```dotenv
-GIT_TOOLS_AZURE_PR_LIMIT="auto"
-GIT_TOOLS_AZURE_PR_MAX_CHARS="2000"
-```
+## Practical interactive walkthrough
 
-Only `auto` and `false` are accepted; there is no saved `true` mode. The number
-must be an integer from 1 through 4000 UTF-16 units (default 4000). `auto` detects
-each repository's origin; interactive generation confirms the detected default.
-`false` skips automatic limiting and its confirmation. Explicit `--pr-limit`
-or `--no-pr-limit` overrides the saved mode for one run; forcing the limit
-still uses the saved number. This supports custom Azure Server URLs without a
-global always-on mode. Environment variables override the saved settings file.
+Use **Up/Down** and **Enter** for selections, and type into text prompts/searchable model lists. Yes/No questions are selections too. **Ctrl+C** cancels. In settings, **Esc** or **← Back** returns to the prior level; standalone settings ends with **Done**. Settings opened from the main menu returns to that menu, with saved values reloaded. A content command finishes the invocation; run `git-tools` again for the next operation.
 
-The preferred limit is a generation target, not a hard bound on the final pasted
-text: the tool retries once and warns rather than truncates. No commit log is
-appended to PR output. Azure's service maximum remains 4000 even when your preferred
-limit is smaller.
+| Menu choice | Practical sequence |
+| --- | --- |
+| **init** | Confirm initial version and tag format, select zero-major policy when asked, review the summary, then answer **Write Commitizen config now?**. Continue with the platform bootstrap guide. |
+| **commit** | Stage files first. Select **Conventional Commit** or **chore: open release**, review warnings/input, and choose scope/footer preferences. Inspect the result before **Commit changes directly?**; decline to copy/use the text yourself. |
+| **issue** / **pr** | Check out the source and refresh target refs first. Select the PR mode when applicable; confirm base/version and inspect the branch summary. Choose diffs/commits/both, input budget, and additional context when prompted. Inspect/copy the result for your hosting UI. |
+| **bump** | Inspect repository context; select increment, release channel, prerelease mode when shown, initial-history permission, and tag signing. Choose preview first, then repeat with write options on a clean index. |
+
+For ordinary content generation, keep **Generate … using external providers?** enabled to use the configured LLM, then follow model/parameter prompts. Decline to prepare a prompt for another tool. Clipboard prompts depend on the path taken and clipboard availability.
+
+For PRs in saved `auto` mode, inspect origin detection before answering the description-limit question; choose Yes for Azure Server URLs not recognized automatically. The **issue** and **pr** menu entries already select the output type, so there is normally no separate content-type question.
+
+**Bump warning:** **Preview only without changing files or git state?** defaults to **No**. There is no separate final confirmation after the options summary before the bump runs.

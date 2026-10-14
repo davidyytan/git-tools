@@ -2,7 +2,7 @@
 
 [GitHub guides](README.md) · [Setup](setup.md) · [CLI and interactive usage](../usage.md)
 
-Use this flow if every change must go through a PR for review, including
+Use this flow if every human change must go through a PR for review, including
 stabilization fixes that target an open `release/*` or `hotfix/*` branch.
 
 This is [Git Flow Classic](classic.md) plus an inner PR layer:
@@ -12,46 +12,18 @@ This is [Git Flow Classic](classic.md) plus an inner PR layer:
 
 The promotion and backmerge PRs are unchanged from classic. Pick this flow
 when compliance, regulated industries, or org policy require a review trail
-for every commit. Otherwise use classic — reviewed adds friction.
+for human changes. Otherwise use classic — reviewed adds friction.
 
-## How this differs from the other flows
+## Subjects and Commands
 
-| Aspect                          | [Classic](classic.md)              | Reviewed (this doc)                            | [Variant — Release-led](release-led.md)          |
-| ------------------------------- | ------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
-| Who chooses the release line    | `develop` (via `Start X.Y.Z` PR)            | `develop` (via `Start X.Y.Z` PR)               | `release/X.Y.Z` itself (first real commit opens `rc.0`)           |
-| Commits on `release/*`          | direct push allowed                         | **inner PR only** (`release-fix/*` → release)  | direct push allowed                                               |
-| Commits on `hotfix/*`           | direct push allowed                         | **inner PR only** (`hotfix-fix/*` → hotfix)    | direct push allowed                                               |
-| `Start X.Y.Z` PR required       | yes — opens next `alpha` cycle              | yes — opens next `alpha` cycle                 | no — release branch decides the line                              |
-| Promotion / backmerge PRs       | `Release` / `Hotfix` / `Backmerge ...`      | same as classic                                | same as classic                                                   |
-| Workflow file                   | `version-bump-git-flow-classic.yml`         | `version-bump-git-flow-classic.yml` (shared)   | `version-bump-git-flow-variant-release-led.yml`                   |
-| Pick this when                  | small team, light process                   | compliance / regulated industries              | release-line decision lives with the release manager, not develop |
-
-Use the classic workflow example and activate it as
-`.github/workflows/version-bump-git-flow-classic.yml`:
-
-```text
-.github/workflows/version-bump-git-flow-classic.yml.example
-```
-
-This guide supports either squash merge or merge commits. In both styles, the
-final commit subject on the target branch must be the PR title.
-
-## Naming
-
-- `Start X.Y.Z` opens `X.Y.Z-alpha.0` on `develop`
-- `Release X.Y.Z` is only for `release/* -> master`
-- `Hotfix X.Y.Z` is only for `hotfix/* -> master`
-- `Backmerge Release X.Y.Z` is only for `release/* -> develop`
-- `Backmerge Hotfix X.Y.Z` is only for `hotfix/* -> develop`
-
-Inner PR titles (`release-fix/* -> release/X.Y.Z` and
-`hotfix-fix/* -> hotfix/<name>`) stay normal Conventional Commits. If a release
-branch needs to open `rc.0` without a real stabilization change, the inner PR
-title may be:
-
-```text
-chore: open release
-```
+Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy)
+and [platform setup](setup.md) before following these recipes.
+Replace placeholders with actual paths and versions; these are separate steps,
+not a single script. Direct `git-tools commit` commits by default; use
+`--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR.
+Review staged files before committing. Wait for CI, pull bot commits, and
+fetch tags before dependent operations.
+Keep promotion branches until backmerge completes.
 
 ## Merge Strategy
 
@@ -68,38 +40,7 @@ Do not use the factory-default merge-commit subject
 (`Merge pull request #N from ...`). That is not a Conventional Commit and the
 rc bump will not advance.
 
-## Automation Note
-
-Current CLI helper coverage matches this flow:
-
-- `git-tools commit --workflow-kind open-release`
-- `git-tools pr --start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, and `--backmerge-hotfix-pr`
-- pass `--workflow-version X.Y.Z` when Start or Backmerge inference is ambiguous
-- inner PRs use ordinary `git-tools pr --base <release-or-hotfix-branch>` with no fixed-title flag
-
-## Direct CLI and Interactive Alternative
-
-The command blocks below use direct CLI subcommands. You can also run
-`git-tools` without a subcommand in an interactive terminal and navigate to the
-corresponding operation. See [CLI and interactive usage](../usage.md) for
-navigation and supported options. Keep the same base branch, workflow kind,
-fixed PR title, and explicit version as the direct command; if an interactive
-path does not expose a needed option, use the documented direct command.
-Ordinary Git commands (checkout, merge, staging, and push) still run in your
-shell. Interactive navigation does not replace GitHub repository settings or
-review/merge actions.
-
-## CI Checkpoints
-
-Before starting, follow [GitHub Setup](setup.md), including the tool-source ref
-and bot permissions. After each version-producing push or merged PR, wait for
-the version workflow to succeed and pull the bot's version commit before
-creating dependent branches or promotion/backmerge PRs. In particular, promote
-only after the release or hotfix branch contains the expected `rc` version,
-and wait for the stable bump on `master` before preparing a backmerge. Do not
-assume that opening a PR or creating a branch alone bumps its version.
-
-## Reviewed-Flow Protection Caveats
+## Synchronization Policy
 
 Require PRs into `release/*` and `hotfix/*` as well as the protected target
 branches. The CI bot must still be allowed to push its signed version commits;
@@ -117,27 +58,12 @@ For an inner PR, use a real, reviewable change with a Conventional Commit title
 (or an approved, auditable initialization procedure); do not rely on an empty
 inner PR to open `rc.0`.
 
-## TL;DR
+## Command Recipes
 
 ### Bootstrap on `master`
 
-```bash
-git init -b master
-git remote add origin git@github.com:<owner>/<repo>.git
-git-tools init
-git add -A
-git commit -m "Release 0.1.0"
-git push -u origin master
-```
-
-Wait for the CI workflow on `master` to turn the bootstrap baseline into `0.1.0`, then update local `master` and create `develop` from that bumped stable branch:
-
-```bash
-git checkout master
-git pull origin master
-git checkout -b develop
-git push -u origin develop
-```
+Follow [platform bootstrap](setup.md#bootstrap-master-and-develop).
+Do this once in a fresh repository, not on every release.
 
 ### Feature or bugfix PR into `develop`
 
@@ -222,7 +148,7 @@ git checkout release/X.Y.Z
 git pull origin release/X.Y.Z
 git fetch origin develop
 git merge origin/develop -m "chore: merge develop for backmerge"
-# resolve conflicts — for version files, keep the higher version
+# resolve conflicts — keep the intended target version consistent in version files
 git push origin release/X.Y.Z
 git-tools pr --backmerge-release-pr
 ```
@@ -269,41 +195,26 @@ git checkout hotfix/<name>
 git pull origin hotfix/<name>
 git fetch origin develop
 git merge origin/develop -m "chore: merge develop for backmerge"
-# resolve conflicts — for version files, keep the higher version
+# resolve conflicts — keep the intended target version consistent in version files
 git push origin hotfix/<name>
 git-tools pr --backmerge-hotfix-pr
 ```
 
-## 0. Set Up GitHub First
+## Feature and Bugfix Policy
 
-Read [GitHub Setup](setup.md) first.
-
-This project uses `master`. Set the GitHub default branch to `master` before
-you run the local bootstrap commands below.
-
-Configure the inner-PR merge strategy in repo settings before opening the first
-`release-fix/*` or `hotfix-fix/*` PR. See [Merge Strategy](#merge-strategy)
-above.
-
-## 1. Bootstrap on `master`
-
-Same as [Git Flow Classic](classic.md#1-bootstrap-on-master).
-
-## 2. Feature or bugfix PR into `develop`
-
-Same as [Git Flow Classic](classic.md#2-feature-or-bugfix-pr-into-develop).
+Same as [Git Flow Classic](classic.md#feature-and-bugfix-policy).
 
 Feature work into `develop` is unchanged. Reviewed flow only adds inner PRs to
 the release and hotfix branches, not to develop.
 
-## 3. Release Cut and Next Develop Cycle
+## Release-Line Policy
 
-Same as [Git Flow Classic](classic.md#3-release-cut-and-next-develop-cycle).
+Same as [Git Flow Classic](classic.md#release-line-policy).
 
 After cutting `release/X.Y.Z`, the first PR for the next `develop` cycle must
 land as `Start A.B.C`.
 
-## 4. Release Branch (Inner PRs)
+## Release Stabilization and Promotion
 
 The release branch does not reopen semver selection. It stabilizes the
 selected release line. In reviewed flow, no direct commits land on
@@ -341,14 +252,14 @@ git fetch origin master
 git merge origin/master -m "chore: merge master for release"
 ```
 
-## 5. Release Backmerge into `develop`
+## Release Backmerge
 
-Same as [Git Flow Classic](classic.md#5-release-backmerge-into-develop).
+Same as [Git Flow Classic](classic.md#release-backmerge).
 
 The backmerge PR is the only `release/* -> develop` boundary crossing. It is
 not affected by the inner-PR rule.
 
-## 6. Hotfix Branch (Inner PRs)
+## Hotfix Stabilization and Promotion
 
 Hotfix branch work also goes through inner PRs in reviewed flow. Hotfixes are
 often a single fix, in which case the hotfix branch holds exactly one inner PR.
@@ -384,14 +295,14 @@ git fetch origin master
 git merge origin/master -m "chore: merge master for hotfix"
 ```
 
-## 7. Hotfix Backmerge into `develop`
+## Hotfix Backmerge
 
-Same as [Git Flow Classic](classic.md#7-hotfix-backmerge-into-develop).
+Same as [Git Flow Classic](classic.md#hotfix-backmerge).
 
 The backmerge PR is the only `hotfix/* -> develop` boundary crossing. It is
 not affected by the inner-PR rule.
 
-## 8. Summary
+## Summary
 
 ```text
 feature/* or bugfix/* -> develop          -> tagged alpha

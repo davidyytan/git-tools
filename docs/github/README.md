@@ -1,139 +1,53 @@
 # GitHub Git Flow Guides
 
-These guides use GitHub pull requests and Actions to manage signed version
-commits and release tags. Start with [GitHub Setup](setup.md), then choose one
-flow. Use [CLI and interactive usage](../usage.md) for installation-independent
-command/navigation guidance, and [Azure DevOps guides](../azure-devops/README.md)
-if your repository is hosted there instead.
-
-## How It Works at a Glance
-
-```text
-USER: push a branch / merge a PR on GitHub
-                         |
-                         v
-GITHUB ACTIONS: run on the pushed branch
-                         |
-                         v
-Check out application repo + history/tags
-Clone git-tools from a supported branch/tag
-                         |
-                         v
-SHARED ENGINE: branch + subjects + .cz.toml + history/tags
-                         |
-                         v
-                  skip / invalid / bump
-                    |      |       |
-                 finish   fail     v
-                              Import signing key
-                              Update version files
-                              Create signed commit/tag
-                                     |
-                                     v
-                              Push using bot SSH identity
-                                     |
-                                     v
-USER: wait for CI, then pull the version commit
-```
-
-```text
-USER / ADMIN                         AUTOMATION
-Copy ONE adapter; configure ref,
-bot identity, SSH/GPG secrets,
-and repository permissions
-        |
-        v
-Bootstrap master ------------------> evaluate initial version
-Create develop AFTER stable bump
-        |
-        v
-Edit -> stage -> generate commit
-Push -> generate PR text
-Open/review/merge PR ----------------> evaluate merged branch -> bump or skip
-Pull CI's version commit <----------- publish version commit/tag
-```
-
-The CLI generates PR text locally; the user creates and completes the GitHub PR.
-CI versioning does not need an LLM key. Reviewed flows share their base adapter;
-not every branch push or decision produces a tag. See [setup](setup.md) for exact
-bootstrap, secrets, and merge requirements. Decision data now passes through
-environment variables rather than shell source; logs escape embedded newlines.
-Restrict who can edit credentialed workflows and validate the templates in a test
-repo. The publisher probes atomic support with a dry run; see
-[publication and recovery](../publication.md) for fallback and missing-tag handling.
+[Documentation index](../README.md) · [All platforms and modes](../git-flow-guide.md) · [Azure DevOps](../azure-devops/README.md)
 
 ## Choose a Flow
 
-| Guide | Release-line decision | Stabilization changes | Merge style |
+| Mode | Release line selected by | Stabilization changes | Merge style |
 | --- | --- | --- | --- |
-| [Classic](classic.md) | `develop` selects the line; `Start A.B.C` opens the next cycle after a release cut | Direct pushes to release/hotfix branches | Squash or merge commit |
-| [Classic — Reviewed](classic-reviewed.md) | Same as classic | Inner PRs into release/hotfix branches | Squash or merge commit |
-| [Release-led](release-led.md) | `release/X.Y.Z` chooses the final line | Direct pushes to release/hotfix branches | Squash or merge commit |
-| [Release-led — Reviewed](release-led-reviewed.md) | Same as release-led | Inner PRs into release/hotfix branches | Squash |
+| [Classic](classic.md) | `develop`; next-cycle `Start` after release cut | Direct human commits | Squash or merge commit |
+| [Classic — Reviewed](classic-reviewed.md) | Same as classic | Inner PRs | Squash or merge commit |
+| [Release-led](release-led.md) | `release/X.Y.Z` | Direct human commits | Squash or merge commit |
+| [Release-led — Reviewed](release-led-reviewed.md) | Same as release-led | Inner PRs | Squash |
 
-Classic and classic-reviewed share the classic workflow. Release-led and
-release-led-reviewed share the release-led workflow. Activate **exactly one**
-workflow, not one per guide. Reviewed flows add a review layer, not a different
-versioning implementation. See [setup](setup.md) for merge settings, secrets,
-bot permissions, and the CI tool-source ref caveat.
+Reviewed modes share their base adapter. Activate **one** versioning workflow,
+not one per mode. Review requirements are enforced by repository policies;
+generated bot version commits need a narrowly approved direct-push exception.
 
-## Shared Subject Policy
+## How It Works
 
-The final commit subject on the target branch must match the intended PR title:
-
-- `Start X.Y.Z`: opens tagged `X.Y.Z-alpha.0` on `develop`.
-- `Release X.Y.Z`: release promotion into `master` only.
-- `Hotfix X.Y.Z`: hotfix promotion into `master` only.
-- `Backmerge Release X.Y.Z`: release backmerge into `develop` only.
-- `Backmerge Hotfix X.Y.Z`: hotfix backmerge into `develop` only.
-
-Ordinary feature/bugfix and stabilization subjects are Conventional Commits.
-GitHub's trailing `(#123)` suffix is accepted by the fixed-title matcher.
-Do not use the default `Merge pull request #...` subject or rebase merging for
-this documented automation. With merge commits, configure the subject to use
-the PR title; with squash, use the PR title as the squash subject.
-
-## Version Lifecycle
-
-- Bootstrap explicitly with `git init -b master`, then wait for the stable CI
-  bump before creating `develop`.
-- `develop` creates or continues tagged alpha prereleases.
-- The first meaningful release/hotfix branch change opens `rc.0`; later ones
-  advance that RC line. Branch creation alone is not a version bump.
-- Promotion into `master` finalizes the prerelease to stable.
-- Backmerges preserve an ahead alpha line and may advance it for meaningful
-  unique fixes; otherwise they can catch `develop` up to stable without tagging.
-- Open a new develop line with `Start X.Y.Z` when appropriate. Classic requires
-  a next-cycle Start after cutting a release; release-led does not require one
-  merely because a release branch was cut.
-
-Each detailed guide includes bootstrap, feature work, stabilization, promotion,
-conflict resolution, and release/hotfix backmerges. Wait for CI and pull the
-bot's version commits at each boundary.
-
-## Direct Commands or Interactive Navigation
-
-Use the direct command blocks in the selected guide for reproducible flags and
-branch targets. Alternatively, run `git-tools` with no subcommand in an
-interactive terminal and navigate to the corresponding operation. Keep the
-same base branch, workflow kind, fixed title, and workflow version; use a direct
-command when a required option is not available interactively. See
-[CLI and interactive usage](../usage.md) for details. Checkout, staging, merges,
-and pushes remain ordinary shell Git commands.
-
-## Optional PR Length Target
-
-GitHub PR generation has **no length target enabled automatically**. To opt in:
-
-```bash
-git-tools settings pr-max-chars 2000
-git-tools pr --base develop --pr-limit
+```text
+Push branch / complete PR with the intended final subject
+  → Actions checks out application history and tags
+  → clones the selected git-tools engine branch/tag
+  → decides skip / invalid / bump
+  → signs version commit and, when applicable, tag
+  → publishes using the bot SSH identity
+  → user waits for CI, pulls bot commit, and fetches tags
 ```
 
-`--no-pr-limit` disables it for one run. Saved mode `auto` enables the target
-only for Azure origins; GitHub and unknown/missing origins default to off.
-Interactive generation lets you opt in at the length-limit question.
-The same shortening retry is used on either platform, anchored to the original
-inputs. It does not send the first draft back. Settings still use the existing
-`GIT_TOOLS_AZURE_PR_*` keys for compatibility; old Azure flags/settings are aliases.
-See [PR preferences](../usage.md#save-azure-pr-preferences) for both usage styles.
+The CLI generates PR text locally; it does not create or merge hosted PRs.
+`git-tools init` writes `.cz.toml`, not a workflow. Versioning CI needs no LLM
+key; ordinary local commit/PR generation uses your configured provider.
+
+## Start Here
+
+1. Follow [GitHub setup](setup.md): choose one adapter, configure the engine
+   ref, signing/SSH secrets, bot identity, permissions, and merge settings.
+2. Follow [bootstrap](setup.md#bootstrap-master-and-develop) once for a fresh
+   repository; create `develop` only after stable publication on `master`.
+3. Follow the selected mode's command recipes and policy sections.
+4. If publication fails, inspect remote refs and follow
+   [publication and recovery](../publication.md), not another bootstrap.
+
+## Shared References
+
+- [Subject protocol and version policy](../git-flow-guide.md)
+- [CLI commands, interactive navigation, and PR length preferences](../usage.md)
+- [Configuration and provider settings](../configuration.md)
+- [Optional manual DVC workflow](../dvc.md)
+
+GitHub has no automatic PR length target by default; Azure does. The CLI usage
+page is the authoritative home for opt-in targets and aliases. Platform setup
+is the authoritative home for credential and merge configuration.

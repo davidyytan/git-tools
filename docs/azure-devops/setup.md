@@ -1,5 +1,7 @@
 # Azure DevOps Setup
 
+[Azure DevOps guides](README.md) · [Documentation index](../README.md) · [CLI usage](../usage.md)
+
 This guide sets up a classic or release-led (variant) Git Flow versioning
 pipeline in an Azure Repos repository.
 
@@ -70,7 +72,13 @@ below use classic filenames; substitute the variant filename and use a
 `<repo-slug>-version-bump-variant` pipeline name when choosing release-led.
 
 Azure DevOps does not require a particular YAML folder, but this project uses
-`.azure/workflows/` by convention.
+`.azure/workflows/` by convention. `git-tools init` writes `.cz.toml` only: it
+does not install a pipeline, create branches, upload signing keys, grant
+permissions, or create/complete PRs. Copying YAML is not enough; create and
+authorize the pipeline definition using the steps below.
+
+- [Classic adapter source](../../.azure/workflows/version-bump-git-flow-classic.yml.example)
+- [Release-led adapter source](../../.azure/workflows/version-bump-git-flow-variant-release-led.yml.example)
 
 Set the workflow to use the git-tools public repository. The selected ref must
 contain Azure DevOps merge-subject normalization and the chosen strategy.
@@ -158,33 +166,27 @@ after creating the pipeline.
 
 ## Local CLI and PR Descriptions
 
-Use the direct commands in the flow guides or run `git-tools` without a
-subcommand for interactive navigation; [CLI usage](../usage.md) documents the
-actual menus. `git-tools pr` produces title/description text locally and offers
-clipboard output; it does not create an Azure Repos PR or contact the Azure
-DevOps API. Push the source branch, then paste the generated text into
-**Repos → Pull requests → New pull request**, selecting the documented target.
+Direct `git-tools commit` generates and commits by default; use `--no-commit`
+to review output first. See [configuration](../configuration.md) for provider
+settings and [CLI usage](../usage.md) for direct and interactive options.
 
-Azure limits descriptions to **4,000 UTF-16 code units** (non-BMP characters
-count as two). The CLI detects Azure HTTPS/SSH origin URLs, including legacy
-`visualstudio.com` URLs. For custom hostnames or uncertain detection:
+`git-tools pr` generates title/description text; it does not create or complete
+an Azure Repos PR. Push the source branch, then open **Repos → Pull requests →
+New pull request**, select the documented target, and paste the output.
 
-```bash
-git-tools pr --base develop --azure-limit
-git-tools pr --release-pr --azure-limit
-# Override detection only for output not being posted to Azure:
-git-tools pr --base develop --no-azure-limit
-```
+Azure descriptions are limited to **4,000 UTF-16 code units**. The CLI detects
+Azure HTTPS/SSH origins, including legacy `visualstudio.com` URLs. Force the
+limit for custom hosts with `--azure-limit`; `--no-azure-limit` disables it for
+output not intended for Azure. Oversized output is regenerated once from the
+original inputs, then retained with a warning if still too long. Verify and
+shorten the final pasted text. See [CLI usage](../usage.md) for options,
+interactive navigation, and saved preferences.
 
-In interactive mode the limit prompt defaults to origin detection; explicit
-CLI flags override it. If the generated description exceeds the limit, the
-CLI automatically regenerates a condensed PR from the same original inputs.
-Ordinary titles can change; fixed workflow titles remain enforced.
-If it is still oversized, it warns but retains/copies the output rather than
-truncating it. Shorten that text before posting to Azure. The check covers the
-generated description, with no additional raw commit-log block appended; verify
-the final pasted description fits too. Fixed promotion/start/backmerge title helpers work
-locally too; pass `--workflow-version X.Y.Z` when safe inference is impossible.
+## Bootstrap `master` and `develop`
+
+The bootstrap sequence spans steps 3–8 below: push once, create and authorize
+the pipeline, run it manually, then create `develop` from the stable bump.
+Do not repeat this sequence in an already initialized repository.
 
 ## 3. Bootstrap and Push `master`
 
@@ -468,24 +470,7 @@ Why:
 - squash and merge-commit styles both work when the final subject represents
   the PR title
 
-## Automation Note
-
-Current CLI support covers the documented fixed-title workflow:
-
-- `git-tools commit --workflow-kind open-release`
-- `git-tools pr --start-pr`, `--release-pr`, `--hotfix-pr`,
-  `--backmerge-release-pr`, and `--backmerge-hotfix-pr`
-- pass `--workflow-version X.Y.Z` when Start or Backmerge PR helpers cannot
-  infer the exact tuple safely
-
-These helpers generate text and Git subjects locally. They do not depend on
-the GitHub API and work for Azure DevOps PRs too.
-
-The GitHub Actions and Azure Pipelines YAML files are different CI adapters,
-but both clone and execute the same
-`git_tools.generators.bumpgen` versioning engine.
-
-## After Azure DevOps Is Ready
+## After Setup
 
 Choose the corresponding Azure procedure (reviewed shares its base adapter):
 
@@ -502,13 +487,30 @@ flows, stabilization branches. An administrator must reconcile required-PR
 policies with the automation's direct version commits; grant only the minimal
 approved branch-scoped exception if necessary, not blanket bypass to humans.
 
-## Saved PR Limit Preferences
+## Local CLI Preferences
 
-Save origin-based detection or disable it with `git-tools settings pr-limit
-auto` / `false`. Save a preferred size with `git-tools settings pr-max-chars
-2000` (default 4000; range 1–4000 UTF-16 units). These use the existing user
-settings file; there is no saved always-on mode. CLI flags override the mode for
-one run. See [direct and interactive instructions](../usage.md#save-azure-pr-preferences).
+See [PR preferences](../usage.md) and
+[configuration](../configuration.md) for persistent settings and overrides.
+
+## Operational Safety and Limitations
+
+The adapters are mutating push pipelines, not PR validation builds. Keep write
+and signing credentials inaccessible to untrusted code and restrict who can
+modify authorized YAML. Reviewed flow is a repository-policy choice, not a
+compliance certification; generated bot commits still use an approved direct
+push exception.
+
+Full history, tags, and remote branch refs are required. The supplied triggers
+include `master`, `develop`, `release/*`, `hotfix/*`, `feature/*`, and `bugfix/*`.
+The reviewed inner branches (`release-fix/*`, `hotfix-fix/*`) do not trigger this
+pipeline; their merge triggers the target stabilization branch instead.
+
+The examples do not serialize concurrent runs. Coordinate version-producing
+pushes on each branch and wait for publication before the next operation.
+Racing or rejected publication must be investigated against remote refs;
+never force-push a version commit or repeat bootstrap to repair it. The next
+run normally skips a bot bump subject, but that does not protect against
+multiple active versioning pipelines or manual version edits.
 
 ## Publication and Recovery
 

@@ -19,6 +19,11 @@ share their base adapter: enable **one** versioning workflow/pipeline per repo,
 not both adapters. Templates are examples to copy/configure in the target repo;
 their presence does not certify a live run in your organization. See each setup
 guide for supported engine refs, signing, permissions, and merge settings.
+`git-tools init` creates `.cz.toml` only; it does not install either adapter or
+configure hosting. These recipes assume `master` and `develop`, full history
+and tags, and fresh-repository bootstrap. Existing projects need a separate
+migration plan. Versioning CI does not require an LLM key; normal local commit
+and PR generation does.
 
 ## Shared Naming Policy
 
@@ -38,9 +43,13 @@ Release and hotfix branch work stays normal Conventional Commits. If a release
 branch needs to open `rc.0` without a real stabilization change, use an empty
 commit such as:
 
-```text
-chore: open release
+```bash
+git commit --allow-empty -m "chore: open release"
 ```
+
+This opener is an alternative to a real stabilization change, not a required
+extra commit. In reviewed flows, an empty commit alone is not a reviewable PR:
+use a meaningful inner PR or an approved initialization procedure instead.
 
 ## Shared Bump Policy
 
@@ -79,8 +88,11 @@ Use **Variant — Release-led** if you want `release/X.Y.Z` to choose the releas
 Use **Classic** if you want `develop` to choose the release line first and then
 open the next cycle with a `Start X.Y.Z` first PR.
 
-Use **Classic — Reviewed** if you want classic semantics but every commit on
+Use **Classic — Reviewed** if you want classic semantics but every human change on
 `release/*` and `hotfix/*` must arrive via an inner PR for review trail.
 
-Use **Variant — Reviewed** if you want the release-led model but every commit on
+Use **Variant — Reviewed** if you want the release-led model but every human change on
 `release/*` and `hotfix/*` must arrive via an inner PR (squash) for a review trail.
+Generated version commits still arrive from the bot directly, with a narrowly
+approved policy exception. Keep source branches until promotion and backmerge
+both finish. For failed publication, see [publication and recovery](publication.md).

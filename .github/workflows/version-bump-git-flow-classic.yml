@@ -22,7 +22,7 @@ on:
 
 env:
   GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
-  GIT_TOOLS_REF: master
+  GIT_TOOLS_REF: develop
   GIT_BOT_NAME: David Tan (Bot)
   GIT_BOT_EMAIL: david.tan.bot@davidyytan.com
 

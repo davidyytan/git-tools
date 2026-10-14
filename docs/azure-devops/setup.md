@@ -503,8 +503,16 @@ approved branch-scoped exception if necessary, not blanket bypass to humans.
 
 ## Saved PR Limit Preferences
 
-Save origin-based detection or disable it with `git-tools settings azure-pr-limit
-auto` / `false`. Save a preferred size with `git-tools settings azure-pr-max-chars
+Save origin-based detection or disable it with `git-tools settings pr-limit
+auto` / `false`. Save a preferred size with `git-tools settings pr-max-chars
 2000` (default 4000; range 1–4000 UTF-16 units). These use the existing user
 settings file; there is no saved always-on mode. CLI flags override the mode for
 one run. See [direct and interactive instructions](../usage.md#save-azure-pr-preferences).
+
+## Publication and Recovery
+
+The selected engine ref must also contain `git_tools.generators.publish`.
+Publishing dry-runs an atomic push, logs its choice, and falls back to separate
+pushes only if the server explicitly lacks atomic support. Other failures stop.
+See [publication and missing-tag recovery](../publication.md); a new pipeline run
+is not guaranteed to recover a lost local signed tag automatically.

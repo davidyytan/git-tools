@@ -6,6 +6,62 @@ flow. Use [CLI and interactive usage](../usage.md) for installation-independent
 command/navigation guidance, and [Azure DevOps guides](../azure-devops/README.md)
 if your repository is hosted there instead.
 
+## How It Works at a Glance
+
+```text
+USER: push a branch / merge a PR on GitHub
+                         |
+                         v
+GITHUB ACTIONS: run on the pushed branch
+                         |
+                         v
+Check out application repo + history/tags
+Clone git-tools from a supported branch/tag
+                         |
+                         v
+SHARED ENGINE: branch + subjects + .cz.toml + history/tags
+                         |
+                         v
+                  skip / invalid / bump
+                    |      |       |
+                 finish   fail     v
+                              Import signing key
+                              Update version files
+                              Create signed commit/tag
+                                     |
+                                     v
+                              Push using bot SSH identity
+                                     |
+                                     v
+USER: wait for CI, then pull the version commit
+```
+
+```text
+USER / ADMIN                         AUTOMATION
+Copy ONE adapter; configure ref,
+bot identity, SSH/GPG secrets,
+and repository permissions
+        |
+        v
+Bootstrap master ------------------> evaluate initial version
+Create develop AFTER stable bump
+        |
+        v
+Edit -> stage -> generate commit
+Push -> generate PR text
+Open/review/merge PR ----------------> evaluate merged branch -> bump or skip
+Pull CI's version commit <----------- publish version commit/tag
+```
+
+The CLI generates PR text locally; the user creates and completes the GitHub PR.
+CI versioning does not need an LLM key. Reviewed flows share their base adapter;
+not every branch push or decision produces a tag. See [setup](setup.md) for exact
+bootstrap, secrets, and merge requirements. Decision data now passes through
+environment variables rather than shell source; logs escape embedded newlines.
+Restrict who can edit credentialed workflows and validate the templates in a test
+repo. The publisher probes atomic support with a dry run; see
+[publication and recovery](../publication.md) for fallback and missing-tag handling.
+
 ## Choose a Flow
 
 | Guide | Release-line decision | Stabilization changes | Merge style |
@@ -64,3 +120,20 @@ same base branch, workflow kind, fixed title, and workflow version; use a direct
 command when a required option is not available interactively. See
 [CLI and interactive usage](../usage.md) for details. Checkout, staging, merges,
 and pushes remain ordinary shell Git commands.
+
+## Optional PR Length Target
+
+GitHub PR generation has **no length target enabled automatically**. To opt in:
+
+```bash
+git-tools settings pr-max-chars 2000
+git-tools pr --base develop --pr-limit
+```
+
+`--no-pr-limit` disables it for one run. Saved mode `auto` enables the target
+only for Azure origins; GitHub and unknown/missing origins default to off.
+Interactive generation lets you opt in at the length-limit question.
+The same shortening retry is used on either platform, anchored to the original
+inputs. It does not send the first draft back. Settings still use the existing
+`GIT_TOOLS_AZURE_PR_*` keys for compatibility; old Azure flags/settings are aliases.
+See [PR preferences](../usage.md#save-azure-pr-preferences) for both usage styles.

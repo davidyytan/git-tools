@@ -142,3 +142,10 @@ Continue with one of these standalone guides:
 - [Git Flow Classic — Reviewed](classic-reviewed.md) (classic + inner PR layer for compliance)
 - [Git Flow Variant — Release-led](release-led.md)
 - [Git Flow Variant — Reviewed](release-led-reviewed.md) (release-led + inner PR layer, squash)
+
+## Publication and Recovery
+
+The selected engine ref must also contain `git_tools.generators.publish`.
+Publishing dry-runs an atomic push, logs its choice, and falls back only when the
+server explicitly lacks atomic support. Other failures stop. See
+[publication and missing-tag recovery](../publication.md).

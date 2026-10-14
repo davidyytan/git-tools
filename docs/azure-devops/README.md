@@ -4,6 +4,77 @@ Use Azure Repos for branches and pull requests, and Azure Pipelines for signed
 version commits and tags. All four policies use the same git-tools versioning
 engine; the two Azure adapters select its `classic` or `variant` strategy.
 
+## How It Works at a Glance
+
+```text
+USER: push a branch / complete a PR in Azure Repos
+                         |
+                         v
+AZURE: pipeline runs on the pushed target branch
+                         |
+                         v
+Check out application repo + full history/tags
+Clone git-tools from a supported branch/tag
+                         |
+                         v
+SHARED ENGINE: inspect branch + commit subjects
+               + .cz.toml + Git history/tags
+                         |
+                         v
+                 Decide what to do
+                  /      |       \
+                 v       v        v
+               SKIP    INVALID   BUMP
+                |        |        |
+                v        v        v
+              Finish   Fail     Import GPG key
+                                Update version files
+                                Create signed commit/tag
+                                      |
+                                      v
+                        Push back as project Build Service
+                                      |
+                                      v
+USER: wait for CI, then pull the version commit
+```
+
+Completing a PR pushes its merge result to the target branch; that push triggers
+versioning. The pipeline also evaluates included source-branch pushes, but the
+engine can skip them. A version decision does not necessarily create a tag.
+GitHub-hosted git-tools is only the engine source; your application stays in
+Azure Repos. No LLM/API key is needed for the CI bump engine.
+
+### What You Do vs What Automation Does
+
+```text
+ONE-TIME USER / ADMIN SETUP
+Choose ONE flow adapter -> copy .example as .yml -> configure engine ref
+        -> configure project-scoped authorization -> prepare signing key
+        -> bootstrap and push master -> create pipeline -> upload/authorize key
+        -> grant Build Service repo permissions -> run bootstrap CI
+        -> create develop from bumped master
+
+DAILY DEVELOPER WORK                 AUTOMATION
+Checkout -> edit -> stage
+        -> git-tools commit
+        -> push / open Azure PR
+        -> review and complete PR -----> inspect target-branch state
+                                        -> skip / reject / bump
+                                        -> publish version commit/tag
+Wait for CI -> pull <------------------ successful publication
+```
+
+Local `git-tools pr` generates text; **you** paste it into Azure Repos and select
+the source, target, reviewers, and completion method. It does not submit or merge
+the PR. Use [setup](setup.md) for the exact configuration order and permissions.
+
+**Activation checks:** decision text now travels through environment variables,
+not Bash source, and diagnostic logs escape embedded newlines. Publication probes
+atomic support and falls back only when unsupported; see
+[publication and recovery](../publication.md). Validate both behaviors in a test
+repo. This diagram describes the logical flow, not Secure File acquisition timing
+or a production-security guarantee. Restrict who can edit/execute credentialed YAML.
+
 ## Choose a flow
 
 | Flow | Release-line decision | Stabilization changes | Engine flow | Guide |

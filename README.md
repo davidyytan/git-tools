@@ -265,7 +265,7 @@ git-tools
 | `--backmerge-release-pr/--no-backmerge-release-pr` | | Use fixed-title backmerge guidance for `release/* -> develop` |
 | `--backmerge-hotfix-pr/--no-backmerge-hotfix-pr` | | Use fixed-title backmerge guidance for `hotfix/* -> develop` |
 | `--workflow-version` | | Provide the exact `X.Y.Z` tuple for Start or Backmerge PR modes when inference is ambiguous |
-| `--azure-limit/--no-azure-limit` | | Force/disable Azure's 4,000 UTF-16-unit description limit; otherwise direct mode detects `origin`, and interactive mode confirms the detected default |
+| `--pr-limit/--no-pr-limit` | | Force/disable the configured PR length target on any host; auto defaults to Azure on, GitHub/unknown off. Legacy `--azure-limit/--no-azure-limit` aliases remain supported |
 | `--model` | `-m` | Model name |
 | `--temp` | `-t` | Temperature (0.0-2.0) |
 | `--max-tokens` | | Maximum tokens for completion |
@@ -340,12 +340,14 @@ Community expectations and reporting guidance are in [Code of Conduct](CODE_OF_C
 
 ### Saved Azure PR Preferences
 
-Use `git-tools settings azure-pr-limit auto` (detect Azure origin) or
-`git-tools settings azure-pr-limit false` (disable automatic limiting).
-Set the preferred size with `git-tools settings azure-pr-max-chars 2000` or
+Use `git-tools settings pr-limit auto` (detect Azure origin) or
+`git-tools settings pr-limit false` (disable automatic limiting).
+Set the preferred size with `git-tools settings pr-max-chars 2000` or
 `4000` (allowed range 1–4000 UTF-16 units). Defaults are `auto` and `4000`.
 Both persist in the existing `~/.git-tools/settings.env`. There is no saved
-always-on mode; CLI `--azure-limit/--no-azure-limit` remains a one-run override.
+always-on mode; CLI `--pr-limit/--no-pr-limit` is a one-run override on any host, including GitHub.
+Automatic defaults are Azure on, GitHub/unknown off. Old Azure flag/setting
+names remain aliases; the existing stored keys are unchanged.
 
-Interactive path: `git-tools` → **settings** → **Azure PR Limit** or
-**Azure PR Max Chars**. See the [complete walkthrough](docs/usage.md#save-azure-pr-preferences).
+Interactive path: `git-tools` → **settings** → **PR Limit** or
+**PR Max Chars**. See the [complete walkthrough](docs/usage.md#save-azure-pr-preferences).

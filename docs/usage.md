@@ -48,6 +48,42 @@ Without an interactive terminal, bare `git-tools` prints help rather than
 opening the menu. Direct commands use defaults and flags instead of the menu,
 though some operations can still request a final confirmation.
 
+## Interactive Navigation Map
+
+```text
+Run git-tools
+     |
+     v
+Select command:  (Up/Down to highlight, Enter to select)
+     |
+     +-- settings -> Provider -> key/model wizard -> save
+     |            -> Model / API Key / generation defaults
+     |            -> PR Limit / PR Max Chars
+     |            -> Back -> Select command:
+     |
+     +-- init   -> initial version -> tag format -> review -> write .cz.toml
+     |
+     +-- commit -> commit mode -> review staged changes -> generate -> confirm commit
+     |
+     +-- pr     -> PR mode -> base branch -> input source/context -> generate text
+     |                                                              |
+     |                                                              v
+     |                                         USER: paste into hosting PR UI
+     |                                               review and complete PR
+     |
+     +-- issue  -> base/input/context -> generate text -> USER: paste into issue UI
+     |
+     +-- bump   -> increment/channel -> signing/preview choices -> review result
+     |
+     +-- exit
+```
+
+Prompts depend on repository state and selected mode; this is a navigation map,
+not a guarantee every row appears in that order. Settings edits persist; a
+content command finishes its run. Shell Git operations and hosting PR completion
+remain user actions. Detailed direct-command equivalents and prompt walkthroughs
+follow below.
+
 ## Configure a Provider and Model
 
 ### Direct CLI
@@ -102,15 +138,15 @@ git init -b master
 
 ```bash
 git-tools init
-# Explicit initial prerelease for the documented bootstrap
-git-tools init --version 0.1.0-rc.0
+# Explicit initial version for the documented bootstrap
+git-tools init --version 0.0.1
 ```
 
 ### Interactive Navigation
 
 1. Run `git-tools` → select **init**.
 2. At **Enter the initial version**, enter the version required by your platform
-   setup guide (the bootstrap baseline is `0.1.0-rc.0`).
+   setup guide (the bootstrap baseline is `0.0.1`).
 3. At **Enter the tag format**, use `$version` unless your repository intentionally
    uses another format containing `$version`.
 4. If major is zero, answer **Treat breaking changes as MINOR while major version
@@ -184,7 +220,7 @@ Start/backmerge tuple cannot be safely inferred.
 6. For PR output in saved `auto` mode, inspect the reported `origin` detection and answer **Apply the
    <configured-limit>-character PR description limit?**. Choose Yes for Azure DevOps, including
    an Azure Server URL not automatically recognized. Saved `false` skips this
-   question; `--azure-limit` can override it for one run.
+   question; `--pr-limit` can override it for one run.
 7. Follow the model/generation prompts, inspect the result, and use **Copy to
    clipboard?** if offered.
 8. Paste the title and description into GitHub or Azure Repos. Verify the source,
@@ -207,7 +243,7 @@ If a required flag has no menu equivalent, use the direct command.
 ### Azure Description Limit
 
 Direct PR generation automatically detects common Azure `origin` URLs.
-`--azure-limit` forces the limit; `--no-azure-limit` disables it. Use the override
+`--pr-limit` forces the limit; `--no-pr-limit` disables it. Use the override
 for custom Azure Server URLs or when generating text for a different host than
 `origin`. Interactive generation in saved `auto` mode asks with the detected default;
 saved `false` disables automatic limiting. The preferred limit defaults to
@@ -246,18 +282,34 @@ follow the selected platform guide and pull CI's version commit before more work
 
 ## Save Azure PR Preferences
 
+The limit is also available for GitHub and other hosts as an explicit opt-in.
+Automatic defaults: **Azure DevOps on; GitHub, unknown, and missing origin off**.
+For example:
+
+```bash
+git-tools settings pr-max-chars 2000
+git-tools pr --base develop --pr-limit
+```
+
+The generic flags are `--pr-limit/--no-pr-limit`. The old
+`--azure-limit/--no-azure-limit` flags and `azure-pr-limit` /
+`azure-pr-max-chars` settings names remain compatible aliases. Existing
+`GIT_TOOLS_AZURE_PR_*` storage keys are retained; no settings migration or extra
+file is needed. A GitHub length target is user-selected, not a claim about its
+service maximum. The supported target range remains 1–4000 UTF-16 units.
+
 Preferences use the existing `~/.git-tools/settings.env`; no additional file is
 created. Configure them once with direct commands:
 
 ```bash
-git-tools settings azure-pr-limit auto
-git-tools settings azure-pr-max-chars 2000
+git-tools settings pr-limit auto
+git-tools settings pr-max-chars 2000
 # Disable automatic limiting instead:
-git-tools settings azure-pr-limit false
+git-tools settings pr-limit false
 ```
 
-Or run `git-tools` → **settings** → **Azure PR Limit** → select **auto (detect
-origin)** or **false (disabled)**. To set the number, select **Azure PR Max
+Or run `git-tools` → **settings** → **PR Limit** → select **auto (detect
+origin)** or **false (disabled)**. To set the number, select **PR Max
 Chars**, type `2000` or `4000`, and press Enter. These settings edits persist;
 the Yes/No question during PR generation still affects only the current run.
 
@@ -271,8 +323,8 @@ GIT_TOOLS_AZURE_PR_MAX_CHARS="2000"
 Only `auto` and `false` are accepted; there is no saved `true` mode. The number
 must be an integer from 1 through 4000 UTF-16 units (default 4000). `auto` detects
 each repository's origin; interactive generation confirms the detected default.
-`false` skips automatic limiting and its confirmation. Explicit `--azure-limit`
-or `--no-azure-limit` overrides the saved mode for one run; forcing the limit
+`false` skips automatic limiting and its confirmation. Explicit `--pr-limit`
+or `--no-pr-limit` overrides the saved mode for one run; forcing the limit
 still uses the saved number. This supports custom Azure Server URLs without a
 global always-on mode. Environment variables override the saved settings file.
 

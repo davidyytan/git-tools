@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import unittest
 from unittest.mock import patch
 
 from git_tools.generators.issueprgen import (
+    AZURE_PR_DESCRIPTION_INSTRUCTION,
     IssuePullRequestGenerator,
     PromotionPrContext,
     WorkflowPrContext,
+    count_ado_chars,
 )
 
 
@@ -689,7 +692,7 @@ Issue: #123
         self.assertIn("Fixed PR title for this workflow PR: Start 1.7.0", full_prompt)
         self.assertIn("Target version tuple for this workflow PR: 1.7.0", full_prompt)
 
-    def test_pr_generation_appends_commit_log_to_parsed_output(self) -> None:
+    def test_pr_generation_does_not_append_commit_log(self) -> None:
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             input_source="c",
@@ -760,10 +763,10 @@ Issue: #123
 
         copied = copy_to_clipboard_auto.call_args[0][0]
         self.assertIn("## Title: feat(cli): append commit log", copied)
-        self.assertIn("## Commits\n```sh\n## abc123 feat: first\n\nbody\n```", copied)
+        self.assertNotIn("## Commits", copied)
         self.assertNotIn("Raw Response", copied)
 
-    def test_release_pr_generation_appends_title_only_commit_log(self) -> None:
+    def test_release_pr_generation_does_not_append_commit_log(self) -> None:
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             release_pr=True,
@@ -850,11 +853,8 @@ Issue: #123
         copied = copy_to_clipboard_auto.call_args[0][0]
         self.assertIn("## Title: Release 1.0.0", copied)
         self.assertIn("## Change Overview", copied)
-        self.assertIn(
-            "## Commits\n```sh\n## abc123 fix: first\n\n## def567 fix: second\n```",
-            copied,
-        )
-        get_pr_commit_log.assert_called_once_with("master")
+        self.assertNotIn("## Commits", copied)
+        get_pr_commit_log.assert_not_called()
 
     def test_pr_generation_with_both_input_falls_back_to_commit_messages_when_diff_is_empty(
         self,
@@ -944,7 +944,7 @@ Issue: #123
         )
         display_quota_breakdown.assert_not_called()
 
-    def test_pr_generation_falls_back_to_raw_output_and_appends_commit_log(self) -> None:
+    def test_pr_generation_falls_back_to_raw_output_without_commit_log(self) -> None:
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             input_source="c",
@@ -1020,7 +1020,7 @@ Issue: #123
         copied = copy_to_clipboard_auto.call_args[0][0]
         self.assertTrue(copied.startswith("## Title: raw fallback"))
         self.assertIn("Raw body", copied)
-        self.assertIn("## Commits\n```sh\n## abc123 feat: first\n```", copied)
+        self.assertNotIn("## Commits", copied)
 
     def test_issue_generation_keeps_existing_raw_copy_behavior(self) -> None:
         generator = IssuePullRequestGenerator(
@@ -1089,6 +1089,353 @@ Issue: #123
 
         copied = copy_to_clipboard_auto.call_args[0][0]
         self.assertEqual(copied, response["content"])
+
+
+class AzurePrDescriptionLimitTests(unittest.TestCase):
+    """Azure DevOps PR description limit: detection, counting, and flow."""
+
+    # -- count_ado_chars (UTF-16 code units) ---------------------------
+
+    def test_count_ado_chars_counts_ascii_as_one_unit(self) -> None:
+        self.assertEqual(count_ado_chars(""), 0)
+        self.assertEqual(count_ado_chars("abc"), 3)
+        self.assertEqual(count_ado_chars("a\nb"), 3)
+
+    def test_count_ado_chars_counts_non_bmp_chars_as_two_units(self) -> None:
+        self.assertEqual(count_ado_chars("\u00e9"), 1)
+        self.assertEqual(count_ado_chars("\u4e2d"), 1)
+        self.assertEqual(count_ado_chars("\U0001f600"), 2)
+        self.assertEqual(count_ado_chars("a\U0001f600b"), 4)
+
+    def test_count_ado_chars_boundary_at_4000(self) -> None:
+        self.assertEqual(count_ado_chars("x" * 4000), 4000)
+        self.assertEqual(count_ado_chars("x" * 4001), 4001)
+
+    # -- Azure DevOps URL detection ------------------------------------
+
+    def test_azure_devops_urls_are_detected(self) -> None:
+        urls = [
+            "https://dev.azure.com/org/project/_git/repo",
+            "https://org@dev.azure.com/org/project/_git/repo",
+            "https://org@dev.azure.com:443/org/project/_git/repo",
+            "git@ssh.dev.azure.com:v3/org/project/repo",
+            "ssh://git@ssh.dev.azure.com/v3/org/project/repo",
+            "https://org.visualstudio.com/project/_git/repo",
+            "https://DEV.AZURE.COM/org/project/_git/repo",
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertTrue(IssuePullRequestGenerator._is_azure_devops_url(url))
+
+    def test_non_azure_urls_are_not_detected(self) -> None:
+        urls = [
+            "",
+            None,
+            "   ",
+            "not a url",
+            "https://github.com/owner/repo",
+            "git@github.com:owner/repo.git",
+            "ssh://git@github.com/owner/repo.git",
+            "https://gitlab.com/owner/repo",
+            "https://dev.azure.com.evil.com/org/project/_git/repo",
+            "https://evil.com/?host=dev.azure.com",
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertFalse(IssuePullRequestGenerator._is_azure_devops_url(url))
+
+    # -- Origin lookup --------------------------------------------------
+
+    def test_get_origin_url_returns_trimmed_url(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+
+        with patch(
+            "git_tools.generators.issueprgen.subprocess.check_output",
+            return_value="https://dev.azure.com/org/proj/_git/repo\n",
+        ) as check_output:
+            origin_url = generator._get_origin_url()
+
+        self.assertEqual(origin_url, "https://dev.azure.com/org/proj/_git/repo")
+        self.assertEqual(
+            check_output.call_args.args[0],
+            ["git", "remote", "get-url", "origin"],
+        )
+
+    def test_get_origin_url_returns_none_when_git_fails(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+
+        with patch(
+            "git_tools.generators.issueprgen.subprocess.check_output",
+            side_effect=subprocess.CalledProcessError(128, ["git"]),
+        ):
+            self.assertIsNone(generator._get_origin_url())
+
+    def test_get_origin_url_returns_none_when_output_is_empty(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+
+        with patch(
+            "git_tools.generators.issueprgen.subprocess.check_output",
+            return_value="\n",
+        ):
+            self.assertIsNone(generator._get_origin_url())
+
+    # -- Limit resolution: CLI param > interactive prompt > detection ---
+
+    def test_cli_azure_limit_flag_overrides_detection_and_prompt(self) -> None:
+        generator = IssuePullRequestGenerator(
+            generation_type="pr", azure_limit=True, interactive=True
+        )
+        with patch.object(generator, "_get_origin_url") as get_origin, patch.object(
+            generator, "prompt_confirm"
+        ) as prompt_confirm:
+            self.assertTrue(generator._should_apply_azure_limit())
+        get_origin.assert_not_called()
+        prompt_confirm.assert_not_called()
+
+        generator = IssuePullRequestGenerator(
+            generation_type="pr", azure_limit=False, interactive=True
+        )
+        with patch.object(generator, "_get_origin_url") as get_origin, patch.object(
+            generator, "prompt_confirm"
+        ) as prompt_confirm:
+            self.assertFalse(generator._should_apply_azure_limit())
+        get_origin.assert_not_called()
+        prompt_confirm.assert_not_called()
+
+    def test_non_interactive_mode_uses_detection_without_prompt(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+        with patch.object(
+            generator,
+            "_get_origin_url",
+            return_value="https://dev.azure.com/org/proj/_git/repo",
+        ), patch.object(generator, "prompt_confirm") as prompt_confirm:
+            self.assertTrue(generator._should_apply_azure_limit())
+        prompt_confirm.assert_not_called()
+
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+        with patch.object(
+            generator,
+            "_get_origin_url",
+            return_value="https://github.com/owner/repo",
+        ), patch.object(generator, "prompt_confirm") as prompt_confirm:
+            self.assertFalse(generator._should_apply_azure_limit())
+        prompt_confirm.assert_not_called()
+
+    def test_interactive_prompt_defaults_follow_detection(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
+        with patch.object(
+            generator,
+            "_get_origin_url",
+            return_value="https://dev.azure.com/org/proj/_git/repo",
+        ), patch.object(
+            generator, "prompt_confirm", return_value=True
+        ) as prompt_confirm:
+            self.assertTrue(generator._should_apply_azure_limit())
+        self.assertEqual(prompt_confirm.call_args.kwargs["default"], True)
+
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
+        with patch.object(
+            generator,
+            "_get_origin_url",
+            return_value="https://github.com/owner/repo",
+        ), patch.object(
+            generator, "prompt_confirm", return_value=False
+        ) as prompt_confirm:
+            self.assertFalse(generator._should_apply_azure_limit())
+        self.assertEqual(prompt_confirm.call_args.kwargs["default"], False)
+
+        generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
+        with patch.object(generator, "_get_origin_url", return_value=None), patch.object(
+            generator, "prompt_confirm", return_value=False
+        ) as prompt_confirm:
+            self.assertFalse(generator._should_apply_azure_limit())
+        self.assertEqual(prompt_confirm.call_args.kwargs["default"], False)
+
+    def test_interactive_detection_prints_origin_remote_line(self) -> None:
+        cases = [
+            (
+                "https://dev.azure.com/org/proj/_git/repo",
+                "Origin remote: Azure DevOps repository",
+            ),
+            (
+                "https://github.com/owner/repo",
+                "Origin remote: Non-Azure DevOps repository",
+            ),
+            (None, "Origin remote: Not configured"),
+        ]
+        for origin_url, expected_message in cases:
+            with self.subTest(origin_url=origin_url):
+                generator = IssuePullRequestGenerator(
+                    generation_type="pr", interactive=True
+                )
+                with patch.object(
+                    generator, "_get_origin_url", return_value=origin_url
+                ), patch.object(
+                    generator, "prompt_confirm", return_value=True
+                ), patch("git_tools.generators.issueprgen.info") as info:
+                    generator._should_apply_azure_limit()
+                info.assert_called_once_with(expected_message)
+
+    # -- Generation flow -------------------------------------------------
+
+    def _make_generator(
+        self,
+        generation_type: str = "pr",
+        azure_limit: bool | None = None,
+    ) -> IssuePullRequestGenerator:
+        return IssuePullRequestGenerator(
+            generation_type=generation_type,
+            input_source="c",
+            azure_limit=azure_limit,
+            interactive=False,
+        )
+
+    def _run_flow(self, generator, responses, apply_limit):
+        commit_info = {
+            "base_branch": "develop",
+            "commit_count": 1,
+            "first_hash": "abc1234",
+            "first_message": "feat: first",
+            "last_hash": "abc1234",
+            "last_message": "feat: first",
+        }
+        mocks = {}
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(generator, "get_default_branch", return_value="develop")
+            )
+            stack.enter_context(
+                patch.object(generator, "get_commit_info", return_value=commit_info)
+            )
+            stack.enter_context(patch.object(generator, "show_commit_summary"))
+            stack.enter_context(
+                patch.object(
+                    generator, "get_commit_messages", return_value="feat: first"
+                )
+            )
+            stack.enter_context(
+                patch.object(generator, "select_provider", return_value="openrouter")
+            )
+            stack.enter_context(
+                patch.object(generator, "ensure_api_key_configured", return_value=True)
+            )
+            stack.enter_context(
+                patch.object(
+                    generator,
+                    "select_model_params",
+                    return_value=("test-model", 0.0, 1000),
+                )
+            )
+            stack.enter_context(
+                patch.object(generator, "_initialize_service", return_value=True)
+            )
+            mocks["generate_content"] = stack.enter_context(
+                patch.object(generator, "generate_content", side_effect=responses)
+            )
+            stack.enter_context(patch.object(generator, "display_reasoning"))
+            stack.enter_context(patch.object(generator, "display_token_usage"))
+            stack.enter_context(
+                patch.object(
+                    generator,
+                    "get_pr_commit_log",
+                    return_value="## abc123 feat: first",
+                )
+            )
+            mocks["copy_to_clipboard_auto"] = stack.enter_context(
+                patch.object(generator, "copy_to_clipboard_auto")
+            )
+            mocks["warning"] = stack.enter_context(
+                patch("git_tools.generators.issueprgen.warning")
+            )
+            mocks["should_apply"] = stack.enter_context(
+                patch.object(
+                    generator, "_should_apply_azure_limit", return_value=apply_limit
+                )
+            )
+            generator.generate_issue_pullrequest()
+        return mocks
+
+    def test_enabled_limit_adds_instruction_to_system_message(self) -> None:
+        generator = self._make_generator()
+        response = {"content": "\n## Title: feat: small\n\nbody\n"}
+        mocks = self._run_flow(generator, [response], apply_limit=True)
+
+        system_msg = mocks["generate_content"].call_args[0][1]
+        self.assertIn(AZURE_PR_DESCRIPTION_INSTRUCTION, system_msg)
+        self.assertIn("4000 UTF-16 units", system_msg)
+        self.assertEqual(mocks["generate_content"].call_count, 1)
+        mocks["warning"].assert_not_called()
+
+        copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
+        self.assertIn("## Title: feat: small", copied)
+        self.assertNotIn("## Commits", copied)
+
+    def test_over_limit_description_retries_once_and_uses_repair(self) -> None:
+        generator = self._make_generator()
+        over = "## Title: feat: big\n\n" + "x" * 4100
+        repaired = "## Title: feat: big\n\ncondensed body"
+        responses = [
+            {"content": "\n" + over + "\n"},
+            {"content": "\n" + repaired + "\n"},
+        ]
+        mocks = self._run_flow(generator, responses, apply_limit=True)
+
+        self.assertEqual(mocks["generate_content"].call_count, 2)
+        retry_system_msg = mocks["generate_content"].call_args_list[1][0][1]
+        self.assertIn("Rewrite the PR description", retry_system_msg)
+        self.assertNotIn("`## Title:` line exactly", retry_system_msg)
+        self.assertIn("exceeding the configured PR limit", retry_system_msg)
+        mocks["warning"].assert_not_called()
+
+        copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
+        self.assertIn("## Title: feat: big", copied)
+        self.assertIn("condensed body", copied)
+        self.assertNotIn("## Commits", copied)
+
+    def test_retry_still_over_limit_warns_and_copies_anyway(self) -> None:
+        generator = self._make_generator()
+        over_one = "## Title: feat: big\n\n" + "x" * 4100
+        over_two = "## Title: feat: big\n\n" + "y" * 4200
+        responses = [
+            {"content": "\n" + over_one + "\n"},
+            {"content": "\n" + over_two + "\n"},
+        ]
+        mocks = self._run_flow(generator, responses, apply_limit=True)
+
+        self.assertEqual(mocks["generate_content"].call_count, 2)
+        mocks["warning"].assert_called_once()
+        warning_message = mocks["warning"].call_args[0][0]
+        self.assertIn("exceeds the configured PR limit", warning_message)
+        self.assertIn("Copied anyway", warning_message)
+
+        copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
+        self.assertIn("y" * 100, copied)
+        self.assertNotIn("## Commits", copied)
+
+    def test_disabled_limit_keeps_single_generation_without_instruction(self) -> None:
+        generator = self._make_generator()
+        response = {"content": "\n## Title: feat: small\n\nbody\n"}
+        mocks = self._run_flow(generator, [response], apply_limit=False)
+
+        system_msg = mocks["generate_content"].call_args[0][1]
+        self.assertNotIn(AZURE_PR_DESCRIPTION_INSTRUCTION, system_msg)
+        self.assertEqual(mocks["generate_content"].call_count, 1)
+        mocks["warning"].assert_not_called()
+
+        copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
+        self.assertNotIn("## Commits", copied)
+
+    def test_issue_generation_never_applies_azure_limit(self) -> None:
+        generator = self._make_generator(generation_type="issue", azure_limit=True)
+        over = "## Title: something\n\n" + "x" * 4100
+        response = {"content": "\n" + over + "\n"}
+        mocks = self._run_flow(generator, [response], apply_limit=True)
+
+        mocks["should_apply"].assert_not_called()
+        self.assertEqual(mocks["generate_content"].call_count, 1)
+        system_msg = mocks["generate_content"].call_args[0][1]
+        self.assertNotIn(AZURE_PR_DESCRIPTION_INSTRUCTION, system_msg)
+        mocks["warning"].assert_not_called()
 
 
 if __name__ == "__main__":

@@ -374,6 +374,8 @@ def _build_settings_choices(
             Choice(f"Temperature: {state['temperature']}", value="temperature"),
             Choice(f"Max Tokens: {state['max_tokens']}", value="max-tokens"),
             Choice(f"Max Retries: {state['max_retries']}", value="max-retries"),
+            Choice(f"PR Limit: {state.get('azure_pr_limit', 'auto')}", value="azure-pr-limit"),
+            Choice(f"PR Max Chars: {state.get('azure_pr_max_chars', 4000)}", value="azure-pr-max-chars"),
             Choice(done_label, value="done"),
         ]
     )
@@ -674,6 +676,14 @@ def pr(
         Optional[int],
         typer.Option("--token-limit", "-l", help="Token limit for diff processing"),
     ] = None,
+    azure_limit: Annotated[
+        Optional[bool],
+        typer.Option(
+            "--pr-limit/--no-pr-limit",
+            "--azure-limit/--no-azure-limit",
+            help="Apply the configured PR description limit on any host (auto: Azure on, GitHub/unknown off)",
+        ),
+    ] = None,
     workflow_version: Annotated[
         Optional[str],
         typer.Option(
@@ -736,6 +746,7 @@ def pr(
             temperature=temperature,
             max_tokens=max_tokens,
             token_limit=token_limit,
+            azure_limit=azure_limit,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
@@ -953,6 +964,7 @@ def init_command(
 # Defaults shown alongside settings prompts, sourced from the pydantic field
 # defaults so they cannot drift from what an unset value actually resolves to.
 _SETTING_DEFAULTS = {
+    "azure_pr_max_chars": GitToolsSettings.model_fields["azure_pr_max_chars"].default,
     "provider": GitToolsSettings.model_fields["default_provider"].default,
     "temperature": GitToolsSettings.model_fields["default_temperature"].default,
     "max_tokens": GitToolsSettings.model_fields["default_max_tokens"].default,
@@ -976,6 +988,8 @@ def _load_settings_state() -> dict[str, Any]:
         "max_tokens": fresh.default_max_tokens,
         "max_retries": fresh.default_max_retries,
         "api_configured": is_api_configured,
+        "azure_pr_limit": fresh.azure_pr_limit,
+        "azure_pr_max_chars": fresh.azure_pr_max_chars,
     }
 
 
@@ -1407,6 +1421,37 @@ def _edit_max_retries(state: dict[str, Any], value: Optional[str] = None) -> Non
     )
 
 
+def _edit_azure_pr_limit(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        value = _ask_with_back(questionary.select(
+            "PR limit mode (auto: Azure on, other origins off):",
+            choices=[Choice("auto (detect origin)", value="auto"),
+                     Choice("false (disabled)", value="false"), _back_choice()],
+            default=state["azure_pr_limit"], style=TYPER_STYLE,
+        ))
+        if value is None or value == _BACK:
+            return
+    mode = value.strip().lower()
+    if mode not in {"auto", "false"}:
+        error("PR limit must be auto or false.")
+        raise typer.Exit(1)
+    save_setting("GIT_TOOLS_AZURE_PR_LIMIT", mode)
+    state["azure_pr_limit"] = mode
+    success(f"PR limit saved as {mode}")
+
+
+def _edit_azure_pr_max_chars(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_number(
+        state, state_key="azure_pr_max_chars", env_var="GIT_TOOLS_AZURE_PR_MAX_CHARS",
+        label="PR max chars", parse=int, is_valid=lambda n: 1 <= n <= 4000,
+        invalid_message="PR max chars must be an integer.",
+        range_message="PR max chars must be between 1 and 4000 UTF-16 units.",
+        value=value,
+    )
+
+
 # Menu order, and the names accepted by `git-tools settings <name> [value]`.
 _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
     "provider": _edit_provider,
@@ -1416,6 +1461,10 @@ _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
     "temperature": _edit_temperature,
     "max-tokens": _edit_max_tokens,
     "max-retries": _edit_max_retries,
+    "pr-limit": _edit_azure_pr_limit,
+    "pr-max-chars": _edit_azure_pr_max_chars,
+    "azure-pr-limit": _edit_azure_pr_limit,
+    "azure-pr-max-chars": _edit_azure_pr_max_chars,
 }
 
 

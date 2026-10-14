@@ -108,6 +108,7 @@ BACKMERGE_HOTFIX_SUBJECT_PATTERN = re.compile(
     r"^Backmerge Hotfix (?P<target>\d+\.\d+\.\d+)$"
 )
 GITHUB_PR_SUFFIX_PATTERN = re.compile(r"^(?P<subject>.+?)\s+\(#\d+\)$")
+AZURE_DEVOPS_PR_PREFIX_PATTERN = re.compile(r"^Merged PR \d+:\s*(?P<subject>.+)$")
 _VERSION_TOKEN = (
     r"\d+\.\d+\.\d+(?:-(?:(?:alpha|beta|rc)\.\d+|(?:a|b|rc)\d+))?"
 )
@@ -987,9 +988,12 @@ def canonicalize_package_name(name: str) -> str:
 def normalize_workflow_subject(subject: str) -> str:
     stripped = subject.strip()
     match = GITHUB_PR_SUFFIX_PATTERN.fullmatch(stripped)
-    if match is None:
-        return stripped
-    return match.group("subject")
+    if match is not None:
+        stripped = match.group("subject")
+    prefix_match = AZURE_DEVOPS_PR_PREFIX_PATTERN.fullmatch(stripped)
+    if prefix_match is not None:
+        stripped = prefix_match.group("subject")
+    return stripped
 
 
 def is_bootstrap_release_subject(subject: str) -> bool:
@@ -1241,7 +1245,7 @@ def decide_version_strategy(root: Path, branch: str, *, flow: Flow) -> StrategyD
         branch_has_unique_commits=branch_has_unique_commits,
     )
 
-    if subject == BACKMERGE_PREP_SUBJECT and (
+    if normalize_workflow_subject(subject) == BACKMERGE_PREP_SUBJECT and (
         branch.startswith("release/") or branch.startswith("hotfix/")
     ):
         if not bump_eligible:
@@ -1318,13 +1322,13 @@ def decide_version_strategy(root: Path, branch: str, *, flow: Flow) -> StrategyD
 
 def decide_develop_strategy(root: Path, decision: StrategyDecision) -> StrategyDecision:
     workflow_subject = normalize_workflow_subject(decision.subject)
-    if decision.subject.startswith(RELEASE_MANAGEMENT_PREFIX):
+    if workflow_subject.startswith(RELEASE_MANAGEMENT_PREFIX):
         return replace_decision(
             decision,
             skip=True,
             reason="release-management commits do not bump develop",
         )
-    if decision.subject.startswith(GENERATED_BUMP_PREFIX):
+    if workflow_subject.startswith(GENERATED_BUMP_PREFIX):
         return replace_decision(
             decision,
             skip=True,
@@ -1593,7 +1597,8 @@ def decide_classic_release_strategy(decision: StrategyDecision) -> StrategyDecis
 
 
 def decide_hotfix_strategy(decision: StrategyDecision) -> StrategyDecision:
-    if decision.subject.startswith(RELEASE_MANAGEMENT_PREFIX):
+    workflow_subject = normalize_workflow_subject(decision.subject)
+    if workflow_subject.startswith(RELEASE_MANAGEMENT_PREFIX):
         return replace_decision(
             decision,
             skip=True,
@@ -1605,7 +1610,7 @@ def decide_hotfix_strategy(decision: StrategyDecision) -> StrategyDecision:
             skip=True,
             reason="hotfix branch has no unique human commit yet",
         )
-    if decision.subject.startswith(GENERATED_BUMP_PREFIX):
+    if workflow_subject.startswith(GENERATED_BUMP_PREFIX):
         return replace_decision(
             decision,
             skip=True,
@@ -1846,7 +1851,10 @@ def is_bump_eligible(message: str) -> bool:
     if is_dvc_experiment_commit(message):
         return False
 
-    for line in message.splitlines():
+    lines = message.splitlines()
+    for index, line in enumerate(lines):
+        if index == 0:
+            line = normalize_workflow_subject(line)
         if DEFAULT_BUMP_PATTERN.search(line):
             return True
     return False
@@ -1861,6 +1869,8 @@ def replace_decision(decision: StrategyDecision, **changes: object) -> StrategyD
 def write_github_output(path: Path, decision: StrategyDecision) -> None:
     with path.open("a", encoding="utf-8") as handle:
         for key, value in decision.outputs().items():
+            # Single-line output records must not let data create new records.
+            value = value.replace("\r", " ").replace("\n", " ")
             handle.write(f"{key}={value}\n")
 
 

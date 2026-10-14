@@ -145,7 +145,7 @@ When you change one of these areas, update the others in the same PR when needed
 - provider and model definitions in `git_tools/settings/mappings.py`
 - user-facing env examples in `git-tools.env.example`
 - prompt files in `git_tools/prompts/`
-- workflow examples in `.github/workflows/`
-- docs in `README.md` and `docs/git-flow-guide.md`
+- workflow examples in `.github/workflows/` and `.azure/workflows/`
+- docs in `README.md`, `docs/usage.md`, `docs/git-flow-guide.md`, `docs/github/`, and `docs/azure-devops/` (keep legacy forwarding links valid)
 
 If the change affects CLI behavior, add or update tests in `tests/`.

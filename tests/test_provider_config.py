@@ -284,6 +284,124 @@ class ProviderConfigTests(unittest.TestCase):
             self.assertFalse(legacy.exists())
             self.assertEqual(target.read_text(), 'GIT_TOOLS_PROVIDER="openrouter"\n')
 
+    def test_xdg_config_env_migrates_creating_settings_directory(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            legacy = home / ".config" / "git-tools" / "config.env"
+            target = home / ".git-tools" / "settings.env"
+            legacy.parent.mkdir(parents=True)
+            content = 'GIT_TOOLS_PROVIDER="kimicli"\n'
+            legacy.write_text(content)
+            with (
+                patch.object(settings_module, "XDG_LEGACY_SETTINGS_PATH", legacy),
+                patch.object(
+                    settings_module, "LEGACY_SETTINGS_PATH", target.parent / "config.env"
+                ),
+                patch.object(settings_module, "DEFAULT_SETTINGS_PATH", target),
+            ):
+                settings_module._migrate_legacy_settings_file()
+                self.assertNotIn(legacy, settings_module._get_env_file_paths())
+
+            self.assertFalse(legacy.exists())
+            self.assertEqual(target.read_text(), content)
+
+    def test_xdg_migration_failure_keeps_legacy_settings_readable(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        for failing_operation in ("mkdir", "replace"):
+            with (
+                self.subTest(failing_operation=failing_operation),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                home = Path(tmp)
+                legacy = home / ".config" / "git-tools" / "config.env"
+                target = home / ".git-tools" / "settings.env"
+                legacy.parent.mkdir(parents=True)
+                legacy.write_text(
+                    'OPENROUTER_API_KEY="legacy-key"\n'
+                    'GIT_TOOLS_DEFAULT_TEMPERATURE="1.25"\n'
+                )
+                with (
+                    patch.object(settings_module, "XDG_LEGACY_SETTINGS_PATH", legacy),
+                    patch.object(
+                        settings_module, "LEGACY_SETTINGS_PATH", target.parent / "config.env"
+                    ),
+                    patch.object(settings_module, "DEFAULT_SETTINGS_PATH", target),
+                    patch.object(Path, failing_operation, side_effect=OSError("migration denied")),
+                    patch.dict(os.environ, {}, clear=True),
+                ):
+                    settings_module._migrate_legacy_settings_file()
+                    self.assertIn(legacy, settings_module._get_env_file_paths())
+                    self.assertEqual(
+                        settings_module.check_api_key_configured("openrouter"),
+                        (True, "legacy-key"),
+                    )
+                    self.assertEqual(
+                        settings_module.GitToolsSettings(
+                            _env_file=settings_module._get_env_file_paths()
+                        ).default_temperature,
+                        1.25,
+                    )
+
+                self.assertTrue(legacy.exists())
+                self.assertFalse(target.exists())
+
+    def test_xdg_migration_never_overwrites_existing_settings(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            xdg_legacy = home / ".config" / "git-tools" / "config.env"
+            legacy = home / ".git-tools" / "config.env"
+            target = legacy.parent / "settings.env"
+            xdg_legacy.parent.mkdir(parents=True)
+            legacy.parent.mkdir(parents=True)
+            xdg_legacy.write_text('OPENROUTER_API_KEY="xdg-stale"\n')
+            legacy.write_text('OPENROUTER_API_KEY="old-stale"\n')
+            content = 'OPENROUTER_API_KEY="fresh-key"\n'
+            target.write_text(content)
+            with (
+                patch.object(settings_module, "XDG_LEGACY_SETTINGS_PATH", xdg_legacy),
+                patch.object(settings_module, "LEGACY_SETTINGS_PATH", legacy),
+                patch.object(settings_module, "DEFAULT_SETTINGS_PATH", target),
+                patch.object(Path, "replace") as replace,
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                settings_module._migrate_legacy_settings_file()
+                replace.assert_not_called()
+                paths = settings_module._get_env_file_paths()
+                self.assertNotIn(xdg_legacy, paths)
+                self.assertNotIn(legacy, paths)
+                self.assertEqual(
+                    settings_module.check_api_key_configured("openrouter"),
+                    (True, "fresh-key"),
+                )
+            self.assertEqual(target.read_text(), content)
+            self.assertTrue(xdg_legacy.exists())
+            self.assertTrue(legacy.exists())
+
+    def test_git_tools_legacy_migration_takes_priority_over_xdg(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            xdg_legacy = home / "xdg-config.env"
+            legacy = home / "config.env"
+            target = home / "settings.env"
+            xdg_legacy.write_text('GIT_TOOLS_PROVIDER="openrouter"\n')
+            legacy.write_text('GIT_TOOLS_PROVIDER="kimicli"\n')
+            with (
+                patch.object(settings_module, "XDG_LEGACY_SETTINGS_PATH", xdg_legacy),
+                patch.object(settings_module, "LEGACY_SETTINGS_PATH", legacy),
+                patch.object(settings_module, "DEFAULT_SETTINGS_PATH", target),
+            ):
+                settings_module._migrate_legacy_settings_file()
+            self.assertEqual(target.read_text(), 'GIT_TOOLS_PROVIDER="kimicli"\n')
+            self.assertFalse(legacy.exists())
+            self.assertTrue(xdg_legacy.exists())
+
     def test_save_setting_preserves_backslashes_when_updating(self) -> None:
         from git_tools.settings import settings as settings_module
 

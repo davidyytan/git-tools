@@ -69,6 +69,15 @@ class TestFetchLiveModels(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(missing.error_kind, "malformed")
 
+    def test_malformed_ipv6_url_is_classified_without_network_request(self) -> None:
+        with patch("urllib.request.urlopen") as urlopen:
+            result = fetch_live_models("http://[::1/v1", "key")
+
+        self.assertEqual(result, [])
+        self.assertEqual(result.error_kind, "malformed")
+        self.assertIn("IPv6", result.error)
+        urlopen.assert_not_called()
+
     def test_http_401_is_classified_as_auth_failure(self) -> None:
         response = urllib.error.HTTPError(
             "https://api.kimi.com/coding/v1/models",

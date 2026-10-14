@@ -1,13 +1,24 @@
 # Git Flow Guide
 
-Read these in order:
+## Choose Your Platform First
 
-1. [GitHub Setup](github-setup.md)
-2. Pick one standalone flow guide:
-   - [Git Flow Classic](git-flow-classic.md) — develop chooses the release line; small team, light process
-   - [Git Flow Classic — Reviewed](git-flow-classic-reviewed.md) — classic plus an inner PR layer on `release/*` and `hotfix/*`; for compliance / regulated industries
-   - [Git Flow Variant — Release-led](git-flow-variant-release-led.md) — the release branch chooses the line; release manager owns the version
-   - [Git Flow Variant — Reviewed](git-flow-variant-reviewed.md) — release-led plus an inner PR layer with squash merges; release manager owns the version and every commit is reviewed
+1. Open [GitHub guides](github/README.md) or [Azure DevOps guides](azure-devops/README.md).
+2. Complete that platform's setup and choose a flow below.
+3. Use [Direct CLI and Interactive Usage](usage.md) for command examples and
+   step-by-step terminal menu navigation.
+
+| Flow | Version policy | GitHub guide | Azure DevOps guide |
+| --- | --- | --- | --- |
+| Classic | `develop` chooses the release line | [Classic](github/classic.md) | [Classic](azure-devops/classic.md) |
+| Classic — Reviewed | Classic with inner stabilization PRs | [Reviewed](github/classic-reviewed.md) | [Reviewed](azure-devops/classic-reviewed.md) |
+| Release-led | `release/X.Y.Z` chooses the release line | [Release-led](github/release-led.md) | [Release-led](azure-devops/release-led.md) |
+| Release-led — Reviewed | Release-led with squash inner PRs | [Reviewed](github/release-led-reviewed.md) | [Reviewed](azure-devops/release-led-reviewed.md) |
+
+Both platforms supply classic and release-led example adapters. Reviewed flows
+share their base adapter: enable **one** versioning workflow/pipeline per repo,
+not both adapters. Templates are examples to copy/configure in the target repo;
+their presence does not certify a live run in your organization. See each setup
+guide for supported engine refs, signing, permissions, and merge settings.
 
 ## Shared Naming Policy
 
@@ -19,6 +30,9 @@ Read these in order:
 
 GitHub may append a trailing `(#123)` to merged workflow subjects. The runtime
 matcher ignores that suffix and still recognizes the underlying fixed title.
+Azure DevOps may prefix subjects with `Merged PR <id>:`; a supported engine ref
+normalizes that prefix too. In either case, the underlying subject must still
+match the intended title.
 
 Release and hotfix branch work stays normal Conventional Commits. If a release
 branch needs to open `rc.0` without a real stabilization change, use an empty
@@ -47,12 +61,15 @@ Current helpers match the documented workflow:
 - `git-tools pr --start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, and `--backmerge-hotfix-pr`
 - pass `--workflow-version X.Y.Z` when repo state cannot safely infer the tuple for a fixed-title Start or Backmerge flow
 
-These guides are GitHub PR-based adaptations of Git Flow. They support either
+These guides are GitHub and Azure DevOps PR-based adaptations of Git Flow.
+Classic, classic-reviewed, and release-led support either
 squash merge or merge commits, as long as the final commit subject on the
-target branch is the PR title.
+target branch is the PR title. Release-led-reviewed uses squash merges for its
+strict review profile. Follow the selected platform's completion instructions.
 
 If you want the closest thing to classic Git Flow, use [Git Flow
-Classic](git-flow-classic.md) with merge commits for feature, release, and
+Classic](github/classic.md) on GitHub or [Classic](azure-devops/classic.md)
+on Azure DevOps with merge commits for feature, release, and
 hotfix PRs.
 
 `Rebase merge` is not part of this documented flow.

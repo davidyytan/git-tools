@@ -287,7 +287,7 @@ $ git-tools issue
 ✓ Copied to clipboard!
 ```
 
-### config - Interactive Settings
+### settings - Interactive Settings
 ```
 ❯ Select setting to edit:           <- Questionary (select)
   Provider: cliproxyapi

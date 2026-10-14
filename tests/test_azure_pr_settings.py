@@ -79,3 +79,39 @@ class AzurePrSettingsTests(unittest.TestCase):
         with patch.object(config.settings, "azure_pr_limit", "auto"), patch.object(config.settings, "azure_pr_max_chars", 2000), patch.object(generator, "_get_origin_url", return_value="https://dev.azure.com/org/proj/_git/repo"), patch.object(generator, "prompt_confirm", return_value=True) as prompt:
             self.assertTrue(generator._should_apply_azure_limit())
             prompt.assert_called_once_with("Apply the 2000-character PR description limit?", default=True)
+
+    def test_generic_cli_flags_and_legacy_aliases(self):
+        runner = CliRunner()
+        for flag, expected in (("--pr-limit", True), ("--no-pr-limit", False),
+                               ("--azure-limit", True), ("--no-azure-limit", False)):
+            with self.subTest(flag=flag), patch("git_tools.generators.issueprgen.IssuePullRequestGenerator") as generator:
+                result = runner.invoke(app, ["pr", flag])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(generator.call_args.kwargs["azure_limit"], expected)
+        with patch("git_tools.generators.issueprgen.IssuePullRequestGenerator") as generator:
+            self.assertEqual(runner.invoke(app, ["pr"]).exit_code, 0)
+            self.assertIsNone(generator.call_args.kwargs["azure_limit"])
+
+    def test_auto_origin_matrix_and_explicit_github_limit(self):
+        with patch.object(config.settings, "azure_pr_limit", "auto"):
+            for url, expected in (("https://dev.azure.com/org/proj/_git/repo", True),
+                                  ("https://github.com/owner/repo", False),
+                                  ("https://example.com/repo.git", False), (None, False)):
+                generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
+                with self.subTest(url=url), patch.object(generator, "_get_origin_url", return_value=url):
+                    self.assertEqual(generator._should_apply_azure_limit(), expected)
+            generator = IssuePullRequestGenerator(generation_type="pr", azure_limit=True)
+            with patch.object(generator, "_get_origin_url") as origin:
+                self.assertTrue(generator._should_apply_azure_limit())
+                origin.assert_not_called()
+
+    def test_generic_settings_names_use_existing_storage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.env"
+            with patch.object(config, "DEFAULT_SETTINGS_PATH", path):
+                runner = CliRunner()
+                self.assertEqual(runner.invoke(app, ["settings", "pr-limit", "auto"]).exit_code, 0)
+                self.assertEqual(runner.invoke(app, ["settings", "pr-max-chars", "2000"]).exit_code, 0)
+            fresh = GitToolsSettings(_env_file=path)
+            self.assertEqual(fresh.azure_pr_limit, "auto")
+            self.assertEqual(fresh.azure_pr_max_chars, 2000)

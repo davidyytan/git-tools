@@ -1365,7 +1365,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
 
         system_msg = mocks["generate_content"].call_args[0][1]
         self.assertIn(AZURE_PR_DESCRIPTION_INSTRUCTION, system_msg)
-        self.assertIn("4000 characters", system_msg)
+        self.assertIn("4000 UTF-16 units", system_msg)
         self.assertEqual(mocks["generate_content"].call_count, 1)
         mocks["warning"].assert_not_called()
 
@@ -1386,7 +1386,8 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         self.assertEqual(mocks["generate_content"].call_count, 2)
         retry_system_msg = mocks["generate_content"].call_args_list[1][0][1]
         self.assertIn("Rewrite the PR description", retry_system_msg)
-        self.assertIn("exceeding the configured Azure PR limit", retry_system_msg)
+        self.assertNotIn("`## Title:` line exactly", retry_system_msg)
+        self.assertIn("exceeding the configured PR limit", retry_system_msg)
         mocks["warning"].assert_not_called()
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
@@ -1407,7 +1408,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         self.assertEqual(mocks["generate_content"].call_count, 2)
         mocks["warning"].assert_called_once()
         warning_message = mocks["warning"].call_args[0][0]
-        self.assertIn("exceeds the configured Azure PR limit", warning_message)
+        self.assertIn("exceeds the configured PR limit", warning_message)
         self.assertIn("Copied anyway", warning_message)
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]

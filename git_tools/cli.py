@@ -374,8 +374,8 @@ def _build_settings_choices(
             Choice(f"Temperature: {state['temperature']}", value="temperature"),
             Choice(f"Max Tokens: {state['max_tokens']}", value="max-tokens"),
             Choice(f"Max Retries: {state['max_retries']}", value="max-retries"),
-            Choice(f"Azure PR Limit: {state.get('azure_pr_limit', 'auto')}", value="azure-pr-limit"),
-            Choice(f"Azure PR Max Chars: {state.get('azure_pr_max_chars', 4000)}", value="azure-pr-max-chars"),
+            Choice(f"PR Limit: {state.get('azure_pr_limit', 'auto')}", value="azure-pr-limit"),
+            Choice(f"PR Max Chars: {state.get('azure_pr_max_chars', 4000)}", value="azure-pr-max-chars"),
             Choice(done_label, value="done"),
         ]
     )
@@ -679,8 +679,9 @@ def pr(
     azure_limit: Annotated[
         Optional[bool],
         typer.Option(
+            "--pr-limit/--no-pr-limit",
             "--azure-limit/--no-azure-limit",
-            help="Apply the Azure DevOps 4000-character PR description limit (default: detect from the origin remote)",
+            help="Apply the configured PR description limit on any host (auto: Azure on, GitHub/unknown off)",
         ),
     ] = None,
     workflow_version: Annotated[
@@ -1425,7 +1426,7 @@ def _edit_azure_pr_limit(state: dict[str, Any], value: Optional[str] = None) -> 
 
     if value is None:
         value = _ask_with_back(questionary.select(
-            "Azure PR limit mode:",
+            "PR limit mode (auto: Azure on, other origins off):",
             choices=[Choice("auto (detect origin)", value="auto"),
                      Choice("false (disabled)", value="false"), _back_choice()],
             default=state["azure_pr_limit"], style=TYPER_STYLE,
@@ -1434,19 +1435,19 @@ def _edit_azure_pr_limit(state: dict[str, Any], value: Optional[str] = None) -> 
             return
     mode = value.strip().lower()
     if mode not in {"auto", "false"}:
-        error("Azure PR limit must be auto or false.")
+        error("PR limit must be auto or false.")
         raise typer.Exit(1)
     save_setting("GIT_TOOLS_AZURE_PR_LIMIT", mode)
     state["azure_pr_limit"] = mode
-    success(f"Azure PR limit saved as {mode}")
+    success(f"PR limit saved as {mode}")
 
 
 def _edit_azure_pr_max_chars(state: dict[str, Any], value: Optional[str] = None) -> None:
     _edit_number(
         state, state_key="azure_pr_max_chars", env_var="GIT_TOOLS_AZURE_PR_MAX_CHARS",
-        label="Azure PR max chars", parse=int, is_valid=lambda n: 1 <= n <= 4000,
-        invalid_message="Azure PR max chars must be an integer.",
-        range_message="Azure PR max chars must be between 1 and 4000 UTF-16 units.",
+        label="PR max chars", parse=int, is_valid=lambda n: 1 <= n <= 4000,
+        invalid_message="PR max chars must be an integer.",
+        range_message="PR max chars must be between 1 and 4000 UTF-16 units.",
         value=value,
     )
 
@@ -1460,6 +1461,8 @@ _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
     "temperature": _edit_temperature,
     "max-tokens": _edit_max_tokens,
     "max-retries": _edit_max_retries,
+    "pr-limit": _edit_azure_pr_limit,
+    "pr-max-chars": _edit_azure_pr_max_chars,
     "azure-pr-limit": _edit_azure_pr_limit,
     "azure-pr-max-chars": _edit_azure_pr_max_chars,
 }

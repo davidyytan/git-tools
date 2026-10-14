@@ -1869,6 +1869,8 @@ def replace_decision(decision: StrategyDecision, **changes: object) -> StrategyD
 def write_github_output(path: Path, decision: StrategyDecision) -> None:
     with path.open("a", encoding="utf-8") as handle:
         for key, value in decision.outputs().items():
+            # Single-line output records must not let data create new records.
+            value = value.replace("\r", " ").replace("\n", " ")
             handle.write(f"{key}={value}\n")
 
 

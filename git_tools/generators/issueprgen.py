@@ -50,8 +50,8 @@ def _format_release_tuple(release: tuple[int, int, int]) -> str:
 AZURE_PR_DESCRIPTION_LIMIT = 4000
 
 AZURE_PR_DESCRIPTION_INSTRUCTION = (
-    "Azure DevOps limits the pull request description to 4000 characters. "
-    "Keep the generated PR description within 4000 characters."
+    "Keep the generated PR description within the configured PR length limit. "
+    "Measure length in UTF-16 units and prioritize the most important changes."
 )
 
 
@@ -1262,10 +1262,9 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         retry_system_msg = (
             f"{system_msg}\n\n"
             "The previously generated PR description was "
-            f"{count} characters, exceeding the configured Azure PR limit of "
+            f"{count} characters, exceeding the configured PR limit of "
             f"{limit} characters. Rewrite the PR description "
-            f"to fit within {limit} characters. Preserve the "
-            "`## Title:` line exactly. Keep the most important details from the "
+            f"to fit within {limit} characters. Keep the most important details from the "
             "provided diffs and/or commits and do not invent new information. "
             "Wrap the rewritten PR in a single code block with triple backticks."
         )
@@ -1281,7 +1280,7 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         if count > limit:
             warning(
                 f"PR description is {count}/{limit} characters, "
-                "which exceeds the configured Azure PR limit. Copied anyway."
+                "which exceeds the configured PR limit. Copied anyway."
             )
         return parsed
 
@@ -1568,11 +1567,10 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         if self.generation_type == "pr" and self._should_apply_azure_limit():
             apply_azure_limit = True
             instruction = AZURE_PR_DESCRIPTION_INSTRUCTION
-            if settings.azure_pr_max_chars != AZURE_PR_DESCRIPTION_LIMIT:
-                instruction += (
-                    f" The user's preferred limit is {settings.azure_pr_max_chars} "
-                    "UTF-16 units; keep the generated PR within that smaller limit."
-                )
+            instruction += (
+                f" The user's preferred limit is {settings.azure_pr_max_chars} "
+                "UTF-16 units; keep the generated PR within that limit."
+            )
             system_msg = f"{system_msg}\n\n{instruction}"
 
         # In interactive mode, ask if user wants to use external providers

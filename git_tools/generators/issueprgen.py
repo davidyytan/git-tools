@@ -1246,8 +1246,8 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
     ) -> str:
         """Retry once when the generated PR description exceeds the ADO limit.
 
-        The count covers the generated description before the commit log block
-        is appended. When the description still exceeds the limit after the
+        The count covers the generated description. No commit log is appended.
+        When the description still exceeds the limit after the
         retry, warn but keep the content: nothing is truncated or discarded.
         """
         limit = settings.azure_pr_max_chars
@@ -1358,14 +1358,6 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
             normalized = f"{title_line}\n\n{normalized}".strip()
 
         return normalized
-
-    def _append_pr_commit_log(self, content: str, commit_log: Optional[str]) -> str:
-        """Append the PR commit log block to final PR content."""
-        normalized = content.strip()
-        if not normalized or not commit_log:
-            return normalized
-
-        return f"{normalized}\n\n\n## Commits\n```sh\n{commit_log}\n```"
 
     def generate_content(
         self, content: str, system_msg: str
@@ -1611,23 +1603,18 @@ Last commit:      [{STYLE_DIM}]{info['last_hash']}[/{STYLE_DIM}] {info['last_mes
         parsed = self._normalize_pr_output(self.parse_generated_content(response["content"]))
         if apply_azure_limit and parsed:
             parsed = self._enforce_azure_pr_description_limit(parsed, content, system_msg)
-        pr_commit_log = (
-            self.get_pr_commit_log(base_branch)
-            if self.generation_type == "pr" and commit_info
-            else None
-        )
         display_output = parsed
         copy_output = response["content"]
         used_raw_fallback = False
 
         if self.generation_type == "pr":
             if parsed:
-                display_output = self._append_pr_commit_log(parsed, pr_commit_log)
+                display_output = parsed
                 copy_output = display_output
             else:
                 raw_output = response["content"].strip()
                 if raw_output:
-                    display_output = self._append_pr_commit_log(raw_output, pr_commit_log)
+                    display_output = raw_output
                     copy_output = display_output
                     used_raw_fallback = True
 

@@ -178,11 +178,12 @@ git-tools pr --base develop --no-azure-limit
 
 In interactive mode the limit prompt defaults to origin detection; explicit
 CLI flags override it. If the generated description exceeds the limit, the
-CLI automatically requests one condensed rewrite while preserving the title.
+CLI automatically regenerates a condensed PR from the same original inputs.
+Ordinary titles can change; fixed workflow titles remain enforced.
 If it is still oversized, it warns but retains/copies the output rather than
 truncating it. Shorten that text before posting to Azure. The check covers the
-generated description before any appended commit-log block; verify the final
-pasted description fits too. Fixed promotion/start/backmerge title helpers work
+generated description, with no additional raw commit-log block appended; verify
+the final pasted description fits too. Fixed promotion/start/backmerge title helpers work
 locally too; pass `--workflow-version X.Y.Z` when safe inference is impossible.
 
 ## 3. Bootstrap and Push `master`

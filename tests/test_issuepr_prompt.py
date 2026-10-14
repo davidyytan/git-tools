@@ -692,7 +692,7 @@ Issue: #123
         self.assertIn("Fixed PR title for this workflow PR: Start 1.7.0", full_prompt)
         self.assertIn("Target version tuple for this workflow PR: 1.7.0", full_prompt)
 
-    def test_pr_generation_appends_commit_log_to_parsed_output(self) -> None:
+    def test_pr_generation_does_not_append_commit_log(self) -> None:
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             input_source="c",
@@ -763,10 +763,10 @@ Issue: #123
 
         copied = copy_to_clipboard_auto.call_args[0][0]
         self.assertIn("## Title: feat(cli): append commit log", copied)
-        self.assertIn("## Commits\n```sh\n## abc123 feat: first\n\nbody\n```", copied)
+        self.assertNotIn("## Commits", copied)
         self.assertNotIn("Raw Response", copied)
 
-    def test_release_pr_generation_appends_title_only_commit_log(self) -> None:
+    def test_release_pr_generation_does_not_append_commit_log(self) -> None:
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             release_pr=True,
@@ -853,11 +853,8 @@ Issue: #123
         copied = copy_to_clipboard_auto.call_args[0][0]
         self.assertIn("## Title: Release 1.0.0", copied)
         self.assertIn("## Change Overview", copied)
-        self.assertIn(
-            "## Commits\n```sh\n## abc123 fix: first\n\n## def567 fix: second\n```",
-            copied,
-        )
-        get_pr_commit_log.assert_called_once_with("master")
+        self.assertNotIn("## Commits", copied)
+        get_pr_commit_log.assert_not_called()
 
     def test_pr_generation_with_both_input_falls_back_to_commit_messages_when_diff_is_empty(
         self,
@@ -947,7 +944,7 @@ Issue: #123
         )
         display_quota_breakdown.assert_not_called()
 
-    def test_pr_generation_falls_back_to_raw_output_and_appends_commit_log(self) -> None:
+    def test_pr_generation_falls_back_to_raw_output_without_commit_log(self) -> None:
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             input_source="c",
@@ -1023,7 +1020,7 @@ Issue: #123
         copied = copy_to_clipboard_auto.call_args[0][0]
         self.assertTrue(copied.startswith("## Title: raw fallback"))
         self.assertIn("Raw body", copied)
-        self.assertIn("## Commits\n```sh\n## abc123 feat: first\n```", copied)
+        self.assertNotIn("## Commits", copied)
 
     def test_issue_generation_keeps_existing_raw_copy_behavior(self) -> None:
         generator = IssuePullRequestGenerator(
@@ -1371,7 +1368,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
         self.assertIn("## Title: feat: small", copied)
-        self.assertIn("## Commits\n```sh\n## abc123 feat: first\n```", copied)
+        self.assertNotIn("## Commits", copied)
 
     def test_over_limit_description_retries_once_and_uses_repair(self) -> None:
         generator = self._make_generator()
@@ -1393,7 +1390,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
         self.assertIn("## Title: feat: big", copied)
         self.assertIn("condensed body", copied)
-        self.assertIn("## Commits", copied)
+        self.assertNotIn("## Commits", copied)
 
     def test_retry_still_over_limit_warns_and_copies_anyway(self) -> None:
         generator = self._make_generator()
@@ -1413,7 +1410,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
         self.assertIn("y" * 100, copied)
-        self.assertIn("## Commits", copied)
+        self.assertNotIn("## Commits", copied)
 
     def test_disabled_limit_keeps_single_generation_without_instruction(self) -> None:
         generator = self._make_generator()
@@ -1426,7 +1423,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         mocks["warning"].assert_not_called()
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
-        self.assertIn("## Commits", copied)
+        self.assertNotIn("## Commits", copied)
 
     def test_issue_generation_never_applies_azure_limit(self) -> None:
         generator = self._make_generator(generation_type="issue", azure_limit=True)

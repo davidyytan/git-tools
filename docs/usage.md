@@ -248,10 +248,10 @@ for custom Azure Server URLs or when generating text for a different host than
 `origin`. Interactive generation in saved `auto` mode asks with the detected default;
 saved `false` disables automatic limiting. The preferred limit defaults to
 4,000 UTF-16 units and can be reduced in settings. It covers the generated
-description before the separately appended
-commit-log block; supplementary Unicode characters count as two units.
+description; supplementary Unicode characters count as two units. No raw
+commit-log block is appended to displayed or copied PR text.
 The tool retries oversized descriptions once, but always check the final pasted
-content, especially when including the commit log. See
+content. See
 [Azure setup](azure-devops/setup.md#local-cli-and-pr-descriptions).
 
 ## Preview or Run a Local Version Bump
@@ -329,6 +329,6 @@ still uses the saved number. This supports custom Azure Server URLs without a
 global always-on mode. Environment variables override the saved settings file.
 
 The preferred limit is a generation target, not a hard bound on the final pasted
-text: the tool retries once, warns rather than truncates, and excludes the later
-commit-log append. Azure's service maximum remains 4000 even when your preferred
+text: the tool retries once and warns rather than truncates. No commit log is
+appended to PR output. Azure's service maximum remains 4000 even when your preferred
 limit is smaller.

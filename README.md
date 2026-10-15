@@ -2,7 +2,7 @@
 
 CLI for AI-assisted Conventional Commits, issue/PR text, and Git Flow versioning.
 Supports GitHub and Azure DevOps, with classic and release-led workflows and reviewed variants.
-LLM providers: OpenRouter, Kimi Code, CLIProxyAPI, ACRC, Copilot proxy, and Qwen.
+LLM providers: OpenRouter, Kimi Code, CLIProxyAPI, ACRC, Copilot proxy, Qwen, OpenAI, and Anthropic.
 Model pickers use endpoint discovery where supported; main handles generation and support is reserved for future use.
 
 ## Install

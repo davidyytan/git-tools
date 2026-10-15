@@ -16,6 +16,13 @@ from git_tools.settings import mappings
 from git_tools.settings.settings import GitToolsSettings, load_provider_config, settings
 
 
+
+def _endpoints(*tags):
+    from git_tools.providers.openrouter import OpenRouterEndpoint
+
+    return tuple(OpenRouterEndpoint(tag=tag, provider_name=tag.title()) for tag in tags)
+
+
 class ProviderParityTests(unittest.TestCase):
     def test_all_core_providers_and_aliases(self):
         from git_tools.settings.settings import normalize_provider_name
@@ -46,7 +53,7 @@ class ProviderParityTests(unittest.TestCase):
             self.assertEqual(config.base_url, "https://test.invalid/v1")
 
     def test_curated_providers_do_not_probe(self):
-        with patch.object(mappings, "fetch_live_models") as fetch:
+        with patch.object(mappings, "_fetch_models_sync") as fetch:
             self.assertFalse(mappings.refresh_live_models("qwen", force=True))
             fetch.assert_not_called()
 
@@ -68,16 +75,23 @@ class ProviderParityTests(unittest.TestCase):
         self.assertEqual(body["reasoning"], {"effort": "none"})
 
     def test_cache_scoped_to_endpoint_and_key(self):
+        from git_tools.providers.catalog import CatalogFetchResult
+        from git_tools.providers.kimi_code import parse_kimi_code_catalog
+
+        live = CatalogFetchResult(entries=parse_kimi_code_catalog({"data": [{"id": "served", "supports_thinking_type": "only"}]}), source="live")
         with tempfile.TemporaryDirectory() as tmp, patch.object(mappings, "MODEL_CATALOG_PATH", Path(tmp)/"catalog.json"):
-            identity = mappings._catalog_identity("https://one/v1", "secret")
-            mappings._save_catalog("kimicli", identity, mappings.LiveModelList(["served"], metadata={"served": {"supports_thinking_type": "only"}}))
-            self.assertEqual(mappings._cached_catalog("kimicli", identity), ["served"])
-            self.assertEqual(mappings._cached_catalog("kimicli", mappings._catalog_identity("https://one/v1", "other")), [])
+            with patch.object(mappings, "_fetch_kimi_code_models_sync", return_value=live):
+                mappings.resolve_provider_catalog("kimicli", "https://one/v1", "secret")
+            with patch.object(mappings, "_fetch_kimi_code_models_sync", return_value=CatalogFetchResult(error_kind="network")):
+                same = mappings.resolve_provider_catalog("kimicli", "https://one/v1", "secret")
+                other = mappings.resolve_provider_catalog("kimicli", "https://one/v1", "other")
+            self.assertEqual(([e.id for e in same.entries], same.source), (["served"], "cache"))
+            self.assertEqual(other.entries, ())
             self.assertNotIn("secret", mappings.MODEL_CATALOG_PATH.read_text())
 
     def test_new_direct_settings_persist(self):
         from git_tools.settings import settings as module
-        with tempfile.TemporaryDirectory() as tmp, patch.object(module, "DEFAULT_SETTINGS_PATH", Path(tmp)/"settings.env"), patch("git_tools.cli._remember_manual_model"):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(module, "DEFAULT_SETTINGS_PATH", Path(tmp)/"settings.env"):
             for name, value in (("main-model", "main-test"), ("support-model", "follow-main"), ("api-base", "https://test.invalid/v1"), ("effort", "none")):
                 result = CliRunner().invoke(app, ["settings", name, value])
                 self.assertEqual(result.exit_code, 0, result.output)
@@ -90,19 +104,23 @@ class ProviderParityTests(unittest.TestCase):
         provider = "kimicli"
         snapshot = mappings.snapshot_provider_catalog(provider)
         self.addCleanup(mappings.restore_provider_catalog, provider, snapshot)
+        from git_tools.providers.catalog import CatalogFetchResult
+        from git_tools.providers.kimi_code import parse_kimi_code_catalog
+
         config = SimpleNamespace(base_url="https://cache-test.invalid/v1", api_key="cache-test-key")
-        with tempfile.TemporaryDirectory() as tmp, patch.object(mappings, "MODEL_CATALOG_PATH", Path(tmp)/"catalog.json"), patch("git_tools.settings.settings.load_provider_config", return_value=config), patch.object(mappings, "_load_user_model_map", return_value={}):
-            live = mappings.LiveModelList(["account-model"], metadata={"account-model": {"supports_thinking_type": "only"}})
-            with patch.object(mappings, "fetch_live_models", return_value=live):
+        live = CatalogFetchResult(entries=parse_kimi_code_catalog({"data": [{"id": "account-model", "supports_thinking_type": "only"}]}), source="live")
+        failure = CatalogFetchResult(error_kind="network")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(mappings, "MODEL_CATALOG_PATH", Path(tmp)/"catalog.json"), patch("git_tools.settings.settings.load_provider_config", return_value=config):
+            with patch.object(mappings, "_fetch_kimi_code_models_sync", return_value=live):
                 self.assertTrue(mappings.refresh_live_models(provider, force=True))
             mappings._LIVE_REFRESHED.discard(provider)
-            with patch.object(mappings, "fetch_live_models", return_value=mappings.LiveModelList(error_kind="network")):
+            with patch.object(mappings, "_fetch_kimi_code_models_sync", return_value=failure):
                 self.assertFalse(mappings.refresh_live_models(provider, force=True))
                 self.assertIn("account-model", mappings.PROVIDERS[provider]["models"])
                 self.assertTrue(mappings.get_live_model_refresh_error(provider).retained_live_catalog)
                 self.assertFalse(mappings.refresh_live_models(provider))
             config.api_key = "different-account"
-            with patch.object(mappings, "fetch_live_models", return_value=mappings.LiveModelList(error_kind="network")):
+            with patch.object(mappings, "_fetch_kimi_code_models_sync", return_value=failure):
                 self.assertFalse(mappings.refresh_live_models(provider, force=True))
             self.assertNotIn("account-model", mappings.PROVIDERS[provider]["models"])
 
@@ -123,9 +141,10 @@ class ProviderParityTests(unittest.TestCase):
             BaseGenerator()._create_kimicli_client("thinking-only", config, 0.6, 100)
             self.assertEqual(client.call_args.kwargs["extra_body"]["thinking"]["type"], "enabled")
 
-    def test_effort_none_keeps_kimi_thinking_off(self):
-        # Kimi has no "none" tier: a global `none` means thinking off, never an
-        # effort on the wire, whether or not the catalog declares tiers.
+    def test_effort_none_sends_nothing_for_kimi(self):
+        # Kimi has no "none" tier: as in agent-core a global `none` is absence
+        # on the wire (the model default), never an effort, whether or not the
+        # catalog declares tiers.
         config = SimpleNamespace(api_key="test", base_url="https://test.invalid/v1")
         tiered = {"model_name": "tiered", "supports_thinking_type": "both",
                   "think_efforts": {"support": True, "valid_efforts": ["low", "high"]}}
@@ -133,7 +152,7 @@ class ProviderParityTests(unittest.TestCase):
         for name, model in (("tiered", tiered), ("plain", plain)):
             with self.subTest(model=name), patch.dict(mappings.PROVIDERS["kimicli"]["models"], {name: model}), patch.object(settings, "kimi_thinking", None), patch.object(settings, "default_reasoning_effort", "none"), patch("langchain_openai.ChatOpenAI") as client:
                 BaseGenerator()._create_kimicli_client(name, config, 0.6, 100)
-                self.assertEqual(client.call_args.kwargs["extra_body"]["thinking"], {"type": "disabled"})
+                self.assertNotIn("thinking", client.call_args.kwargs["extra_body"])
 
     def test_generation_picker_keeps_unlisted_main_and_supports_manual_entry(self):
         from git_tools.cli import ADD_MODEL_SENTINEL
@@ -191,7 +210,7 @@ class ProviderParityTests(unittest.TestCase):
     def test_named_provider_in_terminal_runs_full_wizard(self):
         from git_tools.settings import settings as module
         state = {"provider": "kimicli", "model": "old", "api_configured": True}
-        with patch("git_tools.cli._has_interactive_terminal", return_value=True), patch("git_tools.cli._load_settings_state", return_value=state), patch("git_tools.cli._prompt_provider_api_key", return_value=(True, "test-key")), patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), patch("git_tools.cli._ask_with_back", side_effect=["follow-main", "route-slug", "high"]), patch("git_tools.settings.mappings.fetch_openrouter_upstreams", return_value=["route-slug"]), patch.object(module, "save_settings") as save:
+        with patch("git_tools.cli._has_interactive_terminal", return_value=True), patch("git_tools.cli._load_settings_state", return_value=state), patch("git_tools.cli._prompt_provider_api_key", return_value=(True, "test-key")), patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), patch("git_tools.cli._ask_with_back", side_effect=["follow-main", "route-slug", "high"]), patch("git_tools.settings.mappings.fetch_openrouter_endpoints", return_value=_endpoints("route-slug")), patch.object(module, "save_settings") as save:
             result = CliRunner().invoke(app, ["settings", "provider", "openrouter"])
         self.assertEqual(result.exit_code, 0, str(result.exception))
         save.assert_called_once()
@@ -214,7 +233,7 @@ class ProviderParityTests(unittest.TestCase):
         from git_tools.cli import _edit_provider
         from git_tools.settings import settings as module
         state = {"provider": "kimicli", "model": "old", "api_configured": True}
-        with patch("git_tools.cli._prompt_provider_api_key", return_value=(True, "candidate-key")), patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), patch("git_tools.cli._ask_with_back", side_effect=["follow-main", "any", None]), patch("git_tools.settings.mappings.fetch_openrouter_upstreams", return_value=[]), patch.object(module, "save_settings") as save, patch.dict(os.environ, {}, clear=False):
+        with patch("git_tools.cli._prompt_provider_api_key", return_value=(True, "candidate-key")), patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), patch("git_tools.cli._ask_with_back", side_effect=["follow-main", "any", None]), patch("git_tools.settings.mappings.fetch_openrouter_endpoints", return_value=()), patch.object(module, "save_settings") as save, patch.dict(os.environ, {}, clear=False):
             original = os.environ.get("OPENROUTER_API_KEY")
             _edit_provider(state, "openrouter", interactive=True)
             self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), original)

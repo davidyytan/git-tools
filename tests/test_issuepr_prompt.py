@@ -238,15 +238,11 @@ class IssuePullRequestPromptTests(unittest.TestCase):
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             backmerge_hotfix_pr=True,
+            workflow_version="1.6.1",
             interactive=False,
         )
 
-        with patch.object(
-            generator,
-            "_infer_hotfix_target_version",
-            return_value="1.6.1",
-        ):
-            system_message = generator._build_system_message("", "b")
+        system_message = generator._build_system_message("", "b")
 
         self.assertIn("The Pull Request title is fixed for this mode.", system_message)
         self.assertIn("## Title: Backmerge Hotfix 1.6.1", system_message)

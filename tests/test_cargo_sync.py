@@ -17,7 +17,7 @@ class CargoSyncTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         (self.root / ".cz.toml").write_text('[tool.commitizen]\nversion = "1.2.3"\nversion_scheme = "semver2"\n')
 
     def manifest(self, directory=None, text=None):

@@ -334,7 +334,10 @@ class CliTests(unittest.TestCase):
 
         titles = [plain_title(choice.title) for choice in _build_settings_choices(state)]
 
-        self.assertIn("Effort: high (override)", "\n".join(titles))
+        # Kimi's tier lives in the combined thinking row (agent-cli's picker);
+        # there is no separate effort row for it.
+        self.assertIn("Kimi thinking: high", titles)
+        self.assertFalse([title for title in titles if title.startswith("Effort:")])
         self.assertEqual(
             titles[:3],
             [
@@ -385,14 +388,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(choices[0].value, "kimi-k2.5")
 
     def test_model_choices_insert_unlisted_current_model_above_fallbacks(self) -> None:
+        # A provider with a curated list (Kimi's catalog is live-only now).
         choices = _build_model_choices(
-            "kimicode",
-            current_model="account-only-kimi",
+            "anthropic",
+            current_model="account-only-claude",
         )
 
-        self.assertEqual(choices[0].title, "account-only-kimi (current)")
-        self.assertEqual(choices[0].value, "account-only-kimi")
-        self.assertEqual(choices[1].title, "kimi-for-coding")
+        self.assertEqual(choices[0].title, "account-only-claude (current)")
+        self.assertEqual(choices[0].value, "account-only-claude")
+        self.assertEqual(choices[1].title, "Claude Opus 5.5 (claude-opus-5-5)")
 
     def test_model_catalog_auth_failure_names_the_key_to_fix(self) -> None:
         from git_tools.settings.mappings import LiveModelRefreshError
@@ -443,10 +447,14 @@ class CliTests(unittest.TestCase):
             choice.title for choice in _build_model_choices("openrouter")
         ]
 
-        self.assertIn("gpt-5.5 (effort: xhigh)", cliproxy_titles)
+        # Live-only providers (as in agent-cli) ship no static rows; the saved
+        # model leads and manual entry closes every list.
         for titles in (cliproxy_titles, kimi_titles, openrouter_titles):
             self.assertEqual(titles[-1], "Enter a model ID manually…")
-        self.assertEqual(kimi_titles[0], "kimi-for-coding")
+        self.assertEqual(
+            _build_model_choices("cliproxyapi", current_model="gpt-6-astra")[0].title,
+            "gpt-6-astra (current)",
+        )
 
 
 if __name__ == "__main__":

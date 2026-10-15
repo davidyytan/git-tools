@@ -128,7 +128,7 @@ class BootstrapMetadataTests(unittest.TestCase):
 
     def test_bootstrap_commitizen_version_requires_dot_cz_toml_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self.assertFalse(has_bootstrap_commitizen_version(root))
 
             (root / ".cz.toml").write_text(
@@ -336,7 +336,7 @@ class GitTagArgsTests(unittest.TestCase):
 
     def test_git_config_signed_tags_become_explicit_to_avoid_editor_hang(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             with patch("git_tools.generators.bumpgen.git.get_git_bool_config", return_value=True):
                 self.assertEqual(
                     resolve_git_tag_args(
@@ -354,7 +354,7 @@ class GitTagArgsTests(unittest.TestCase):
 class ConfigAndUpdateTests(unittest.TestCase):
     def test_auto_source_prefers_commitizen_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".cz.toml").write_text(
                 "[tool.commitizen]\nversion = \"0.2.0-alpha.15\"\n",
                 encoding="utf-8",
@@ -375,7 +375,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_consistency_check_heals_mismatched_auxiliary_versions_when_commitizen_is_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             cz_path = root / ".cz.toml"
             pyproject_path = root / "pyproject.toml"
             uv_lock_path = root / "uv.lock"
@@ -405,7 +405,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_requires_dot_cz_toml_as_version_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / "pyproject.toml").write_text(
                 "[project]\nname = \"git-tools\"\nversion = \"0.2.0-alpha.15\"\n",
                 encoding="utf-8",
@@ -416,7 +416,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_mismatch_can_be_healed_when_consistency_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             cz_path = root / ".cz.toml"
             pyproject_path = root / "pyproject.toml"
             uv_lock_path = root / "uv.lock"
@@ -446,7 +446,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_configured_semver_overrides_auto_detected_scheme_for_stable_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".cz.toml").write_text(
                 "[tool.commitizen]\n"
                 'version_scheme = "semver"\n'
@@ -462,7 +462,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_configured_semver_resolves_to_semver(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".cz.toml").write_text(
                 "[tool.commitizen]\n"
                 'version_scheme = "semver"\n'
@@ -476,7 +476,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_configured_scheme_rejects_mismatched_prerelease(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".cz.toml").write_text(
                 "[tool.commitizen]\n"
                 'version_scheme = "semver"\n'
@@ -491,7 +491,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_unsupported_configured_scheme_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".cz.toml").write_text(
                 "[tool.commitizen]\n"
                 'version_scheme = "calver"\n'
@@ -504,7 +504,7 @@ class ConfigAndUpdateTests(unittest.TestCase):
 
     def test_strategy_reader_requires_dot_cz_toml(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / "pyproject.toml").write_text(
                 "[project]\nname = \"git-tools\"\nversion = \"1.2.3\"\n",
                 encoding="utf-8",
@@ -527,7 +527,7 @@ class AuxiliarySyncTests(unittest.TestCase):
 
     def test_malformed_pyproject_and_invalid_regex_warn_and_skip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._root(root, 'version_files = ["missing.txt:[", "good.txt", "bad.txt:^version"]\n')
             (root / "pyproject.toml").write_text("[broken", encoding="utf-8")
             (root / "good.txt").write_text("1.2.3", encoding="utf-8")
@@ -542,7 +542,7 @@ class AuxiliarySyncTests(unittest.TestCase):
 
     def test_auxiliary_read_failure_warns_and_skips(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._root(root)
             path = root / "package.json"
             path.write_bytes(b"\xff")
@@ -554,7 +554,7 @@ class AuxiliarySyncTests(unittest.TestCase):
     def test_auxiliary_load_resolution_and_apply_exceptions_are_isolated(self) -> None:
         for stage in ("load", "resolve", "apply"):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmpdir:
-                root = Path(tmpdir)
+                root = Path(tmpdir).resolve()
                 self._root(root, 'version_files = ["extra.txt"]\n')
                 (root / "extra.txt").write_text("1.2.3", encoding="utf-8")
                 (root / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
@@ -574,10 +574,25 @@ class AuxiliarySyncTests(unittest.TestCase):
                     updates = self._plan(root)
                 self.assertIn('version = "1.2.4"', updates[root / ".cz.toml"])
 
+    def test_npm_sync_never_writes_non_finite_numbers(self) -> None:
+        from git_tools.generators.utils.version_sync import sync_npm_versions
+
+        with self.assertRaisesRegex(ValueError, "Unsupported numeric value: 1e400"):
+            sync_npm_versions('{"version":"1.2.3","config":{"limit":1e400}}', "1.2.4", warn=lambda _m: None)
+        # A large but finite value is preserved alongside the version change.
+        updated, changed = sync_npm_versions('{"version":"1.2.3","config":{"limit":1e300}}', "1.2.4",
+                                             warn=lambda _m: None)
+        self.assertTrue(changed)
+        self.assertEqual(json.loads(updated), {"version": "1.2.4", "config": {"limit": 1e300}})
+        self.assertNotIn("Infinity", updated)
+
     def test_malformed_and_missing_json_versions_are_not_created(self) -> None:
-        for text in ('{bad', '[]', '{}', '{"version":null}', '{"version":42}', '{"version":""}', '{"version":"1.2.3","x":NaN}'):
+        # The last two are invalid constants: a literal NaN, and a number that
+        # overflows a float and would otherwise be written back as Infinity.
+        for text in ('{bad', '[]', '{}', '{"version":null}', '{"version":42}', '{"version":""}',
+                     '{"version":"1.2.3","x":NaN}', '{"version":"1.2.3","config":{"limit":1e400}}'):
             with self.subTest(text=text), tempfile.TemporaryDirectory() as tmpdir:
-                root = Path(tmpdir)
+                root = Path(tmpdir).resolve()
                 self._root(root)
                 path = root / "package.json"
                 path.write_text(text, encoding="utf-8")
@@ -588,7 +603,7 @@ class AuxiliarySyncTests(unittest.TestCase):
 
     def test_root_npm_versions_only_and_no_monorepo_recursion(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._root(root, 'version_files = ["package*.json:version"]\n')
             manifest = {"name": "app", "version": "0.1.0", "dependencies": {"express": "1.2.3"}, "workspaces": ["packages/*"]}
             (root / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -618,7 +633,7 @@ class AuxiliarySyncTests(unittest.TestCase):
     def test_lock_valid_fields_sync_independently(self) -> None:
         for data, field in (({"packages": {"": {"version": "old"}}}, "root"), ({"version": "old", "packages": {"": {"version": None}}}, "top")):
             with self.subTest(data=data), tempfile.TemporaryDirectory() as tmpdir:
-                root = Path(tmpdir)
+                root = Path(tmpdir).resolve()
                 self._root(root)
                 path = root / "package-lock.json"
                 path.write_text(json.dumps(data), encoding="utf-8")
@@ -634,13 +649,13 @@ class AuxiliarySyncTests(unittest.TestCase):
     def test_core_config_and_consistency_remain_strict(self) -> None:
         for text in ('[broken', '[tool.commitizen]\nversion = "bad"\n', '[tool.commitizen]\ntag_format = "$version"\n'):
             with self.subTest(text=text), tempfile.TemporaryDirectory() as tmpdir:
-                root = Path(tmpdir)
+                root = Path(tmpdir).resolve()
                 (root / ".cz.toml").write_text(text, encoding="utf-8")
                 (root / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
                 with self.assertRaises(ConfigError):
                     load_bump_config(root)
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._root(root)
             config = load_bump_config(root)
             (root / ".cz.toml").write_text('[tool.commitizen]\nversion = "9.0.0"\n', encoding="utf-8")
@@ -701,7 +716,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
 
     def test_auxiliary_write_failure_still_commits_and_tags_core(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._init_repo(root, "1.2.3")
             subprocess.run(["git", "commit", "-m", "feat: initial"], cwd=root, check=True, capture_output=True)
             original_write = Path.write_text
@@ -722,7 +737,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
     def test_core_write_and_git_commit_failures_propagate(self) -> None:
         for failure in ("write", "git", "tag"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmpdir:
-                root = Path(tmpdir)
+                root = Path(tmpdir).resolve()
                 self._init_repo(root, "1.2.3")
                 subprocess.run(["git", "commit", "-m", "feat: initial"], cwd=root, check=True, capture_output=True)
                 if failure == "write":
@@ -736,7 +751,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
 
     def test_yes_allows_initial_tag_when_repo_has_no_tags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._init_repo(root, "0.0.1")
             subprocess.run(
                 ["git", "commit", "-m", "feat: initial release"],
@@ -755,7 +770,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
 
     def test_yes_allows_initial_stable_bump_when_repo_has_no_tags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._init_repo(root, "0.0.1")
             subprocess.run(
                 ["git", "commit", "-m", "Release 0.0.1"],
@@ -774,7 +789,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
 
     def test_yes_does_not_allow_missing_current_tag_when_tags_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._init_repo(root, "0.1.0")
             subprocess.run(
                 ["git", "commit", "-m", "feat: initial release"],
@@ -829,7 +844,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
 
     def test_run_bump_can_finalize_untagged_prerelease_without_creating_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._init_repo(root, "1.6.0-rc.0")
             subprocess.run(
                 ["git", "commit", "-m", "fix: start release candidate"],
@@ -890,7 +905,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
 
     def test_run_bump_can_continue_from_last_bump_commit_when_current_version_has_no_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._init_repo(root, "0.1.0")
             subprocess.run(
                 ["git", "commit", "-m", "feat: initial release"],
@@ -1102,7 +1117,7 @@ class MultiSchemeRunBumpTests(unittest.TestCase):
 
     def test_find_version_bump_commit_accepts_semver_subject(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._seed_repo(root, "0.1.0-a1", "semver")
             subprocess.run(
                 ["git", "commit", "-m", "bump: version 0.1.0-a0 -> 0.1.0-a1"],
@@ -1118,7 +1133,7 @@ class MultiSchemeRunBumpTests(unittest.TestCase):
 
     def test_run_bump_preserves_semver(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             self._seed_repo(root, "0.1.0-a0", "semver")
             subprocess.run(
                 ["git", "commit", "-m", "feat: continue"],

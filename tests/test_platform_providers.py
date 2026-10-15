@@ -15,6 +15,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from git_tools.generators.base import BaseGenerator
+from git_tools.providers import anthropic as anthropic_provider
+from git_tools.providers.catalog import CatalogFetchResult, parse_model_catalog
 from git_tools.settings import mappings
 from git_tools.settings.settings import (
     load_provider_config,
@@ -60,44 +62,44 @@ class RegistryTests(unittest.TestCase):
 
 class OpenAICatalogTests(unittest.TestCase):
     def test_chat_model_filter_matches_agent_cli(self) -> None:
-        chat = ("gpt-6-astra", "gpt-4.1", "chatgpt-4o-latest", "o3-mini", "GPT-4o")
+        chat = ("gpt-6-astra", "gpt-4.1", "chatgpt-4o-latest", "o3-mini", "GPT-4o",
+                # Responses-API-only ids are listed exactly as agent-cli lists them;
+                # picking one is the user's call (the pinned client speaks chat only).
+                "gpt-5-pro", "o1-pro", "o3-pro", "gpt-5-codex", "gpt-5.1-codex-max",
+                "o4-mini-deep-research")
         not_chat = (
             "whisper-1", "tts-1-hd", "dall-e-3", "gpt-image-1", "text-embedding-3-large",
             "gpt-4o-realtime-preview", "gpt-4o-audio-preview", "gpt-4o-transcribe",
             "gpt-4o-mini-tts", "gpt-4o-search-preview", "gpt-3.5-turbo-instruct",
-            "omni-moderation-latest", "babbage-002",
-            # Responses-API-only; the pinned chat-completions client cannot drive them.
-            "gpt-5-pro", "o1-pro", "o3-pro", "gpt-5-codex", "gpt-5.1-codex-max", "codex-mini-latest",
-            "o4-mini-deep-research",
+            "omni-moderation-latest", "babbage-002", "codex-mini-latest",
         )
         for model in chat:
             self.assertTrue(mappings.is_openai_chat_model(model), model)
         for model in not_chat:
             self.assertFalse(mappings.is_openai_chat_model(model), model)
 
-    def _refresh(self, provider: str, live: mappings.LiveModelList) -> tuple[bool, object]:
+    def _refresh(self, provider: str, live: CatalogFetchResult) -> tuple[bool, object]:
         snapshot = mappings.snapshot_provider_catalog(provider)
         self.addCleanup(mappings.restore_provider_catalog, provider, snapshot)
         with (
             tempfile.TemporaryDirectory() as tmp,
             patch.object(mappings, "MODEL_CATALOG_PATH", Path(tmp) / "catalog.json"),
             patch("git_tools.settings.settings.load_provider_config", return_value=_CONFIG),
-            patch.object(mappings, "_load_user_model_map", return_value={}),
-            patch.object(mappings, "fetch_live_models", return_value=live) as fetch,
+            patch.object(mappings, "_fetch_models_sync", return_value=live) as fetch,
         ):
             ok = mappings.refresh_live_models(provider, force=True)
         return ok, fetch
 
     def test_live_catalog_is_narrowed_to_chat_models_with_default_first(self) -> None:
-        live = mappings.LiveModelList(
-            sorted(["whisper-1", "gpt-6-astra", "text-embedding-3-large", "gpt-4.1",
-                    "gpt-4o-realtime-preview", "o3-mini"]),
-            metadata={"gpt-4.1": {"display_name": "GPT-4.1"}, "whisper-1": {"display_name": "Whisper"}},
-        )
+        live = CatalogFetchResult(entries=parse_model_catalog({"data": [
+            {"id": "whisper-1", "display_name": "Whisper"}, {"id": "gpt-6-astra"},
+            {"id": "text-embedding-3-large"}, {"id": "gpt-4.1", "display_name": "GPT-4.1"},
+            {"id": "gpt-4o-realtime-preview"}, {"id": "o3-mini"},
+        ]}), source="live")
         ok, fetch = self._refresh("openai", live)
 
         self.assertTrue(ok)
-        fetch.assert_called_once_with("https://test.invalid/v1", "test", headers={}, query=None)
+        fetch.assert_called_once_with("https://test.invalid/v1", "test")
         models = mappings.PROVIDERS["openai"]["models"]
         self.assertEqual(list(models)[0], "gpt-6-astra")
         self.assertEqual(set(models), {"gpt-6-astra", "gpt-4.1", "o3-mini"})
@@ -105,13 +107,14 @@ class OpenAICatalogTests(unittest.TestCase):
         self.assertEqual(models["gpt-6-astra"]["display_name"], "GPT-6 Astra")
 
     def test_catalog_without_chat_models_falls_back_to_built_ins(self) -> None:
-        live = mappings.LiveModelList(["whisper-1", "text-embedding-3-large"])
+        # agent-cli's resolve_catalog: nothing listed is a chat model, so the
+        # built-in list stands in, and no error is reported.
+        live = CatalogFetchResult(entries=parse_model_catalog({"data": [
+            {"id": "whisper-1"}, {"id": "text-embedding-3-large"}]}), source="live")
         ok, _ = self._refresh("openai", live)
 
-        self.assertFalse(ok)
-        error = mappings.get_live_model_refresh_error("openai")
-        self.assertEqual(error.kind, "malformed")
-        self.assertIn("no chat models", error.message)
+        self.assertTrue(ok)
+        self.assertIsNone(mappings.get_live_model_refresh_error("openai"))
         self.assertEqual(list(mappings.PROVIDERS["openai"]["models"]), ["gpt-6-astra", "gpt-6.1-sol"])
 
 
@@ -120,24 +123,29 @@ class AnthropicCatalogTests(unittest.TestCase):
         provider = "anthropic"
         snapshot = mappings.snapshot_provider_catalog(provider)
         self.addCleanup(mappings.restore_provider_catalog, provider, snapshot)
-        live = mappings.LiveModelList(
-            ["claude-haiku-5-5", "claude-opus-5-5", "claude-opus-5-5-20260301"],
-            metadata={"claude-opus-5-5-20260301": {"display_name": "Claude Opus 5.5 (2026-03-01)"}},
-        )
+        live = CatalogFetchResult(entries=parse_model_catalog({"data": [
+            {"id": "claude-haiku-5-5"}, {"id": "claude-opus-5-5"},
+            {"id": "claude-opus-5-5-20260301", "display_name": "Claude Opus 5.5 (2026-03-01)"},
+        ]}), source="live")
+        calls = []
+
+        def fake_fetch(base_url, api_key, *, timeout, headers, query=None):
+            calls.append((base_url, api_key, dict(headers), query))
+            return live
+
         with (
             tempfile.TemporaryDirectory() as tmp,
             patch.object(mappings, "MODEL_CATALOG_PATH", Path(tmp) / "catalog.json"),
             patch("git_tools.settings.settings.load_provider_config", return_value=_CONFIG),
-            patch.object(mappings, "_load_user_model_map", return_value={}),
-            patch.object(mappings, "fetch_live_models", return_value=live) as fetch,
+            patch.object(anthropic_provider, "fetch_model_catalog_sync", fake_fetch),
         ):
             self.assertTrue(mappings.refresh_live_models(provider, force=True))
 
-        fetch.assert_called_once_with(
+        self.assertEqual(calls, [(
             "https://test.invalid/v1", "test",
-            headers={"anthropic-version": "2023-06-01", "x-api-key": "test"},
-            query="limit=1000",
-        )
+            {"anthropic-version": "2023-06-01", "x-api-key": "test"},
+            "limit=1000",
+        )])
         models = mappings.PROVIDERS[provider]["models"]
         self.assertEqual(list(models)[0], "claude-opus-5-5")
         self.assertEqual(models["claude-opus-5-5"]["display_name"], "Claude Opus 5.5")
@@ -164,12 +172,9 @@ class AnthropicCatalogTests(unittest.TestCase):
             return _Response()
 
         with patch("urllib.request.urlopen", side_effect=urlopen):
-            live = mappings.fetch_live_models(
-                "https://api.anthropic.com/v1", "sk-ant",
-                headers=mappings.anthropic_catalog_headers("sk-ant"), query="limit=1000",
-            )
+            live = mappings._fetch_anthropic_models_sync("https://api.anthropic.com/v1", "sk-ant")
 
-        self.assertEqual(list(live), ["claude-opus-5-5"])
+        self.assertEqual([entry.id for entry in live.entries], ["claude-opus-5-5"])
         self.assertEqual(captured["url"], "https://api.anthropic.com/v1/models?limit=1000")
         self.assertEqual(captured["headers"]["authorization"], "Bearer sk-ant")
         self.assertEqual(captured["headers"]["x-api-key"], "sk-ant")
@@ -208,16 +213,26 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", kwargs)
         self.assertNotIn("temperature", kwargs)
 
-    def test_openai_chat_models_outside_reasoning_families_keep_temperature(self) -> None:
-        kwargs = self._client_kwargs("openai", "gpt-4.1", "medium")
-        self.assertEqual(kwargs["reasoning_effort"], "medium")
-        self.assertEqual(kwargs["temperature"], 0.6)
+    def test_openai_chat_models_outside_reasoning_families_never_get_the_tier(self) -> None:
+        # OpenAI returns 400 for reasoning_effort on gpt-4.x/4o/3.5 and the
+        # *-chat-latest variants; they keep the configured temperature instead.
+        for model in ("gpt-4.1", "gpt-4o-mini", "gpt-3.5-turbo", "gpt-5-chat-latest"):
+            with self.subTest(model=model):
+                kwargs = self._client_kwargs("openai", model, "medium")
+                self.assertNotIn("reasoning_effort", kwargs)
+                self.assertEqual(kwargs["temperature"], 0.6)
+
+    def test_openai_reasoning_model_predicate(self) -> None:
+        for model in ("gpt-6-astra", "gpt-5.5", "o3-mini", "o4-mini", "GPT-6.1-Sol"):
+            self.assertTrue(mappings.is_openai_reasoning_model(model), model)
+        for model in ("gpt-4.1", "gpt-4o", "gpt-3.5-turbo", "gpt-5-chat-latest", "gpt-5.1-chat-latest", "chatgpt-4o-latest"):
+            self.assertFalse(mappings.is_openai_reasoning_model(model), model)
 
     def test_openai_none_is_absence_on_the_wire(self) -> None:
-        kwargs = self._client_kwargs("openai", "gpt-4.1", "none")
+        kwargs = self._client_kwargs("openai", "gpt-6-astra", "none")
         self.assertNotIn("reasoning_effort", kwargs)
         self.assertNotIn("extra_body", kwargs)
-        self.assertEqual(kwargs["temperature"], 0.6)
+        self.assertNotIn("temperature", kwargs)
 
     def test_anthropic_never_sends_temperature(self) -> None:
         # Claude 4.7+ returns 400 for any temperature below 1 (OpenAI SDK

@@ -15,12 +15,18 @@ from unittest.mock import patch
 
 import typer
 
-from git_tools.cli import _ask_model_choice, _edit_effort, _edit_model
+from git_tools.cli import _ask_model_choice, _edit_effort, _edit_kimi_thinking, _edit_model
 from git_tools.settings import mappings
 from git_tools.settings import settings as settings_module
 
 _OLD_MODEL = "anthropic/claude-sonnet-4.6"
 _NEW_MODEL = "vendor/model"
+
+
+def _endpoints(*tags: str):
+    from git_tools.providers.openrouter import OpenRouterEndpoint
+
+    return [OpenRouterEndpoint(tag=tag, provider_name=tag.split("/")[0].title()) for tag in tags]
 
 
 def _openrouter_state(pin: str | None = "old-upstream") -> dict:
@@ -32,7 +38,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
     """Changing the main model never silently reuses a pin chosen for another model."""
 
     def setUp(self) -> None:
-        for target in ("git_tools.cli._remember_manual_model", "git_tools.cli.console"):
+        for target in ("git_tools.cli.console",):
             patcher = patch(target)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -102,7 +108,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
     def test_interactive_change_reasks_upstream_for_the_new_model_and_saves_both(self) -> None:
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
-              patch("git_tools.cli._list_openrouter_upstreams", return_value=["new-upstream"]),
+              patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("new-upstream")),
               patch("git_tools.cli.questionary.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="new-upstream"),
               patch.object(settings_module, "save_settings") as save):
@@ -122,7 +128,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
     def test_interactive_change_defaults_to_the_current_pin_when_still_served(self) -> None:
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
-              patch("git_tools.cli._list_openrouter_upstreams", return_value=["other", "old-upstream"]),
+              patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("other", "old-upstream")),
               patch("git_tools.cli.questionary.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="old-upstream"),
               patch.object(settings_module, "save_settings") as save):
@@ -136,7 +142,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
     def test_interactive_change_cancelled_at_upstream_saves_nothing(self) -> None:
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
-              patch("git_tools.cli._list_openrouter_upstreams", return_value=["new-upstream"]),
+              patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("new-upstream")),
               patch("git_tools.cli.questionary.select"),
               patch("git_tools.cli._ask_with_back", return_value=None),
               patch.object(settings_module, "save_settings") as save):
@@ -149,7 +155,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
     def test_interactive_change_offers_current_pin_when_the_list_is_unavailable(self) -> None:
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
-              patch("git_tools.cli._list_openrouter_upstreams", return_value=[]),
+              patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints()),
               patch("git_tools.cli.questionary.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="old-upstream"),
               patch("git_tools.cli.warning") as warn,
@@ -259,6 +265,15 @@ class StyledMenuTests(unittest.TestCase):
         self.assertEqual(rows["low"], "low")
         self.assertEqual(rows[""], "Unset")
 
+    def test_openai_effort_row_only_for_reasoning_models(self) -> None:
+        from git_tools.cli import _build_settings_choices
+
+        base = {"provider": "openai", "api_configured": True, "support_model": "follow-main",
+                "temperature": 0.6, "max_tokens": 32000, "max_retries": 1, "reasoning_effort": None}
+        values = lambda model: [c.value for c in _build_settings_choices({**base, "model": model})]
+        self.assertIn("effort", values("gpt-6-astra"))
+        self.assertNotIn("effort", values("gpt-4.1"))
+
     def test_settings_rows_show_routing_and_thinking_values(self) -> None:
         from git_tools.cli import _build_settings_choices
         from git_tools.generators.base import plain_title
@@ -269,7 +284,7 @@ class StyledMenuTests(unittest.TestCase):
             {**base, "provider": "openrouter", "model": "vendor/model", "openrouter_provider": "deepinfra"})}
         self.assertEqual(rows["openrouter-provider"], "OpenRouter upstream routing: deepinfra")
         self.assertEqual(rows["api-key"], "API Key (openrouter): not set")
-        for stored, shown in ((None, "default"), (True, "enabled"), (False, "disabled"), ("odd", "default")):
+        for stored, shown in ((None, "default"), (True, "on"), (False, "off"), ("odd", "default")):
             rows = {c.value: plain_title(c.title) for c in _build_settings_choices(
                 {**base, "provider": "kimicli", "model": "kimi-k2.5", "kimi_thinking": stored})}
             self.assertEqual(rows["kimi-thinking"], f"Kimi thinking: {shown}")
@@ -311,6 +326,21 @@ class DirectEffortCatalogTests(unittest.TestCase):
         save.assert_called_once_with("GIT_TOOLS_REASONING_EFFORT", "high")
         self.assertEqual(self.state["reasoning_effort"], "high")
 
+    def test_interactive_editor_survives_a_saved_tier_the_catalog_dropped(self) -> None:
+        # Kimi's catalog declares low/high here; a saved "medium" must not make
+        # questionary reject the default. The real select is constructed.
+        self.state["reasoning_effort"] = "medium"
+        with (patch.object(settings_module, "save_setting") as save,
+              patch("git_tools.cli._ask_with_back", return_value="") as ask,
+              patch("git_tools.cli.warning") as warn):
+            _edit_effort(self.state)
+
+        self.assertIn("medium", warn.call_args.args[0])
+        question = ask.call_args.args[0]
+        self.assertTrue(hasattr(question, "application"))
+        save.assert_called_once_with("GIT_TOOLS_REASONING_EFFORT", "")
+        self.assertIsNone(self.state["reasoning_effort"])
+
     def test_unset_is_always_accepted(self) -> None:
         with patch.object(settings_module, "save_setting") as save:
             _edit_effort(self.state, "unset")
@@ -351,19 +381,19 @@ class DirectEffortLiveCatalogTests(unittest.TestCase):
         snapshot = mappings.snapshot_provider_catalog(provider)
         self.addCleanup(mappings.restore_provider_catalog, provider, snapshot)
         mappings._LIVE_REFRESHED.discard(provider)
-        live = mappings.LiveModelList(
-            ["kimi-k2.5"],
-            metadata={"kimi-k2.5": {"supports_thinking_type": "both",
-                                    "think_efforts": {"support": True, "valid_efforts": ["low", "high"]}}},
-        )
+        from git_tools.providers.catalog import CatalogFetchResult
+        from git_tools.providers.kimi_code import parse_kimi_code_catalog
+
+        live = CatalogFetchResult(entries=parse_kimi_code_catalog({"data": [
+            {"id": "kimi-k2.5", "supports_thinking_type": "both",
+             "think_efforts": {"support": True, "valid_efforts": ["low", "high"]}}]}), source="live")
         state = {"provider": provider, "model": "kimi-k2.5", "reasoning_effort": None, "api_configured": True}
         config = SimpleNamespace(api_key="live-test", base_url="https://live-test.invalid/v1")
         with (
             tempfile.TemporaryDirectory() as tmp,
             patch.object(mappings, "MODEL_CATALOG_PATH", Path(tmp) / "catalog.json"),
             patch("git_tools.settings.settings.load_provider_config", return_value=config),
-            patch.object(mappings, "_load_user_model_map", return_value={}),
-            patch.object(mappings, "fetch_live_models", return_value=live) as fetch,
+            patch.object(mappings, "_fetch_kimi_code_models_sync", return_value=live) as fetch,
             patch.object(settings_module, "save_setting") as save,
             patch("git_tools.cli.console"),
             patch("git_tools.cli.error") as err,
@@ -380,3 +410,253 @@ class DirectEffortLiveCatalogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KimiThinkingEditorTests(unittest.TestCase):
+    """Turning Kimi thinking off never leaves a tier behind (agent-cli picks both together)."""
+
+    def setUp(self) -> None:
+        tiered = {"model_name": "kimi-tiered", "supports_thinking_type": "both",
+                  "think_efforts": {"support": True, "valid_efforts": ["low", "high"]}}
+        patcher = patch.dict(mappings.PROVIDERS["kimicli"]["models"], {"kimi-tiered": tiered})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for target in ("git_tools.cli.console", "git_tools.cli.refresh_live_models"):
+            stub = patch(target)
+            stub.start()
+            self.addCleanup(stub.stop)
+        self.state = {"provider": "kimicli", "model": "kimi-tiered", "reasoning_effort": "high",
+                      "kimi_thinking": None, "api_configured": True}
+
+    def test_disabling_clears_the_effort_override_in_one_save(self) -> None:
+        with (patch.object(settings_module, "save_settings") as save_all,
+              patch.object(settings_module, "save_setting") as save_one):
+            _edit_kimi_thinking(self.state, "disabled")
+
+        save_all.assert_called_once_with({"GIT_TOOLS_KIMI_THINKING": "false",
+                                          "GIT_TOOLS_REASONING_EFFORT": ""})
+        save_one.assert_not_called()
+        self.assertIsNone(self.state["reasoning_effort"])
+        self.assertIs(self.state["kimi_thinking"], False)
+
+    def test_disabling_without_an_override_saves_only_the_flag(self) -> None:
+        self.state["reasoning_effort"] = None
+        with (patch.object(settings_module, "save_settings") as save_all,
+              patch.object(settings_module, "save_setting") as save_one):
+            _edit_kimi_thinking(self.state, "disabled")
+
+        save_one.assert_called_once_with("GIT_TOOLS_KIMI_THINKING", "false")
+        save_all.assert_not_called()
+
+    def test_enabling_warns_when_the_saved_tier_is_not_declared(self) -> None:
+        self.state["reasoning_effort"] = "xhigh"
+        with (patch.object(settings_module, "save_setting") as save,
+              patch("git_tools.cli.warning") as warn):
+            _edit_kimi_thinking(self.state, "enabled")
+
+        save.assert_called_once_with("GIT_TOOLS_KIMI_THINKING", "true")
+        self.assertEqual(self.state["reasoning_effort"], "xhigh")
+        self.assertIn("xhigh", warn.call_args.args[0])
+        self.assertIn("low, high", warn.call_args.args[0])
+
+    def test_enabling_with_a_declared_tier_is_silent(self) -> None:
+        with (patch.object(settings_module, "save_setting"),
+              patch("git_tools.cli.warning") as warn):
+            _edit_kimi_thinking(self.state, "enabled")
+
+        warn.assert_not_called()
+        self.assertEqual(self.state["reasoning_effort"], "high")
+
+
+class ProviderProfileTests(unittest.TestCase):
+    """Every provider keeps its own profile; a switch back restores it (agent-cli)."""
+
+    def setUp(self) -> None:
+        import os
+        from typer.testing import CliRunner
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "settings.env"
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith("GIT_TOOLS_") and not key.endswith(("_BASE_URL", "_API_KEY"))}
+        # The settings classes bind their env-file list at import time, so the
+        # temp file must be bound into them too; otherwise the state loader
+        # keeps reading the real ~/.git-tools/settings.env.
+        bound = [settings_module.GitToolsSettings] + [
+            getattr(settings_module, name) for name in settings_module.ALLOWED_CONFIG_CLASSES]
+        for patcher in (
+            patch.dict("os.environ", values=env, clear=True),
+            patch.object(settings_module, "DEFAULT_SETTINGS_PATH", self.path),
+            patch("git_tools.cli.refresh_live_models", return_value=False),
+            patch("git_tools.cli._print_model_catalog_status"),
+            *[patch.dict(cls.model_config, {"env_file": self.path}) for cls in bound],
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.runner = CliRunner()
+
+    def run_settings(self, *args: str) -> str:
+        from git_tools.cli import app
+
+        result = self.runner.invoke(app, ["settings", *args])
+        self.assertEqual(result.exit_code, 0, result.output)
+        return self.path.read_text()
+
+    def test_each_provider_keeps_its_profile_across_switches(self) -> None:
+        content = self.run_settings("provider", "openai")
+        self.assertIn('GIT_TOOLS_API_BASE="https://api.openai.com/v1"', content)
+        self.assertNotIn("OPENAI_BASE_URL", content)  # the default is not remembered
+
+        self.run_settings("main-model", "my-openai-model")
+        self.run_settings("effort", "xhigh")
+        content = self.run_settings("api-base", "https://custom.invalid/v1")
+        self.assertIn('GIT_TOOLS_OPENAI_MODEL_MAIN="my-openai-model"', content)
+        self.assertIn('GIT_TOOLS_OPENAI_REASONING_EFFORT="xhigh"', content)
+        self.assertIn('OPENAI_BASE_URL="https://custom.invalid/v1"', content)
+
+        content = self.run_settings("provider", "cliproxyapi")
+        self.assertIn('GIT_TOOLS_MODEL_MAIN="gpt-6-astra"', content)  # a clean slate: the provider default
+        self.assertIn('GIT_TOOLS_REASONING_EFFORT=""', content)
+        self.assertIn('GIT_TOOLS_API_BASE="http://127.0.0.1:8317/v1"', content)
+        self.assertIn('GIT_TOOLS_OPENAI_MODEL_MAIN="my-openai-model"', content)  # untouched
+        content = self.run_settings("effort", "low")
+        self.assertIn('GIT_TOOLS_CLIPROXYAPI_REASONING_EFFORT="low"', content)
+
+        content = self.run_settings("provider", "openai")
+        self.assertIn('GIT_TOOLS_PROVIDER="openai"', content)
+        self.assertIn('GIT_TOOLS_MODEL_MAIN="my-openai-model"', content)
+        self.assertIn('GIT_TOOLS_REASONING_EFFORT="xhigh"', content)
+        self.assertIn('GIT_TOOLS_API_BASE="https://custom.invalid/v1"', content)
+
+        content = self.run_settings("api-base", "https://api.openai.com/v1")
+        self.assertNotIn("OPENAI_BASE_URL", content)  # back to the default: forgotten
+
+        content = self.run_settings("provider", "cliproxyapi")
+        self.assertIn('GIT_TOOLS_MODEL_MAIN="gpt-6-astra"', content)
+        self.assertIn('GIT_TOOLS_REASONING_EFFORT="low"', content)
+        self.assertIn('GIT_TOOLS_API_BASE="http://127.0.0.1:8317/v1"', content)
+
+    def test_profile_keys_mirroring_and_removal(self) -> None:
+        from git_tools.settings.settings import (
+            _mirror_profile,
+            _render_settings_updates,
+            provider_base_url_env,
+            provider_profile_key,
+            saved_provider_profile,
+        )
+
+        self.assertEqual(provider_base_url_env("openai"), "OPENAI_BASE_URL")
+        self.assertEqual(provider_base_url_env("kimicode"), "KIMICLI_BASE_URL")
+        self.assertEqual(provider_profile_key("kimi", "MODEL_MAIN"), "GIT_TOOLS_KIMICLI_MODEL_MAIN")
+        self.assertEqual(_render_settings_updates('A="1"\nOPENAI_BASE_URL="x"\nB="2"\n', {"OPENAI_BASE_URL": None}),
+                         'A="1"\nB="2"\n')
+        # The provider being switched to owns the mirrors.
+        self.assertEqual(_mirror_profile({"GIT_TOOLS_PROVIDER": "anthropic", "GIT_TOOLS_MODEL_MAIN": "m",
+                                          "GIT_TOOLS_API_BASE": "https://api.anthropic.com/v1"}), {
+            "GIT_TOOLS_PROVIDER": "anthropic", "GIT_TOOLS_MODEL_MAIN": "m",
+            "GIT_TOOLS_API_BASE": "https://api.anthropic.com/v1",
+            "GIT_TOOLS_ANTHROPIC_MODEL_MAIN": "m", "ANTHROPIC_BASE_URL": None,
+        })
+        # Otherwise the saved current provider does.
+        self.path.write_text('GIT_TOOLS_PROVIDER="qwen"\nGIT_TOOLS_QWEN_REASONING_EFFORT="high"\n')
+        self.assertEqual(_mirror_profile({"GIT_TOOLS_API_BASE": "https://plan.invalid/v1"}),
+                         {"GIT_TOOLS_API_BASE": "https://plan.invalid/v1", "QWEN_BASE_URL": "https://plan.invalid/v1"})
+        self.assertEqual(saved_provider_profile("qwen")["reasoning_effort"], "high")
+        self.assertIsNone(saved_provider_profile("qwen")["model"])
+        with patch.dict("os.environ", {"GIT_TOOLS_QWEN_REASONING_EFFORT": "low"}):
+            self.assertEqual(saved_provider_profile("qwen")["reasoning_effort"], "low")
+
+
+class CombinedKimiPickerTests(unittest.TestCase):
+    """Thinking and tier are one choice, built from the catalog entry (agent-cli's picker)."""
+
+    def setUp(self) -> None:
+        models = {
+            "tiered": {"model_name": "tiered", "supports_thinking_type": "both", "supports_reasoning": True,
+                       "think_efforts": {"support": True, "valid_efforts": ["low", "high", "max"],
+                                         "default_effort": "high"}},
+            "always": {"model_name": "always", "supports_thinking_type": "only"},
+            "never": {"model_name": "never", "supports_thinking_type": "no"},
+        }
+        patcher = patch.dict(mappings.PROVIDERS["kimicli"]["models"], models)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for target in ("git_tools.cli.console", "git_tools.cli.refresh_live_models"):
+            stub = patch(target)
+            stub.start()
+            self.addCleanup(stub.stop)
+
+    def test_the_catalog_decides_without_asking_where_it_can(self) -> None:
+        from git_tools.cli import _pick_kimi_thinking
+        from git_tools.generators.base import plain_title
+
+        with patch("git_tools.cli._ask_with_back") as ask:
+            self.assertEqual(_pick_kimi_thinking("kimicli", "never", None, "high"), (False, None))
+            # An incomplete record is not guessed from; the same model keeps its choice.
+            self.assertEqual(_pick_kimi_thinking("kimicli", "unknown", None, None), (None, None))
+            self.assertEqual(_pick_kimi_thinking("kimicli", "unknown", True, "low", keep_current=True), (True, "low"))
+        ask.assert_not_called()
+        # A thinking-only model without tiers still offers its one row, as agent-cli does.
+        with (patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli._ask_with_back", return_value=0)):
+            self.assertEqual(_pick_kimi_thinking("kimicli", "always", None, None), (True, None))
+        self.assertEqual([plain_title(c.title) for c in select.call_args.kwargs["choices"][:-1]], ["on"])
+
+    def test_one_list_of_off_and_tiers_with_agent_clis_default(self) -> None:
+        from git_tools.cli import _pick_kimi_thinking
+        from git_tools.generators.base import plain_title
+
+        with (patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli._ask_with_back", return_value=1)):
+            self.assertEqual(_pick_kimi_thinking("kimicli", "tiered", None, None), (True, "low"))
+        rows = [plain_title(choice.title) for choice in select.call_args.kwargs["choices"][:-1]]
+        self.assertEqual(rows, ["off", "low", "high", "max"])  # nothing current: no marker
+        self.assertEqual(select.call_args.kwargs["default"].value, 2)  # the model's default tier, high
+
+        with (patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli._ask_with_back", return_value=0)):
+            self.assertEqual(_pick_kimi_thinking("kimicli", "tiered", True, "max"), (False, None))
+        rows = [plain_title(choice.title) for choice in select.call_args.kwargs["choices"][:-1]]
+        self.assertEqual(rows[3], "max (current)")
+
+        with patch("git_tools.cli._ask_with_back", return_value=None):
+            self.assertIsNone(_pick_kimi_thinking("kimicli", "tiered", None, None))
+
+    def test_interactive_editor_saves_both_keys_from_one_choice(self) -> None:
+        state = {"provider": "kimicli", "model": "tiered", "reasoning_effort": None,
+                 "kimi_thinking": None, "api_configured": True}
+        with (patch("git_tools.cli._pick_kimi_thinking", return_value=(True, "max")),
+              patch.object(settings_module, "save_settings") as save):
+            _edit_kimi_thinking(state)
+        save.assert_called_once_with({"GIT_TOOLS_KIMI_THINKING": "true", "GIT_TOOLS_REASONING_EFFORT": "max"})
+        self.assertEqual((state["kimi_thinking"], state["reasoning_effort"]), (True, "max"))
+
+        with (patch("git_tools.cli._pick_kimi_thinking", return_value=(False, None)),
+              patch.object(settings_module, "save_settings") as save):
+            _edit_kimi_thinking(state)
+        save.assert_called_once_with({"GIT_TOOLS_KIMI_THINKING": "false", "GIT_TOOLS_REASONING_EFFORT": ""})
+
+    def test_direct_value_accepts_a_tier(self) -> None:
+        state = {"provider": "kimicli", "model": "tiered", "reasoning_effort": None,
+                 "kimi_thinking": False, "api_configured": True}
+        with patch.object(settings_module, "save_settings") as save:
+            _edit_kimi_thinking(state, "high")
+        save.assert_called_once_with({"GIT_TOOLS_KIMI_THINKING": "true", "GIT_TOOLS_REASONING_EFFORT": "high"})
+        self.assertEqual((state["kimi_thinking"], state["reasoning_effort"]), (True, "high"))
+
+
+class UpstreamRowTests(unittest.TestCase):
+    def test_rows_carry_agent_clis_details(self) -> None:
+        from git_tools.cli import _upstream_choice
+        from git_tools.generators.base import plain_title
+        from git_tools.providers.openrouter import parse_endpoints
+
+        (entry,) = parse_endpoints({"data": {"id": "m", "endpoints": [{
+            "tag": "deepinfra/fp4", "provider_name": "DeepInfra", "context_length": 1048576,
+            "quantization": "fp4", "uptime_last_30m": 97.55,
+            "pricing": {"prompt": "0.00000008", "completion": "0.00000018", "input_cache_read": "0.000000016"},
+        }]}})
+        self.assertEqual(plain_title(_upstream_choice(entry, "deepinfra/fp4").title),
+                         "DeepInfra [deepinfra/fp4] — $0.080/$0.180 per M · 1024k ctx · fp4 · cached · 98% up (current)")
+        self.assertEqual(_upstream_choice(entry, None).value, "deepinfra/fp4")

@@ -17,7 +17,10 @@ from pydantic_settings import BaseSettings
 from .mappings import PROVIDER_ALIASES, PROVIDERS
 
 # Whitelist of allowed configuration classes for security
-ALLOWED_CONFIG_CLASSES = {"OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig"}
+ALLOWED_CONFIG_CLASSES = {
+    "OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig",
+    "ACRCConfig", "CopilotConfig", "QwenConfig",
+}
 
 # Providers whose API key is a fixed placeholder rather than a secret (local
 # proxies). git-tools defaults these so the user need not set them: CLIProxyAPI
@@ -254,6 +257,16 @@ class GitToolsSettings(BaseSettings):
         validation_alias=AliasChoices("GIT_TOOLS_PROVIDER", "GIT_TOOLS_DEFAULT_PROVIDER"),
     )
     default_model: Optional[str] = Field(default=None)
+    main_model: Optional[str] = Field(default=None, validation_alias="GIT_TOOLS_MODEL_MAIN")
+    support_model: str = Field(default="follow-main", validation_alias=AliasChoices(
+        "GIT_TOOLS_MODEL_SUPPORT", "GIT_TOOLS_MODEL_SUB"))
+    openrouter_provider: Optional[str] = Field(default=None)
+    kimi_thinking: Optional[bool] = Field(default=None)
+
+    @field_validator("kimi_thinking", mode="before")
+    @classmethod
+    def empty_thinking_is_unset(cls, value: Any) -> Any:
+        return None if value == "" else value
     default_reasoning_effort: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("GIT_TOOLS_REASONING_EFFORT"),
@@ -351,6 +364,17 @@ class GitToolsSettings(BaseSettings):
         if v is None or v == "":
             return None
         return str(v).strip().lower() or None
+
+    @field_validator("main_model", "support_model", "openrouter_provider", mode="before")
+    @classmethod
+    def normalize_model_choice(cls, value: Any, info: ValidationInfo) -> Any:
+        if isinstance(value, str):
+            value = value.strip()
+        return value or ("follow-main" if info.field_name == "support_model" else None)
+
+    @property
+    def effective_main_model(self) -> Optional[str]:
+        return self.main_model or self.default_model
 
     @property
     def default_temperature_range(self) -> Tuple[float, float]:
@@ -474,6 +498,59 @@ class CLIProxyAPIConfig(BaseLLMConfig):
         default="http://localhost:8317/v1",
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "CLIPROXYAPI_BASE_URL"),
     )
+
+    class Config:
+        env_file = _get_env_file_paths()
+        extra = "ignore"
+
+
+class ACRCConfig(BaseLLMConfig):
+    """ACRC's OpenAI-compatible endpoint."""
+
+    api_key: str = Field(..., min_length=1, validation_alias="ACRC_API_KEY")
+    base_url: Optional[str] = Field(
+        default="https://fmodel.ai.acrc.a-star.edu.sg/v1",
+        validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "ACRC_BASE_URL"),
+    )
+
+    class Config:
+        env_file = _get_env_file_paths()
+        extra = "ignore"
+
+
+class CopilotConfig(BaseLLMConfig):
+    """A separately running OpenAI-compatible Copilot proxy."""
+
+    api_key: str = Field(..., min_length=1, validation_alias="COPILOT_API_KEY")
+    base_url: Optional[str] = Field(
+        default="http://localhost:4141/v1",
+        validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "COPILOT_BASE_URL"),
+    )
+
+    class Config:
+        env_file = _get_env_file_paths()
+        extra = "ignore"
+
+
+class QwenConfig(BaseLLMConfig):
+    """DashScope requires the account's explicit plan/region endpoint."""
+
+    api_key: str = Field(..., min_length=1, validation_alias="DASHSCOPE_API_KEY")
+    base_url: str = Field(..., min_length=1, validation_alias=AliasChoices(
+        "GIT_TOOLS_API_BASE", "QWEN_BASE_URL"))
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        from urllib.parse import urlsplit
+
+        value = value.strip().rstrip("/")
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Qwen requires an explicit HTTP(S) API base URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("API base URL must not contain credentials, query, or fragment")
+        return value
 
     class Config:
         env_file = _get_env_file_paths()

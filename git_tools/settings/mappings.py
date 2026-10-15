@@ -4,8 +4,8 @@ Provider metadata — API-key env vars, config classes, display details, model
 catalog behavior, and static fallback models — lives in code here. There is no
 external ``mappings.json`` to copy or maintain in the repo.
 
-Every built-in provider exposes an OpenAI-compatible ``GET {base_url}/models``
-catalog. ``refresh_live_models`` merges that account/endpoint-specific catalog
+Live providers expose an OpenAI-compatible ``GET {base_url}/models``
+catalog; ACRC and Qwen use curated choices matching agent-cli. ``refresh_live_models`` merges that account/endpoint-specific catalog
 into ``PROVIDERS`` for pickers and validation. Static entries remain the offline
 fallback, while manually entered model IDs are saved in
 ``~/.git-tools/models.json`` and retained across refreshes.
@@ -28,6 +28,7 @@ DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6"
 # User settings file holding manually entered model IDs by provider. Kept inside
 # ~/.git-tools/ so a full reset stays a single `rm -rf ~/.git-tools`.
 USER_MODELS_PATH = Path.home() / ".git-tools" / "models.json"
+MODEL_CATALOG_PATH = Path.home() / ".git-tools" / "model-catalog.json"
 
 # Live-discovered CLIProxyAPI models matching these prefixes are
 # effort-capable and receive this per-model default.
@@ -45,11 +46,13 @@ class LiveModelList(list[str]):
         error_kind: str | None = None,
         error: str | None = None,
         status: int | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> None:
         super().__init__(values or [])
         self.error_kind = error_kind
         self.error = error
         self.status = status
+        self.metadata = metadata or {}
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,33 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
             },
         },
     },
+    "acrc": {
+        "label": "ACRC", "aliases": (), "api_key_env": "ACRC_API_KEY",
+        "config_class": "ACRCConfig",
+        "default_base_url": "https://fmodel.ai.acrc.a-star.edu.sg/v1",
+        "live_models": False, "allow_manual_model": True, "curated_models": True,
+        "models": {
+            "deepseek-v4.1-flash": {"model_name": "deepseek-v4.1-flash"},
+            "glm-5-3-flash": {"model_name": "glm-5-3-flash"},
+            "mimo-v2.6-pro": {"model_name": "mimo-v2.6-pro"},
+        },
+    },
+    "copilot": {
+        "label": "Copilot proxy", "aliases": (), "api_key_env": "COPILOT_API_KEY",
+        "config_class": "CopilotConfig", "default_base_url": "http://localhost:4141/v1",
+        "live_models": True, "allow_manual_model": True,
+        "models": {"gpt-4.1": {"model_name": "gpt-4.1"}},
+    },
+    "qwen": {
+        "label": "Qwen / DashScope", "aliases": ("dashscope", "alibaba"),
+        "api_key_env": "DASHSCOPE_API_KEY", "config_class": "QwenConfig",
+        "default_base_url": "", "live_models": False, "allow_manual_model": True,
+        "curated_models": True,
+        "models": {
+            "qwen3.8-max": {"model_name": "qwen3.8-max"},
+            "qwen3.8-max-preview": {"model_name": "qwen3.8-max-preview"},
+        },
+    },
     "kimicli": {
         "label": "Kimi Code",
         # Keep the existing git-tools provider key for compatibility while
@@ -103,6 +133,7 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "live_models": True,
         "allow_manual_model": True,
         "models": {
+            "kimi-for-coding": {"model_name": "kimi-for-coding"},
             "kimi-k2.5": {"model_name": "kimi-k2.5"},
         },
     },
@@ -114,8 +145,9 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "default_base_url": "http://localhost:8317/v1",
         "live_models": True,
         "allow_manual_model": True,
-        "live_effort_prefixes": ("gpt-5",),
+        "live_effort_prefixes": ("gpt-5", "gpt-6"),
         "models": {
+            "gpt-6-astra": {"model_name": "gpt-6-astra", "reasoning_effort": "xhigh"},
             "gpt-5.6-sol": {"model_name": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
             "gpt-5.5": {"model_name": "gpt-5.5", "reasoning_effort": "xhigh"},
             "gpt-5.4": {"model_name": "gpt-5.4", "reasoning_effort": "xhigh"},
@@ -231,6 +263,33 @@ _FALLBACK_MODELS: Dict[str, Dict[str, Any]] = {
 }
 
 
+def normalize_catalog_metadata(raw: Any) -> Dict[str, Any]:
+    """Validate optional endpoint metadata before UI or request construction."""
+    if not isinstance(raw, dict):
+        return {}
+    result: Dict[str, Any] = {}
+    display = raw.get("display_name")
+    if isinstance(display, str) and display.strip():
+        result["display_name"] = display.strip()
+    mode = raw.get("supports_thinking_type")
+    if isinstance(mode, str) and mode in {"only", "both", "no"}:
+        result["supports_thinking_type"] = mode
+    context = raw.get("context_length")
+    if isinstance(context, int) and not isinstance(context, bool) and context > 0:
+        result["context_length"] = context
+    efforts = raw.get("think_efforts")
+    if isinstance(efforts, dict) and efforts.get("support") is True:
+        values = efforts.get("valid_efforts")
+        valid = list(dict.fromkeys(value.strip() for value in values
+                     if isinstance(value, str) and value.strip())) if isinstance(values, list) else []
+        clean: Dict[str, Any] = {"support": True, "valid_efforts": valid}
+        default = efforts.get("default_effort")
+        if isinstance(default, str) and default.strip():
+            clean["default_effort"] = default.strip()
+        result["think_efforts"] = clean
+    return result
+
+
 def fetch_live_models(
     base_url: str,
     api_key: str,
@@ -281,7 +340,7 @@ def fetch_live_models(
     ids = [
         str(model.get("id")).strip()
         for model in data
-        if isinstance(model, dict) and model.get("id")
+        if isinstance(model, dict) and isinstance(model.get("id"), str) and model["id"].strip()
     ]
     unique = sorted(dict.fromkeys(model_id for model_id in ids if model_id))
     if not unique:
@@ -289,7 +348,12 @@ def fetch_live_models(
             error_kind="malformed",
             error="provider returned no usable model entries",
         )
-    return LiveModelList(unique)
+    metadata = {}
+    for item in data:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        metadata[item["id"].strip()] = normalize_catalog_metadata(item)
+    return LiveModelList(unique, metadata=metadata)
 
 
 # Providers refreshed this process. The identity map prevents a successful
@@ -349,6 +413,75 @@ def _fallback_models(provider: str) -> Dict[str, Any]:
     return fallback
 
 
+def fetch_openrouter_upstreams(base_url: str, api_key: str, model_id: str) -> list[str]:
+    """Discover routable upstream slugs for the selected OpenRouter model."""
+    from urllib.parse import quote
+
+    if not base_url or not model_id:
+        return []
+    try:
+        request = urllib.request.Request(
+            base_url.rstrip("/") + "/models/" + quote(model_id.strip(), safe="/") + "/endpoints",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+        )
+        with urllib.request.urlopen(request, timeout=4.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        endpoints = payload.get("data", {}).get("endpoints", [])
+        if not isinstance(endpoints, list):
+            return []
+        return list(dict.fromkeys(item["tag"].strip() for item in endpoints
+                    if isinstance(item, dict) and isinstance(item.get("tag"), str)
+                    and item["tag"].strip()))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
+def _cached_catalog(provider: str, identity: tuple[str, str]) -> LiveModelList:
+    try:
+        payload = json.loads(MODEL_CATALOG_PATH.read_text())
+        key = hashlib.sha256(f"{provider}:{identity}".encode()).hexdigest()
+        record = payload.get(key, {})
+        ids = record.get("ids", [])
+        if not isinstance(ids, list) or not all(isinstance(x, str) and x for x in ids):
+            return LiveModelList()
+        metadata = record.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        return LiveModelList(ids, metadata=metadata)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return LiveModelList()
+
+
+def _save_catalog(provider: str, identity: tuple[str, str], live: LiveModelList) -> None:
+    import os
+    import tempfile
+
+    temp_path = None
+    try:
+        try:
+            payload = json.loads(MODEL_CATALOG_PATH.read_text())
+        except (OSError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        key = hashlib.sha256(f"{provider}:{identity}".encode()).hexdigest()
+        payload[key] = {"ids": list(live), "metadata": getattr(live, "metadata", {})}
+        MODEL_CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=MODEL_CATALOG_PATH.parent,
+                                         delete=False) as handle:
+            temp_path = Path(handle.name)
+            json.dump(payload, handle)
+        os.replace(temp_path, MODEL_CATALOG_PATH)
+    except (OSError, ValueError, TypeError):
+        pass  # Catalog persistence must not block provider selection.
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def refresh_live_models(provider: str, *, force: bool = False) -> bool:
     """Refresh one provider's model catalog from its configured ``/models``.
 
@@ -392,9 +525,19 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         and provider in _LIVE_REFRESHED
         and _LIVE_REFRESH_IDENTITIES.get(provider) == identity
     ):
-        return True
+        return provider not in _LIVE_REFRESH_ERRORS
 
     live = fetch_live_models(base_url, api_key)
+    fetch_failed = not live
+    if fetch_failed:
+        cached = _cached_catalog(provider, identity)
+        if cached and getattr(live, "error_kind", None) != "http":
+            _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
+                kind=getattr(live, "error_kind", None) or "unknown",
+                message="Live discovery failed; showing last-known-good cached catalog",
+                status=getattr(live, "status", None), retained_live_catalog=True,
+            )
+            live = cached
     if not live:
         retained_live_catalog = (
             provider in _LIVE_REFRESHED
@@ -410,7 +553,8 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         # or credential, do not leak that old catalog into the new identity.
         if (
             provider in _LIVE_REFRESHED
-            and _LIVE_REFRESH_IDENTITIES.get(provider) != identity
+            and (_LIVE_REFRESH_IDENTITIES.get(provider) != identity
+                 or getattr(live, "error_kind", None) == "http")
         ):
             PROVIDERS[provider]["models"] = _fallback_models(provider)
             _LIVE_REFRESHED.discard(provider)
@@ -427,15 +571,19 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         if model_id in live_ids or model_id in remembered_ids:
             merged[key] = copy.deepcopy(entry)
     for model_id in live:
-        merged.setdefault(model_id, _provider_model_entry(provider, model_id))
+        entry = merged.setdefault(model_id, _provider_model_entry(provider, model_id))
+        details = getattr(live, "metadata", {}).get(model_id, {})
+        entry.update(normalize_catalog_metadata(details))
     for model_id in remembered:
         merged.setdefault(model_id, _provider_model_entry(provider, model_id))
 
     PROVIDERS[provider]["models"] = merged
     _LIVE_REFRESHED.add(provider)
     _LIVE_REFRESH_IDENTITIES[provider] = identity
-    _LIVE_REFRESH_ERRORS.pop(provider, None)
-    return True
+    if not fetch_failed:
+        _LIVE_REFRESH_ERRORS.pop(provider, None)
+        _save_catalog(provider, identity, live)
+    return not fetch_failed
 
 
 def add_user_model(provider: str, model_id: str) -> bool:

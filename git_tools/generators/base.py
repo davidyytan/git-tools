@@ -367,14 +367,19 @@ class BaseGenerator:
         provider_config = self.get_provider_config(provider)
         # Live providers resolve models against the endpoint's real catalogue
         # (one fetch per process; static fallback when the endpoint is down).
-        refresh_live_models(provider)
+        live = refresh_live_models(provider)
+        # Share diagnostics with settings so stale/fallback choices are explicit.
+        if self._interactive or not live:
+            from git_tools.cli import _print_model_catalog_status
+
+            _print_model_catalog_status(provider, live)
         models = PROVIDERS[provider]["models"]
 
         # Model selection: CLI param > interactive prompt > default
         if self._cli_model is not None:
             selected_model = self._resolve_cli_model(models)
         elif self._interactive:
-            selected_model = self._interactive_model_selection(models)
+            selected_model = self._interactive_model_selection(models, provider)
         else:
             selected_model = self._get_default_model(models, provider)
 
@@ -399,20 +404,20 @@ class BaseGenerator:
     def _get_default_model(self, models: Dict[str, Any], provider: str = "") -> str:
         """Get the default model - from settings first, then first available."""
         # Check if settings default_model exists in available models
-        if settings.default_model:
+        if settings.effective_main_model:
             # Check if it's a model key
-            if settings.default_model in models:
-                return models[settings.default_model]["model_name"]
+            if settings.effective_main_model in models:
+                return models[settings.effective_main_model]["model_name"]
             # Check if it's a full model name
             for model_data in models.values():
-                if model_data["model_name"] == settings.default_model:
-                    return settings.default_model
+                if model_data["model_name"] == settings.effective_main_model:
+                    return settings.effective_main_model
             # Open-ended (OpenRouter) and live-discovered providers trust the
             # configured model as-is: the endpoint validates it, not the
             # static fallback list.
             provider_lower = normalize_provider_name(provider)
-            if provider_lower == "openrouter" or provider_lower in LIVE_MODEL_PROVIDERS:
-                return settings.default_model
+            if PROVIDERS[provider_lower].get("allow_manual_model"):
+                return settings.effective_main_model
         # Fallback to first model
         return list(models.values())[0]["model_name"]
 
@@ -436,23 +441,23 @@ class BaseGenerator:
         )
         return self._cli_model
 
-    def _interactive_model_selection(self, models: Dict[str, Any]) -> str:
-        """Interactive model selection with questionary."""
-        # Build choices list
-        choices = [model["model_name"] for model in models.values()]
+    def _interactive_model_selection(
+        self, models: Dict[str, Any], provider: str | None = None
+    ) -> str:
+        """Use the settings picker, including search and invocation-only manual IDs."""
+        from git_tools.cli import ADD_MODEL_SENTINEL, _ask_model_choice, _ask_with_back
 
-        # Use settings.default_model if it's in the available choices
-        default = None
-        if settings.default_model in choices:
-            default = settings.default_model
-        else:
-            # Check if it's a model key that maps to a model_name
-            for model_key, model_data in models.items():
-                if model_key == settings.default_model or model_data["model_name"] == settings.default_model:
-                    default = model_data["model_name"]
-                    break
-
-        return self.prompt_select("Select model", choices, default)
+        provider = normalize_provider_name(provider or self.select_provider())
+        current = self._get_default_model(models, provider)
+        selected = _ask_model_choice(provider, current_model=current, default_model=current)
+        if selected == ADD_MODEL_SENTINEL:
+            selected = _ask_with_back(questionary.text(
+                f"Enter {provider} model ID:", default=current,
+                style=TYPER_STYLE, qmark="❯", instruction="",
+            ))
+        if selected is None or not selected.strip():
+            raise KeyboardInterrupt  # Cancel; never silently pick a different model.
+        return selected.strip()
 
     def _get_temperature_input(
         self, default: Optional[float] = None
@@ -576,6 +581,10 @@ class BaseGenerator:
                 self.chatclient = self._create_cliproxy_client(
                     model_to_use, provider_config, temperature, max_tokens
                 )
+            elif provider in {"acrc", "copilot", "qwen"}:
+                self.chatclient = self._create_compatible_client(
+                    provider, model_to_use, provider_config, temperature, max_tokens
+                )
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
 
@@ -625,6 +634,12 @@ class BaseGenerator:
             model_to_use, base_extra_body, model_config
         )
 
+        pin = settings.openrouter_provider
+        if pin and pin.lower() not in {"any", "unpinned", "default"}:
+            extra_body["provider"]["only"] = [pin]
+            extra_body["provider"]["allow_fallbacks"] = False
+        if settings.default_reasoning_effort:
+            extra_body["reasoning"] = {"effort": settings.default_reasoning_effort}
         kwargs = {
             "model": model_to_use,
             "api_key": provider_config.api_key,
@@ -655,10 +670,52 @@ class BaseGenerator:
             },
         }
 
+        from git_tools.settings.mappings import normalize_catalog_metadata
+
+        metadata = normalize_catalog_metadata(self._get_model_config("kimicli", model_to_use) or {})
+        mode = metadata.get("supports_thinking_type")
+        effort = settings.default_reasoning_effort
+        efforts = metadata.get("think_efforts", {})
+        valid_efforts = efforts.get("valid_efforts", []) if isinstance(efforts, dict) else []
+        if effort and valid_efforts and effort not in valid_efforts:
+            raise ValueError("Selected Kimi effort is not supported by this model")
+        enabled = settings.kimi_thinking or (settings.kimi_thinking is None and effort)
+        if mode == "only":
+            enabled = True
+        elif mode == "no":
+            enabled = False
+        if enabled:
+            thinking = {"type": "enabled", "keep": "all"}
+            if effort:
+                thinking["effort"] = effort
+            kwargs["extra_body"]["thinking"] = thinking
+
         # Kimi Code currently rejects every other value (HTTP 400: "only 0.6
         # is allowed for this model"). Enforce the provider requirement even if
         # a stale setting or explicit --temp override supplies another value.
         self._add_optional_params(kwargs, 0.6, max_tokens)
+        return ChatOpenAI(**kwargs)
+
+    def _create_compatible_client(
+        self, provider: str, model: str, config: Any,
+        temperature: Optional[float], max_tokens: Optional[int],
+    ):
+        """Text-generation transport for the remaining OpenAI-compatible providers."""
+        from langchain_openai import ChatOpenAI
+
+        kwargs = {"model": model, "api_key": config.api_key, "base_url": config.base_url}
+        self._add_optional_params(kwargs, temperature, max_tokens)
+        effort = settings.default_reasoning_effort
+        if provider == "qwen":
+            body: Dict[str, Any] = {"preserve_thinking": True}
+            if effort:
+                if model.lower().startswith("qwen3.8-max"):
+                    body["reasoning_effort"] = effort
+                elif model.lower().startswith("qwen") or model.lower() == "coder-model":
+                    body["enable_thinking"] = effort != "none"
+            kwargs["extra_body"] = body
+        elif effort and model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-")):
+            kwargs["reasoning_effort"] = effort
         return ChatOpenAI(**kwargs)
 
     def _get_model_config(

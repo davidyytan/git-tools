@@ -96,7 +96,7 @@ def _has_interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-REASONING_EFFORT_CHOICES = ("xhigh", "high", "medium", "low")
+REASONING_EFFORT_CHOICES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 # Sentinel Choice value that triggers free-text model entry in the settings menu.
 ADD_MODEL_SENTINEL = "__git_tools_add_model__"
@@ -188,19 +188,17 @@ def _effective_effort(
     configured_effort: str | None,
 ) -> str | None:
     """Resolve the effort shown in config: explicit override, then model default."""
-    model_effort = _model_effort(provider, model)
-    if not model_effort:
-        return None
-
     if configured_effort:
         return configured_effort.strip().lower() or None
-
-    return model_effort
+    return _model_effort(provider, model)
 
 
 def _format_model_choice(model_config: dict[str, Any]) -> str:
     """Format a model menu item, including effort only when the model has it."""
     model_name = model_config["model_name"]
+    display = model_config.get("display_name")
+    if isinstance(display, str) and display.strip() and display != model_name:
+        model_name = f"{display.strip()} ({model_name})"
     effort = model_config.get("reasoning_effort")
     if effort:
         return f"{model_name} (effort: {str(effort).strip().lower()})"
@@ -326,6 +324,13 @@ def _build_effort_choices(
     """Build reasoning-effort choices for effort-capable models."""
     model_effort = _model_effort(provider, model)
     choices = []
+    metadata = _find_model_config(provider, model) or {}
+    think_efforts = metadata.get("think_efforts", {})
+    declared_efforts = think_efforts.get("valid_efforts", []) if isinstance(think_efforts, dict) else []
+    if provider == "kimicli" and isinstance(declared_efforts, list) and declared_efforts:
+        return [Choice("Model default", value=""),
+                *[Choice(effort, value=effort) for effort in declared_efforts
+                  if isinstance(effort, str) and effort.strip()]]
 
     if model_effort:
         choices.append(Choice(f"Model default ({model_effort})", value=""))
@@ -354,17 +359,26 @@ def _build_settings_choices(
     choices = [
         Choice(f"Provider: {provider}", value="provider"),
         Choice(
-            f"Model: {_format_model_display(provider, state.get('model'))}",
+            f"Main Model: {_format_model_display(provider, state.get('model'))}",
             value="model",
         ),
     ]
+
+    choices.extend([
+        Choice(f"Support Model (unused): {state.get('support_model', 'follow-main')}", value="support-model"),
+        Choice("API Endpoint", value="api-base"),
+    ])
+    if provider == "openrouter":
+        choices.append(Choice("OpenRouter upstream routing", value="openrouter-provider"))
+    if provider == "kimicli":
+        choices.append(Choice("Kimi thinking", value="kimi-thinking"))
 
     effort = _effective_effort(
         provider,
         state.get("model"),
         state.get("reasoning_effort"),
     )
-    if effort:
+    if effort or provider in {"openrouter", "qwen", "kimicli", "acrc", "copilot"}:
         source = "override" if state.get("reasoning_effort") else "model default"
         choices.append(Choice(f"Effort: {effort} ({source})", value="effort"))
 
@@ -374,7 +388,12 @@ def _build_settings_choices(
             Choice(f"Temperature: {state['temperature']}", value="temperature"),
             Choice(f"Max Tokens: {state['max_tokens']}", value="max-tokens"),
             Choice(f"Max Retries: {state['max_retries']}", value="max-retries"),
-            Choice(f"PR Limit: {state.get('azure_pr_limit', 'auto')}", value="azure-pr-limit"),
+            Choice(
+                "PR Limit: auto (enabled only for Azure DevOps)"
+                if state.get("azure_pr_limit", "auto") == "auto"
+                else "PR Limit: disabled",
+                value="azure-pr-limit",
+            ),
             Choice(f"PR Max Chars: {state.get('azure_pr_max_chars', 4000)}", value="azure-pr-max-chars"),
             Choice(done_label, value="done"),
         ]
@@ -982,7 +1001,11 @@ def _load_settings_state() -> dict[str, Any]:
     is_api_configured, _ = check_api_key_configured(provider)
     return {
         "provider": provider,
-        "model": _resolve_current_model(provider, fresh.default_model),
+        "model": _resolve_current_model(provider, fresh.effective_main_model),
+        "support_model": fresh.support_model,
+        "api_base": os.environ.get("GIT_TOOLS_API_BASE", ""),
+        "openrouter_provider": fresh.openrouter_provider,
+        "kimi_thinking": fresh.kimi_thinking,
         "reasoning_effort": fresh.default_reasoning_effort,
         "temperature": fresh.default_temperature,
         "max_tokens": fresh.default_max_tokens,
@@ -1026,12 +1049,136 @@ def _prompt_provider_api_key(provider: str) -> tuple[bool, str | None]:
     return False, None
 
 
-def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
+def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
+                   *, interactive: Optional[bool] = None) -> None:
+    """Select endpoint before discovery, restoring process state on cancellation."""
+    from .settings.settings import save_settings
+
+    interactive_flow = (value is None or _has_interactive_terminal()) if interactive is None else interactive
+    if not interactive_flow and value is None:
+        error("Non-interactive provider setup requires a provider name.")
+        raise typer.Exit(1)
+    old_provider = state["provider"]
+    selection = normalize_provider_name(value) if value is not None else None
+    if selection is None:
+        selection = _ask_with_back(questionary.select(
+            "Select provider:", choices=[*_build_provider_choices(old_provider), _back_choice()],
+            default=old_provider, style=TYPER_STYLE, qmark="❯",
+        ))
+        if selection in (None, _BACK):
+            return
+    if selection not in PROVIDERS:
+        error(f"Unknown provider: {selection}")
+        raise typer.Exit(1)
+    changed = selection != old_provider
+    old_base = os.environ.get("GIT_TOOLS_API_BASE")
+    endpoint = PROVIDERS[selection]["default_base_url"] if changed else _current_api_base(selection)
+    if selection == "qwen" and interactive_flow:
+        endpoint = _ask_with_back(questionary.text(
+            "Qwen API endpoint (exact plan/region URL):", default=endpoint or "",
+            style=TYPER_STYLE, qmark="❯",
+        ))
+        if endpoint is None:
+            return
+        endpoint = _validate_api_base(endpoint)
+    # Explicit provider selection is allowed before Qwen endpoint configuration;
+    # generation/discovery will fail safely until the endpoint is supplied.
+    os.environ["GIT_TOOLS_API_BASE"] = endpoint or ""
+    try:
+        if interactive_flow:
+            _edit_provider_impl(state, None, selected_provider=selection, endpoint=endpoint)
+        else:
+            _edit_provider_impl(state, selection, endpoint=endpoint)
+        if state["provider"] != selection:
+            return
+        state["api_base"] = endpoint or ""
+        if changed and not interactive_flow:
+            state["support_model"] = "follow-main"
+            state["openrouter_provider"] = None
+    finally:
+        if old_base is None:
+            os.environ.pop("GIT_TOOLS_API_BASE", None)
+        else:
+            os.environ["GIT_TOOLS_API_BASE"] = old_base
+
+
+def _prompt_provider_options(
+    provider: str, model: str, state: dict[str, Any], changed: bool,
+) -> dict[str, str] | None:
+    """Collect the rest of setup without saving partial selections."""
+    support = _ask_with_back(questionary.select(
+        "Support model (reserved, unused):",
+        choices=[Choice("Follow main dynamically", value="follow-main"),
+                 *_build_model_choices(provider, current_model=None if changed else state.get("support_model")
+                                       if state.get("support_model") != "follow-main" else None),
+                 _back_choice()], style=TYPER_STYLE, qmark="❯"))
+    if support in (None, _BACK):
+        return None
+    if support == ADD_MODEL_SENTINEL:
+        support = _ask_with_back(questionary.text("Support model ID:", style=TYPER_STYLE, qmark="❯"))
+        if support is None or not support.strip():
+            return None
+    updates = {"GIT_TOOLS_MODEL_SUPPORT": support.strip(),
+               "GIT_TOOLS_OPENROUTER_PROVIDER": "" if changed else state.get("openrouter_provider") or "",
+               "GIT_TOOLS_REASONING_EFFORT": "" if changed else state.get("reasoning_effort") or "",
+               "GIT_TOOLS_KIMI_THINKING": ""}
+    if provider == "openrouter":
+        from .settings.mappings import fetch_openrouter_upstreams
+        from .settings.settings import load_provider_config
+        config = load_provider_config(provider)
+        upstreams = fetch_openrouter_upstreams(config.base_url, config.api_key, model)
+        pin = _ask_with_back(questionary.select(
+            "OpenRouter upstream for the main model:",
+            choices=[Choice("Any (unpinned)", value="any"),
+                     *[Choice(slug, value=slug) for slug in upstreams],
+                     Choice("Enter upstream slug manually", value=ADD_MODEL_SENTINEL), _back_choice()],
+            style=TYPER_STYLE, qmark="❯"))
+        if pin in (None, _BACK):
+            return None
+        if pin == ADD_MODEL_SENTINEL:
+            pin = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
+            if pin is None or not pin.strip():
+                return None
+        updates["GIT_TOOLS_OPENROUTER_PROVIDER"] = "" if pin == "any" else pin.strip().lower()
+    metadata = _find_model_config(provider, model) or {}
+    thinking_enabled = True
+    if provider == "kimicli":
+        mode = metadata.get("supports_thinking_type")
+        choices = ["default", "enabled", "disabled"]
+        if mode == "only":
+            choices = ["enabled"]
+        elif mode == "no":
+            choices = ["disabled"]
+        thinking = _ask_with_back(questionary.select(
+            "Kimi thinking:", choices=choices, style=TYPER_STYLE, qmark="❯"))
+        if thinking is None:
+            return None
+        updates["GIT_TOOLS_KIMI_THINKING"] = "" if thinking == "default" else str(thinking == "enabled").lower()
+        thinking_enabled = thinking != "disabled"
+    if thinking_enabled and (provider in {"openrouter", "qwen", "kimicli"}
+                             or _model_effort(provider, model)
+                             or model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-"))):
+        effort = _ask_with_back(questionary.select(
+            "Reasoning effort:", choices=[*_build_effort_choices(provider, model, updates["GIT_TOOLS_REASONING_EFFORT"]), _back_choice()],
+            style=TYPER_STYLE, qmark="❯"))
+        if effort in (None, _BACK):
+            return None
+        updates["GIT_TOOLS_REASONING_EFFORT"] = effort
+    elif provider == "kimicli":
+        updates["GIT_TOOLS_REASONING_EFFORT"] = ""
+    return updates
+
+
+def _edit_provider_impl(state: dict[str, Any], value: Optional[str] = None,
+                        *, selected_provider: Optional[str] = None,
+                        endpoint: Optional[str] = None) -> None:
     from .settings.settings import check_api_key_configured, save_setting, save_settings
 
     providers = list(PROVIDERS.keys())
     interactive_flow = value is None
-    if value is None:
+    if selected_provider is not None:
+        selection = selected_provider
+    elif value is None:
         selection = _ask_with_back(
             questionary.select(
                 f"Select provider (current: {state['provider']}, default: {_SETTING_DEFAULTS['provider']}):",
@@ -1070,6 +1217,11 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
         try:
             current_model = state["model"] if not provider_changed else ""
             new_model = _choose_provider_model(selection, current_model)
+            setup_choices = None
+            if new_model is not None:
+                setup_choices = _prompt_provider_options(selection, new_model, state, provider_changed)
+                if setup_choices is None:
+                    new_model = None
         except BaseException:
             restore_provider_catalog(selection, catalog_snapshot)
             if new_key is not None:
@@ -1093,7 +1245,16 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
         updates = {
             "GIT_TOOLS_PROVIDER": selection,
             "GIT_TOOLS_DEFAULT_MODEL": new_model,
+            "GIT_TOOLS_MODEL_MAIN": new_model,
         }
+        if endpoint is not None:
+            updates["GIT_TOOLS_API_BASE"] = endpoint
+        if provider_changed:
+            updates.update({"GIT_TOOLS_MODEL_SUPPORT": "follow-main",
+                            "GIT_TOOLS_OPENROUTER_PROVIDER": "",
+                            "GIT_TOOLS_REASONING_EFFORT": "",
+                            "GIT_TOOLS_KIMI_THINKING": ""})
+        updates.update(setup_choices or {})
         if new_key is not None:
             updates = {env_var: new_key, **updates}
         try:
@@ -1109,6 +1270,11 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
         _remember_manual_model(selection, new_model)
         state["provider"] = selection
         state["model"] = new_model
+        state["support_model"] = updates["GIT_TOOLS_MODEL_SUPPORT"]
+        state["openrouter_provider"] = updates.get("GIT_TOOLS_OPENROUTER_PROVIDER") or None
+        state["reasoning_effort"] = updates.get("GIT_TOOLS_REASONING_EFFORT") or None
+        thinking = updates.get("GIT_TOOLS_KIMI_THINKING", "")
+        state["kimi_thinking"] = None if not thinking else thinking == "true"
         state["api_configured"] = bool(new_key) or check_api_key_configured(selection)[0]
         console.print()
         success(f"Provider set to {selection}")
@@ -1119,25 +1285,33 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
 
     # Direct `settings provider <name>` remains non-interactive and preserves
     # the previous behavior: switch immediately and select a valid fallback.
-    save_setting("GIT_TOOLS_PROVIDER", selection)
-    state["provider"] = selection
-    state["api_configured"], _ = check_api_key_configured(selection)
-    console.print()
-    success(f"Provider set to {selection}")
+    updates = {"GIT_TOOLS_PROVIDER": selection}
+    if endpoint is not None:
+        updates["GIT_TOOLS_API_BASE"] = endpoint
     if provider_changed:
         refresh_live_models(selection)
         model_config = _find_model_config(selection, state["model"])
-        new_model = (
-            model_config["model_name"] if model_config else _provider_default_model(selection)
-        )
-        save_setting("GIT_TOOLS_DEFAULT_MODEL", new_model)
-        if new_model != state["model"]:
-            success(f"Model set to {new_model}")
+        new_model = model_config["model_name"] if model_config else _provider_default_model(selection)
+        updates.update({"GIT_TOOLS_DEFAULT_MODEL": new_model, "GIT_TOOLS_MODEL_MAIN": new_model,
+                        "GIT_TOOLS_MODEL_SUPPORT": "follow-main", "GIT_TOOLS_OPENROUTER_PROVIDER": "",
+                        "GIT_TOOLS_REASONING_EFFORT": "", "GIT_TOOLS_KIMI_THINKING": ""})
+    save_settings(updates)
+    state["provider"] = selection
+    state["api_configured"], _ = check_api_key_configured(selection)
+    if provider_changed:
         state["model"] = new_model
+        state["reasoning_effort"] = None
+        state["kimi_thinking"] = None
+    console.print()
+    success(f"Provider set to {selection}")
 
 
 def _print_model_catalog_status(provider: str, live: bool) -> None:
     """Explain whether the interactive model list is live or a fallback."""
+    provider = normalize_provider_name(provider)
+    if PROVIDERS[provider].get("curated_models"):
+        console.print("[dim]model list: curated choices; manual IDs accepted[/dim]")
+        return
     if live:
         console.print("[dim]model list: live from the provider[/dim]")
         return
@@ -1236,7 +1410,8 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
             error(f"Unknown model for {provider}: {model_choice}. One of: {names}")
             raise typer.Exit(1)
 
-    save_setting("GIT_TOOLS_DEFAULT_MODEL", model_choice)
+    from .settings.settings import save_settings
+    save_settings({"GIT_TOOLS_DEFAULT_MODEL": model_choice, "GIT_TOOLS_MODEL_MAIN": model_choice})
     _remember_manual_model(provider, model_choice)
     state["model"] = model_choice
     console.print()
@@ -1274,7 +1449,7 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
             return
     else:
         effort_choice = value.strip().lower()
-        if effort_choice in {"unset", "default", "none"}:
+        if effort_choice in {"unset", "default"}:
             effort_choice = ""
         if effort_choice and effort_choice not in REASONING_EFFORT_CHOICES:
             error(
@@ -1426,8 +1601,8 @@ def _edit_azure_pr_limit(state: dict[str, Any], value: Optional[str] = None) -> 
 
     if value is None:
         value = _ask_with_back(questionary.select(
-            "PR limit mode (auto: Azure on, other origins off):",
-            choices=[Choice("auto (detect origin)", value="auto"),
+            "PR limit mode (auto enables limiting only for Azure DevOps):",
+            choices=[Choice("auto (enabled only for Azure DevOps)", value="auto"),
                      Choice("false (disabled)", value="false"), _back_choice()],
             default=state["azure_pr_limit"], style=TYPER_STYLE,
         ))
@@ -1452,10 +1627,144 @@ def _edit_azure_pr_max_chars(state: dict[str, Any], value: Optional[str] = None)
     )
 
 
+def _current_api_base(provider: str) -> str:
+    from .settings.settings import load_provider_config
+
+    try:
+        return load_provider_config(provider).base_url or ""
+    except ValueError:
+        return os.environ.get("GIT_TOOLS_API_BASE", PROVIDERS[provider]["default_base_url"])
+
+
+def _validate_api_base(value: str) -> str:
+    from urllib.parse import urlsplit
+
+    value = value.strip().rstrip("/")
+    parsed = urlsplit(value)
+    if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username or parsed.password or parsed.query or parsed.fragment):
+        error("Endpoint must be an HTTP(S) URL without credentials, query, or fragment.")
+        raise typer.Exit(1)
+    return value
+
+
+def _edit_api_base(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        value = _ask_with_back(questionary.text(
+            "API endpoint:", default=_current_api_base(state["provider"]),
+            style=TYPER_STYLE, qmark="❯"))
+        if value is None:
+            return
+    endpoint = _validate_api_base(value)
+    save_setting("GIT_TOOLS_API_BASE", endpoint)
+    state["api_base"] = endpoint
+    success("API endpoint saved.")
+
+
+def _edit_support_model(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        provider = state["provider"]
+        live = refresh_live_models(provider, force=True)
+        _print_model_catalog_status(provider, live)
+        value = _ask_with_back(questionary.select(
+            "Support model (reserved, unused):",
+            choices=[Choice("Follow main dynamically", value="follow-main"),
+                     *_build_model_choices(provider, current_model=state.get("support_model")
+                                           if state.get("support_model") != "follow-main" else None),
+                     _back_choice()], style=TYPER_STYLE, qmark="❯"))
+        if value in (None, _BACK):
+            return
+        if value == ADD_MODEL_SENTINEL:
+            value = _ask_with_back(questionary.text("Support model ID:", style=TYPER_STYLE, qmark="❯"))
+            if value is None:
+                return
+    model = value.strip()
+    if not model:
+        error("Support model cannot be empty; use follow-main.")
+        raise typer.Exit(1)
+    save_setting("GIT_TOOLS_MODEL_SUPPORT", model)
+    state["support_model"] = model
+    success("Support model saved (not used for generation).")
+
+
+def _edit_openrouter_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        from .settings.mappings import fetch_openrouter_upstreams
+        from .settings.settings import load_provider_config
+        try:
+            config = load_provider_config("openrouter")
+            upstreams = fetch_openrouter_upstreams(config.base_url, config.api_key, state["model"])
+        except ValueError:
+            upstreams = []
+        manual = "__manual_upstream__"
+        value = _ask_with_back(questionary.select(
+            "OpenRouter upstream for the main model:",
+            choices=[Choice("Any (unpinned)", value="any"),
+                     *[Choice(slug, value=slug) for slug in upstreams],
+                     Choice("Enter upstream slug manually", value=manual), _back_choice()],
+            style=TYPER_STYLE, qmark="❯"))
+        if value in (None, _BACK):
+            return
+        if value == manual:
+            value = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
+            if value is None:
+                return
+    pin = value.strip().lower()
+    if pin.lower() in {"any", "default", "unpinned"}:
+        pin = ""
+    save_setting("GIT_TOOLS_OPENROUTER_PROVIDER", pin)
+    state["openrouter_provider"] = pin or None
+    success("OpenRouter routing saved.")
+
+
+def _edit_kimi_thinking(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        metadata = _find_model_config(state["provider"], state["model"]) or {}
+        thinking_type = metadata.get("supports_thinking_type")
+        choices = ["default", "enabled", "disabled"]
+        if thinking_type == "only":
+            choices = ["default", "enabled"]
+        elif thinking_type == "no":
+            choices = ["default", "disabled"]
+        value = _ask_with_back(questionary.select(
+            "Kimi thinking:", choices=choices,
+            style=TYPER_STYLE, qmark="❯"))
+        if value is None:
+            return
+    choice = value.strip().lower()
+    metadata = _find_model_config(state["provider"], state["model"]) or {}
+    mode = metadata.get("supports_thinking_type")
+    if (mode == "only" and choice in {"disabled", "false"}) or (mode == "no" and choice in {"enabled", "true"}):
+        error("Thinking choice is not supported by the selected model's catalog.")
+        raise typer.Exit(1)
+    if choice not in {"default", "enabled", "disabled", "true", "false"}:
+        error("Kimi thinking must be default, enabled, or disabled.")
+        raise typer.Exit(1)
+    rendered = "" if choice == "default" else str(choice in {"enabled", "true"}).lower()
+    save_setting("GIT_TOOLS_KIMI_THINKING", rendered)
+    state["kimi_thinking"] = None if not rendered else rendered == "true"
+    success("Kimi thinking saved.")
+
+
 # Menu order, and the names accepted by `git-tools settings <name> [value]`.
 _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
     "provider": _edit_provider,
     "model": _edit_model,
+    "main-model": _edit_model,
+    "support-model": _edit_support_model,
+    "sub-model": _edit_support_model,
+    "api-base": _edit_api_base,
+    "endpoint": _edit_api_base,
+    "openrouter-provider": _edit_openrouter_provider,
+    "kimi-thinking": _edit_kimi_thinking,
     "effort": _edit_effort,
     "api-key": _edit_api_key,
     "temperature": _edit_temperature,
@@ -1501,6 +1810,10 @@ def settings_command(
         Optional[str],
         typer.Argument(help="New value; omit to edit interactively", show_default=False),
     ] = None,
+    interactive: Annotated[Optional[bool], typer.Option(
+        "--interactive/--non-interactive",
+        help="Provider setup: force the wizard or save a named provider without prompts.",
+    )] = None,
 ) -> None:
     """Edit git-tools settings.
 
@@ -1514,6 +1827,16 @@ def settings_command(
             editor = _SETTINGS_EDITORS.get(key)
             if editor is None:
                 error(f"Unknown setting: {name}. One of: {' · '.join(_SETTINGS_EDITORS)}")
+                raise typer.Exit(1)
+            if key == "provider":
+                use_wizard = interactive if interactive is not None else (value is None or _has_interactive_terminal())
+                if use_wizard and not _has_interactive_terminal():
+                    error("Interactive provider setup requires an interactive terminal. Use --non-interactive with a provider name for scripts.")
+                    raise typer.Exit(1)
+                _edit_provider(_load_settings_state(), value, interactive=use_wizard)
+                return
+            if interactive is not None:
+                error("--interactive/--non-interactive applies to provider setup only.")
                 raise typer.Exit(1)
             if value is None and not _has_interactive_terminal():
                 error("git-tools settings requires an interactive terminal (or pass a value).")

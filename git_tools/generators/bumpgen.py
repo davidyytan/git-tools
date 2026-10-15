@@ -15,7 +15,6 @@ It intentionally stays stdlib-only so it can power:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import re
@@ -27,6 +26,11 @@ from glob import glob
 from pathlib import Path
 from string import Template
 from typing import Literal, Optional
+
+from .utils.version_sync import (
+    VersionConsistencyError, sync_cargo_lock, sync_cargo_manifest,
+    sync_npm_versions, sync_section_version, sync_uv_lock,
+)
 
 _OPTIONAL_BASE_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -405,46 +409,15 @@ class SectionVersionTarget(VersionTarget):
         new_version: str,
         check_consistency: bool,
     ) -> tuple[str, bool]:
-        lines = text.splitlines(keepends=True)
-        in_section = False
-        section_seen = False
-
-        for index, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith("[") and stripped.endswith("]"):
-                in_section = stripped == self.section_header
-                section_seen = section_seen or in_section
-                continue
-
-            if not in_section:
-                continue
-
-            match = VERSION_LINE_REGEX.match(line)
-            if not match:
-                continue
-
-            actual_version = match.group(2)
-            if check_consistency and actual_version != current_version:
-                raise ConsistencyError(
-                    f"{self.label} in {self.path} is {actual_version}, expected {current_version}."
-                )
-
-            if actual_version == new_version:
-                return text, False
-
-            line_ending = ""
-            if line.endswith("\r\n"):
-                line_ending = "\r\n"
-            elif line.endswith("\n"):
-                line_ending = "\n"
-
-            suffix = match.group(3).rstrip("\r\n")
-            lines[index] = f"{match.group(1)}{new_version}{suffix}{line_ending}"
-            return "".join(lines), actual_version != new_version
-
-        if not section_seen:
-            raise ConfigError(f"Missing {self.section_header} in {self.path}.")
-        raise ConfigError(f"Missing version field for {self.label} in {self.path}.")
+        try:
+            return sync_section_version(
+                text, self.section_header, current_version, new_version,
+                check_consistency=check_consistency,
+            )
+        except VersionConsistencyError as exc:
+            raise ConsistencyError(f"{self.label} in {self.path}: {exc}") from exc
+        except ValueError as exc:
+            raise ConfigError(f"{self.label} in {self.path}: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -523,71 +496,43 @@ class UvLockVersionTarget(VersionTarget):
         new_version: str,
         check_consistency: bool,
     ) -> tuple[str, bool]:
-        expected_current = version_to_uv_version(current_version)
-        desired_new = version_to_uv_version(new_version)
-        lines = text.splitlines(keepends=True)
-
-        in_package_block = False
-        matches_package = False
-        package_found = False
-
-        for index, line in enumerate(lines):
-            stripped = line.strip()
-
-            if stripped == "[[package]]":
-                in_package_block = True
-                matches_package = False
-                continue
-
-            if stripped.startswith("[[") and stripped != "[[package]]":
-                in_package_block = False
-                matches_package = False
-                continue
-
-            if not in_package_block:
-                continue
-
-            name_match = NAME_LINE_REGEX.match(line)
-            if name_match:
-                matches_package = name_match.group(2) == self.package_name
-                package_found = package_found or matches_package
-                continue
-
-            if not matches_package:
-                continue
-
-            version_match = VERSION_LINE_REGEX.match(line)
-            if not version_match:
-                continue
-
-            actual_version = version_match.group(2)
-            if check_consistency and actual_version != expected_current:
-                raise ConsistencyError(
-                    f"{self.label} in {self.path} is {actual_version}, expected {expected_current}."
-                )
-
-            if actual_version == desired_new:
-                return text, False
-
-            line_ending = ""
-            if line.endswith("\r\n"):
-                line_ending = "\r\n"
-            elif line.endswith("\n"):
-                line_ending = "\n"
-
-            suffix = version_match.group(3).rstrip("\r\n")
-            lines[index] = (
-                f"{version_match.group(1)}{desired_new}{suffix}{line_ending}"
+        try:
+            return sync_uv_lock(
+                text, self.package_name, version_to_uv_version(current_version),
+                version_to_uv_version(new_version), check_consistency=check_consistency,
             )
-            return "".join(lines), actual_version != desired_new
+        except VersionConsistencyError as exc:
+            raise ConsistencyError(f"{self.label} in {self.path}: {exc}") from exc
+        except ValueError as exc:
+            raise ConfigError(f"{self.label} in {self.path}: {exc}") from exc
 
-        if not package_found:
-            raise ConfigError(
-                f"{self.label} in {self.path} does not contain package {self.package_name!r}."
-            )
-        raise ConfigError(
-            f"{self.label} in {self.path} does not contain a version for package {self.package_name!r}."
-        )
+
+@dataclass(frozen=True)
+class CargoManifestVersionTarget(VersionTarget):
+    """Best-effort adapter for a standalone Cargo manifest."""
+
+    path: Path
+    label: str
+    strict_consistency: bool = False
+
+    def apply(self, text: str, *, current_version: str, new_version: str,
+              check_consistency: bool) -> tuple[str, bool]:
+        return sync_cargo_manifest(text, new_version)
+
+
+@dataclass(frozen=True)
+class CargoLockVersionTarget(VersionTarget):
+    """Best-effort adapter for the matching local crate in a Cargo lockfile."""
+
+    path: Path
+    label: str
+    package_name: str
+    package_version: str
+    strict_consistency: bool = False
+
+    def apply(self, text: str, *, current_version: str, new_version: str,
+              check_consistency: bool) -> tuple[str, bool]:
+        return sync_cargo_lock(text, self.package_name, self.package_version, new_version)
 
 
 @dataclass(frozen=True)
@@ -607,45 +552,10 @@ class JsonVersionTarget(VersionTarget):
         new_version: str,
         check_consistency: bool,
     ) -> tuple[str, bool]:
-        def reject_constant(value: str) -> None:
-            raise ValueError(f"Invalid JSON constant: {value}")
-
-        data = json.loads(text, parse_constant=reject_constant)
-        if not isinstance(data, dict):
-            raise ConfigError(f"Expected a JSON object in {self.path}.")
-
-        owners = [(data, "version")]
-        if self.lockfile:
-            packages = data.get("packages")
-            if isinstance(packages, dict) and "" in packages:
-                owners.append((packages[""], 'packages[""].version'))
-
-        changed = False
-        valid = False
-        for owner, field in owners:
-            if (
-                not isinstance(owner, dict)
-                or not isinstance(owner.get("version"), str)
-                or not owner["version"].strip()
-            ):
-                _warn_auxiliary(f"{self.path}: {field}", "missing or non-string version")
-                continue
-            valid = True
-            if owner["version"] != new_version:
-                owner["version"] = new_version
-                changed = True
-        if not valid:
-            raise ConfigError(f"No valid app version fields in {self.path}.")
-        if not changed:
-            return text, False
-
-        # Preserve the usual npm indentation and trailing newline convention.
-        indent_match = re.search(r'\n([ \t]+)"', text)
-        indent = indent_match.group(1) if indent_match else None
-        updated = json.dumps(data, ensure_ascii=False, indent=indent)
-        if text.endswith("\n"):
-            updated += "\n"
-        return updated, True
+        return sync_npm_versions(
+            text, new_version, lockfile=self.lockfile,
+            warn=lambda message: _warn_auxiliary(self.path, message),
+        )
 
 
 def _warn_auxiliary(target: object, error: object) -> None:
@@ -942,6 +852,38 @@ def load_bump_config(root: Path) -> BumpConfig:
                 )
         except Exception as exc:
             _warn_auxiliary(path, exc)
+
+    # Explicit conventional app locations only; never walk workspace members.
+    for directory in (root, root / "src-tauri"):
+        manifest = directory / "Cargo.toml"
+        lockfile = directory / "Cargo.lock"
+        auto_managed_paths.update((manifest, lockfile))
+        try:
+            if not manifest.exists():
+                if lockfile.exists():
+                    _warn_auxiliary(lockfile, "no sibling Cargo.toml to identify the local crate")
+                continue
+            cargo_data = _read_toml(manifest)
+            package = cargo_data.get("package")
+            if not isinstance(package, dict):
+                _warn_auxiliary(manifest, "no standalone [package]; workspace versions are not auto-synced")
+                continue
+            cargo_version = _read_nested_string(cargo_data, ("package", "version"))
+            if not cargo_version or not cargo_version.strip():
+                _warn_auxiliary(manifest, "missing literal [package].version; workspace inheritance is not auto-synced")
+                continue
+            targets.append(CargoManifestVersionTarget(path=manifest, label="Cargo package version"))
+            cargo_name = _read_nested_string(cargo_data, ("package", "name"))
+            if lockfile.exists():
+                if cargo_name and cargo_name.strip():
+                    targets.append(CargoLockVersionTarget(
+                        path=lockfile, label="Cargo local package lock version",
+                        package_name=cargo_name, package_version=cargo_version,
+                    ))
+                else:
+                    _warn_auxiliary(lockfile, "missing [package].name in sibling Cargo.toml")
+        except Exception as exc:
+            _warn_auxiliary(manifest, exc)
 
     raw_version_files = cz_settings.get("version_files")
     if isinstance(raw_version_files, list):

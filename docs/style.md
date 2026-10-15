@@ -1,10 +1,10 @@
 # Git-Tools Style Guide
 
-This guide covers contributor-facing console conventions. For CLI commands and interactive navigation, see [Usage](usage.md); for development setup, see [Contributing](contributing.md).
+This guide covers contributor-facing console conventions. For CLI commands and interactive navigation, see [Usage](usage.md); for development setup, see [Contributing](contributing.md); for where code lives, see [Code layout](architecture.md).
 
 ## Console Width
 
-Use the shared console in [git_tools/generators/base.py](../git_tools/generators/base.py). It detects terminal width and applies `settings.console_width_offset` (default: `-2`) to avoid border wrapping on some terminals. [git_tools/cli.py](../git_tools/cli.py) applies the same offset to Typer's help output.
+Use the shared console in [git_tools/generators/base/terminal.py](../git_tools/generators/base/terminal.py). It detects terminal width and applies `settings.console_width_offset` (default: `-2`) to avoid border wrapping on some terminals. [git_tools/cli.py](../git_tools/cli.py) applies the same offset to Typer's help output.
 
 - `force_terminal=True` forces terminal-style rendering, including in non-interactive output; it does not detect whether input is interactive.
 - `soft_wrap=True` prevents trailing spaces from creating phantom lines.
@@ -14,7 +14,7 @@ Do not create independent consoles with different width or color behavior for ne
 
 ## Panel and Message Styling
 
-Reuse the constants and helpers from `git_tools/generators/base.py`:
+Reuse the constants and helpers from `git_tools/generators/base/terminal.py` (re-exported by `git_tools.generators.base`):
 
 ```python
 STYLE_BORDER = "dim"

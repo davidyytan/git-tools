@@ -15,7 +15,7 @@
 | --- | --- |
 | [CLI usage](usage.md) | Commands, options, defaults, side effects, interactive operation |
 | [Configuration](configuration.md) | Providers, credentials, model selection, saved settings |
-| [Versioning](versioning.md) | `.cz.toml` authority, best-effort sync, Python and Node targets |
+| [Versioning](versioning.md) | `.cz.toml` authority, best-effort sync, Python, Node, and Rust targets |
 | [Flow comparison](git-flow-guide.md) | Mode selection and shared workflow policy |
 | [Publication](publication.md) | CI ref publication, fallback, and recovery |
 | [DVC](dvc.md) | Optional manual data and experiment workflow |
@@ -38,6 +38,7 @@ Reviewed modes share their base adapter; install one adapter, not four.
 ## Project Maintenance
 
 - [Contributing](contributing.md)
+- [Code layout](architecture.md)
 - [Style conventions](style.md)
 - [Code of conduct](code-of-conduct.md)
 - [MIT license](../LICENSE)

@@ -10,7 +10,7 @@ class BumpGeneratorTests(unittest.TestCase):
     def test_direct_bump_uses_commitizen_like_defaults(self) -> None:
         generator = BumpGenerator()
 
-        with patch("git_tools.generators.bumpgen.run_bump") as run_bump:
+        with patch("git_tools.generators.bumpgen.generator.run_bump") as run_bump:
             generator.generate_bump()
 
         options = run_bump.call_args.args[0]
@@ -32,7 +32,7 @@ class BumpGeneratorTests(unittest.TestCase):
                 side_effect=["MINOR", "alpha", "exact"],
             ),
             patch.object(generator, "prompt_confirm", side_effect=[False, False, True]),
-            patch("git_tools.generators.bumpgen.run_bump") as run_bump,
+            patch("git_tools.generators.bumpgen.generator.run_bump") as run_bump,
         ):
             generator.generate_bump()
 
@@ -52,7 +52,7 @@ class BumpGeneratorTests(unittest.TestCase):
             patch.object(generator, "_print_summary"),
             patch.object(generator, "prompt_select") as prompt_select,
             patch.object(generator, "prompt_confirm") as prompt_confirm,
-            patch("git_tools.generators.bumpgen.run_bump") as run_bump,
+            patch("git_tools.generators.bumpgen.generator.run_bump") as run_bump,
         ):
             generator.generate_bump()
 

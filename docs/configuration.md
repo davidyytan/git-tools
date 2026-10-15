@@ -81,9 +81,9 @@ again. Back up credentials before resetting.
 
 ## Models and Reasoning
 
-OpenRouter, Kimi Code, CLIProxyAPI, and Copilot attempt live OpenAI-compatible `/models` discovery using the selected endpoint and credentials. Served IDs drive the picker; old fallback IDs not served by a successful catalog are dropped, while explicit saved/manual IDs remain available. Large catalogs are searchable. Display labels and Kimi thinking/effort capabilities are retained when supplied.
+OpenRouter, Kimi Code, CLIProxyAPI, Copilot, and ACRC attempt live OpenAI-compatible `/models` discovery using the selected endpoint and credentials. Served IDs drive the picker; old fallback IDs not served by a successful catalog are dropped, while explicit saved/manual IDs remain available. Large catalogs are searchable. Display labels and Kimi thinking/effort capabilities are retained when supplied.
 
-Following `agent-cli`, ACRC and Qwen use curated choices plus manual entry, rather than probing `/models`. Qwen must be given the actual endpoint from your plan/region; no runtime endpoint is guessed.
+ACRC lists what its endpoint currently serves; its three built-in models lead the picker and are the fallback when the VPN or endpoint is unreachable, with the failure reported. Qwen uses curated choices plus manual entry rather than probing `/models`, because its catalog varies by plan and region; it must be given the actual endpoint, and no runtime endpoint is guessed.
 Select **Model → Enter a model ID manually…** to save an exact ID under that provider.
 Interactive generation uses the same searchable picker, retains the configured main
 model even when absent from the catalog, and permits manual IDs for that invocation

@@ -149,12 +149,19 @@ class OptionalDependencyImportTests(unittest.TestCase):
         module_name = "git_tools.generators.bumpgen"
         base_name = "git_tools.generators.base"
         questionary_name = "questionary"
+
+        def is_target(name: str) -> bool:
+            # Both are packages; their cached submodules must be evicted too.
+            return (
+                name in (module_name, base_name, questionary_name)
+                or name.startswith((f"{module_name}.", f"{base_name}."))
+            )
+
         original_modules = {
-            name: sys.modules.get(name)
-            for name in (module_name, base_name, questionary_name)
+            name: module for name, module in sys.modules.items() if is_target(name)
         }
 
-        for name in (module_name, base_name, questionary_name):
+        for name in original_modules:
             sys.modules.pop(name, None)
 
         builtin_import = __import__
@@ -189,11 +196,14 @@ class OptionalDependencyImportTests(unittest.TestCase):
             ):
                 interactive_generator._build_options()
         finally:
-            for name in (module_name, base_name, questionary_name):
+            for name in [name for name in sys.modules if is_target(name)]:
                 sys.modules.pop(name, None)
-            for name, module in original_modules.items():
-                if module is not None:
-                    sys.modules[name] = module
+            sys.modules.update(original_modules)
+            import git_tools.generators as generators_package
+
+            for name in (module_name, base_name):
+                if name in original_modules:
+                    setattr(generators_package, name.rpartition(".")[2], original_modules[name])
 
 
 class VersionTests(unittest.TestCase):
@@ -327,7 +337,7 @@ class GitTagArgsTests(unittest.TestCase):
     def test_git_config_signed_tags_become_explicit_to_avoid_editor_hang(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            with patch("git_tools.generators.bumpgen.get_git_bool_config", return_value=True):
+            with patch("git_tools.generators.bumpgen.git.get_git_bool_config", return_value=True):
                 self.assertEqual(
                     resolve_git_tag_args(
                         root,
@@ -549,15 +559,15 @@ class AuxiliarySyncTests(unittest.TestCase):
                 (root / "extra.txt").write_text("1.2.3", encoding="utf-8")
                 (root / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
                 if stage == "load":
-                    from git_tools.generators import bumpgen
-                    original = bumpgen._read_toml
+                    from git_tools.generators.bumpgen import config as bump_config
+                    original = bump_config._read_toml
                     def read(path: Path) -> dict:
                         if path.name == "pyproject.toml":
                             raise PermissionError("load denied")
                         return original(path)
-                    mocked = patch("git_tools.generators.bumpgen._read_toml", side_effect=read)
+                    mocked = patch("git_tools.generators.bumpgen.config._read_toml", side_effect=read)
                 elif stage == "resolve":
-                    mocked = patch("git_tools.generators.bumpgen._resolve_version_file_spec", side_effect=OSError("resolve denied"))
+                    mocked = patch("git_tools.generators.bumpgen.config._resolve_version_file_spec", side_effect=OSError("resolve denied"))
                 else:
                     mocked = patch("git_tools.generators.bumpgen.JsonVersionTarget.apply", side_effect=RuntimeError("apply denied"))
                 with mocked, self.assertLogs("git_tools.generators.bumpgen", level="WARNING"):
@@ -720,7 +730,7 @@ class RunBumpTagSafetyTests(unittest.TestCase):
                         run_bump(BumpOptions(increment="PATCH", yes=True), cwd=root)
                 else:
                     operation = "git_commit" if failure == "git" else "git_tag"
-                    with patch(f"git_tools.generators.bumpgen.{operation}", side_effect=GitError("git denied")), self.assertRaises(GitError):
+                    with patch(f"git_tools.generators.bumpgen.engine.{operation}", side_effect=GitError("git denied")), self.assertRaises(GitError):
                         run_bump(BumpOptions(increment="PATCH", yes=True), cwd=root)
                 self.assertEqual(subprocess.run(["git", "tag"], cwd=root, check=True, capture_output=True, text=True).stdout, "")
 

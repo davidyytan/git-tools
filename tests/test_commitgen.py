@@ -66,7 +66,7 @@ class CommitGeneratorTests(unittest.TestCase):
                 return_value=[sensitive_match],
             ),
             patch.object(generator, "_confirm_commit_sensitive_files") as confirm_mock,
-            patch("git_tools.generators.commitgen.error") as error_mock,
+            patch("git_tools.generators.commitgen.sensitive.error") as error_mock,
         ):
             allowed = generator._check_sensitive_files()
 
@@ -104,7 +104,7 @@ class CommitGeneratorTests(unittest.TestCase):
     def test_noninteractive_commit_defaults_to_direct_commit(self) -> None:
         generator = CommitGenerator(interactive=False)
 
-        with patch("git_tools.generators.commitgen.subprocess.run") as run_mock:
+        with patch("subprocess.run") as run_mock:
             generator._handle_commit_action({"content": "feat: add test coverage"})
 
         run_mock.assert_called_once_with(
@@ -120,7 +120,7 @@ class CommitGeneratorTests(unittest.TestCase):
         )
 
         with patch.object(generator, "_get_staged_files", return_value=[]), patch(
-            "git_tools.generators.commitgen.subprocess.run"
+            "subprocess.run"
         ) as run_mock:
             generator.generate_commit()
 

@@ -125,7 +125,7 @@ class TestRefreshLiveModels(unittest.TestCase):
         mappings._LIVE_REFRESH_ERRORS.clear()
 
     def test_every_registered_provider_supports_dynamic_catalogs(self) -> None:
-        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS) - {"acrc", "qwen"})
+        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS) - {"qwen"})
 
         for provider in LIVE_MODEL_PROVIDERS:
             with self.subTest(provider=provider):
@@ -190,6 +190,44 @@ class TestRefreshLiveModels(unittest.TestCase):
         self.assertNotIn("reasoning_effort", models["codex-auto-review"])
         self.assertNotIn("reasoning_effort", models["gpt-image-2"])
         self.assertEqual(fetch.call_args.args, ("http://x/v1", "k"))
+
+    def test_acrc_serves_live_ids_with_builtin_names_and_default_first(self) -> None:
+        live = mappings.LiveModelList(
+            ["glm-5-3-flash", "deepseek-v4.1-flash", "qwen3.6-plus"],
+            metadata={"qwen3.6-plus": {"display_name": "Qwen3.6 Plus"}},
+        )
+        fake_config = SimpleNamespace(base_url="https://acrc.example/v1", api_key="acrc-key")
+        with (
+            patch("git_tools.settings.settings.load_provider_config", return_value=fake_config),
+            patch.object(mappings, "fetch_live_models", return_value=live) as fetch,
+            patch.object(mappings, "_load_user_model_map", return_value={}),
+        ):
+            self.assertTrue(refresh_live_models("acrc"))
+
+        models = PROVIDERS["acrc"]["models"]
+        # Served IDs verbatim: the built-in default leads, the unserved built-in
+        # (mimo) is dropped, and a new served model appends with its live name.
+        self.assertEqual(list(models), ["deepseek-v4.1-flash", "glm-5-3-flash", "qwen3.6-plus"])
+        self.assertEqual(models["deepseek-v4.1-flash"]["display_name"], "DeepSeek V4.1 Flash")
+        self.assertEqual(models["qwen3.6-plus"]["display_name"], "Qwen3.6 Plus")
+        self.assertEqual(fetch.call_args.args, ("https://acrc.example/v1", "acrc-key"))
+
+    def test_acrc_falls_back_to_builtin_list_when_endpoint_unreachable(self) -> None:
+        fake_config = SimpleNamespace(base_url="https://acrc.example/v1", api_key="acrc-key")
+        failure = mappings.LiveModelList(error_kind="network", error="VPN down")
+        with (
+            patch("git_tools.settings.settings.load_provider_config", return_value=fake_config),
+            patch.object(mappings, "fetch_live_models", return_value=failure),
+            patch.object(mappings, "_load_user_model_map", return_value={}),
+        ):
+            self.assertFalse(refresh_live_models("acrc"))
+
+        self.assertEqual(
+            list(PROVIDERS["acrc"]["models"]),
+            ["deepseek-v4.1-flash", "glm-5-3-flash", "mimo-v2.6-pro"],
+        )
+        error = mappings.get_live_model_refresh_error("acrc")
+        self.assertEqual((error.kind, error.message), ("network", "VPN down"))
 
     def test_openrouter_live_entries_keep_privacy_default(self) -> None:
         fake_config = SimpleNamespace(

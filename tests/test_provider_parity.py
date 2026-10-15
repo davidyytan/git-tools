@@ -46,8 +46,7 @@ class ProviderParityTests(unittest.TestCase):
 
     def test_curated_providers_do_not_probe(self):
         with patch.object(mappings, "fetch_live_models") as fetch:
-            for provider in ("acrc", "qwen"):
-                self.assertFalse(mappings.refresh_live_models(provider, force=True))
+            self.assertFalse(mappings.refresh_live_models("qwen", force=True))
             fetch.assert_not_called()
 
     def test_generic_transports_and_qwen_thinking(self):
@@ -151,7 +150,7 @@ class ProviderParityTests(unittest.TestCase):
 
     def test_generation_reports_refresh_failure_and_keeps_explicit_model(self):
         generator = BaseGenerator(model="explicit-model")
-        with patch.object(generator, "get_provider_config", return_value=SimpleNamespace()), patch("git_tools.generators.base.refresh_live_models", return_value=False), patch("git_tools.cli._print_model_catalog_status") as status:
+        with patch.object(generator, "get_provider_config", return_value=SimpleNamespace()), patch("git_tools.generators.base.models.refresh_live_models", return_value=False), patch("git_tools.cli._print_model_catalog_status") as status:
             model, _, _ = generator.select_model_params("kimicli")
         status.assert_called_once_with("kimicli", False)
         self.assertEqual(model, "explicit-model")

@@ -8,6 +8,7 @@ Read these first:
 - [Documentation index](README.md)
 - [Git Flow Guide](git-flow-guide.md)
 - [Style Guide](style.md)
+- [Code layout](architecture.md)
 - [Code of Conduct](code-of-conduct.md)
 
 `git-tools` supports multiple LLM providers, prompt files, workflow examples, and a Git Flow-oriented release model. Keep changes aligned across code, docs, prompts, and tests.
@@ -80,6 +81,7 @@ If you change provider configuration, prompt files, or workflow examples, also c
 
 When you change one of these areas, update the others in the same PR when needed:
 
+- generator packages in `git_tools/generators/<name>/`; keep each package's `__init__.py` re-exports stable, because `cli.py`, the CI adapters, and tests import `git_tools.generators.<name>` by that path (see [code layout](architecture.md))
 - provider settings in `git_tools/settings/`
 - provider and model definitions in `git_tools/settings/mappings.py`
 - user-facing env examples in `git-tools.env.example`

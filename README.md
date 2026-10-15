@@ -68,5 +68,6 @@ Workflow adapters are examples to copy and configure in the target repository;
 
 ## Contribute
 
-See [contributing](docs/contributing.md), [style conventions](docs/style.md), and
-[code of conduct](docs/code-of-conduct.md). Licensed under [MIT](LICENSE).
+See [contributing](docs/contributing.md), [code layout](docs/architecture.md),
+[style conventions](docs/style.md), and [code of conduct](docs/code-of-conduct.md).
+Licensed under [MIT](LICENSE).

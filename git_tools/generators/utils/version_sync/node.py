@@ -1,6 +1,7 @@
 """Node/npm version-field syncing, without dependency or workspace changes."""
 
 import json
+import math
 import re
 from typing import Callable
 
@@ -13,7 +14,16 @@ def sync_npm_versions(
     def reject_constant(value: str) -> None:
         raise ValueError(f"Invalid JSON constant: {value}")
 
-    data = json.loads(text, parse_constant=reject_constant)
+    def finite_float(literal: str) -> float:
+        # A literal such as 1e400 overflows to inf and would be written back
+        # as the invalid token Infinity, corrupting a value this sync never
+        # meant to touch; the file is reported and left alone instead.
+        value = float(literal)
+        if not math.isfinite(value):
+            raise ValueError(f"Unsupported numeric value: {literal}")
+        return value
+
+    data = json.loads(text, parse_constant=reject_constant, parse_float=finite_float)
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object")
     owners = [(data, "version")]
@@ -38,7 +48,7 @@ def sync_npm_versions(
         return text, False
     indent_match = re.search(r'\n([ \t]+)"', text)
     indent = indent_match.group(1) if indent_match else None
-    updated = json.dumps(data, ensure_ascii=False, indent=indent)
+    updated = json.dumps(data, ensure_ascii=False, indent=indent, allow_nan=False)
     if text.endswith("\n"):
         updated += "\n"
     return updated, True

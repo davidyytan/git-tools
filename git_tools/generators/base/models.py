@@ -130,7 +130,13 @@ class ModelSelectionMixin:
             provider_lower = normalize_provider_name(provider)
             if PROVIDERS[provider_lower].get("allow_manual_model"):
                 return settings.effective_main_model
-        # Fallback to first model
+        # Fallback to the provider module's default model (its curated list
+        # leads with it; live-only providers have no list to lead), then to
+        # the first listed model.
+        if provider:
+            default = PROVIDERS[normalize_provider_name(provider)].get("default_model")
+            if default:
+                return default
         return list(models.values())[0]["model_name"]
 
     def _resolve_cli_model(self, models: Dict[str, Any]) -> str:

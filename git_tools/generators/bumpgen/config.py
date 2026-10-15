@@ -38,6 +38,8 @@ class BumpConfig:
 
 
 def load_bump_config(root: Path) -> BumpConfig:
+    # Use physical identity consistently (notably /var versus /private/var on macOS).
+    root = root.resolve()
     cz_config_path, cz_settings = _load_commitizen_settings(root)
     pyproject_path = root / "pyproject.toml"
 
@@ -57,6 +59,23 @@ def load_bump_config(root: Path) -> BumpConfig:
     current_version = _resolve_configured_version(
         current_version_text, commitizen_version_scheme
     )
+
+    sync_auxiliary = _sync_auxiliary_enabled(cz_settings)
+    if not sync_auxiliary:
+        return BumpConfig(
+            root=root,
+            current_version=current_version,
+            current_version_text=current_version_text,
+            project_name=None,
+            tag_format=_read_nested_string(cz_settings, ("tag_format",)) or DEFAULT_TAG_FORMAT,
+            major_version_zero=bool(cz_settings.get("major_version_zero", False)),
+            version_targets=(SectionVersionTarget(
+                path=cz_config_path,
+                label="Commitizen version",
+                section_header="[tool.commitizen]",
+                strict_consistency=True,
+            ),),
+        )
 
     try:
         pyproject_data = _read_toml(pyproject_path)
@@ -168,7 +187,10 @@ def load_bump_config(root: Path) -> BumpConfig:
                 if not resolved_targets:
                     _warn_auxiliary(f"version_files entry {spec}", "no matching files")
                 for path, regex in resolved_targets:
-                    if path.resolve() in {managed.resolve() for managed in auto_managed_paths}:
+                    # Aliases must share pending content rather than producing
+                    # competing writes to the same physical custom file.
+                    path = path.resolve()
+                    if path in {managed.resolve() for managed in auto_managed_paths}:
                         continue
                     targets.append(
                         PatternVersionTarget(
@@ -178,6 +200,9 @@ def load_bump_config(root: Path) -> BumpConfig:
                             strict_consistency=False,
                         )
                     )
+            except _OutsideRepositoryError:
+                # Unsafe explicit configuration is not a best-effort sync failure.
+                raise
             except Exception as exc:
                 _warn_auxiliary(f"version_files entry {spec}", exc)
 
@@ -302,8 +327,42 @@ def _resolve_version_file_spec(
     pattern = drive + path_part
     regex = regex_part or re.escape(current_version)
 
+    root = root.resolve()
+    candidate = root / pattern
+    _require_inside_repository(candidate, root, spec)
+    paths = [Path(match).resolve() for match in sorted(glob(os.fspath(candidate)))]
+    for path in paths:
+        _require_inside_repository(path, root, spec)
     compiled = re.compile(regex)
-    resolved: list[tuple[Path, re.Pattern[str]]] = []
-    for match in sorted(glob(os.fspath(root / pattern))):
-        resolved.append((Path(match), compiled))
-    return resolved
+    return [(path, compiled) for path in paths]
+
+
+class _OutsideRepositoryError(ConfigError):
+    """An explicit custom target escapes the repository's physical root."""
+
+
+def _require_inside_repository(path: Path, root: Path, spec: str) -> None:
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise _OutsideRepositoryError(
+            f"version_files entry {spec!r} resolves outside repository root "
+            f"{root}: {resolved}"
+        )
+
+
+def _sync_auxiliary_enabled(settings: dict) -> bool:
+    value = settings.get("sync_auxiliary", True)
+    if not isinstance(value, bool):
+        raise ConfigError("[tool.commitizen].sync_auxiliary must be a TOML boolean (true or false).")
+    override = os.environ.get("GIT_TOOLS_BUMP_SYNC_AUXILIARY")
+    if override is None:
+        return value
+    normalized = override.strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    raise ConfigError(
+        "GIT_TOOLS_BUMP_SYNC_AUXILIARY must be a boolean: "
+        "true/false, 1/0, yes/no, or on/off."
+    )

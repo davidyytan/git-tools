@@ -3,14 +3,10 @@
 import uuid
 from typing import Any, Dict, Optional
 
-from git_tools.settings.mappings import PROVIDERS
+from git_tools.settings.mappings import PROVIDERS, is_openai_reasoning_model
 from git_tools.settings.settings import normalize_provider_name, settings
 
 from .openrouter import _get_openrouter_extra_body
-
-# OpenAI's reasoning families reject a custom temperature (only the server
-# default is valid); the platform's chat models outside them still take one.
-_OPENAI_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4", "codex")
 
 # Stable per-process session id for CLIProxyAPI prompt-cache affinity. CLIProxyAPI
 # keys reasoning/cache continuity off the Session_id header, so one id per run keeps
@@ -131,39 +127,50 @@ class ChatClientMixin:
             "api_key": provider_config.api_key,
             "base_url": provider_config.base_url,
             "default_headers": {"User-Agent": "KimiCLI/1.3"},
-            "extra_body": {
-                "thinking": {"type": "disabled"},
-            },
+            "extra_body": {},
         }
 
         from git_tools.settings.mappings import normalize_catalog_metadata
 
         metadata = normalize_catalog_metadata(self._get_model_config("kimicli", model_to_use) or {})
         mode = metadata.get("supports_thinking_type")
-        # Kimi has no "none" tier: off is absence on the wire, so a global
-        # `none` must not switch thinking on with an effort the API rejects.
+        # Kimi has no "none" tier: as in agent-core, `none` is absence on the
+        # wire, so it must not switch thinking on with an effort the API rejects.
         effort = settings.default_reasoning_effort
         if effort == "none":
             effort = None
-        efforts = metadata.get("think_efforts", {})
-        valid_efforts = efforts.get("valid_efforts", []) if isinstance(efforts, dict) else []
-        if effort and valid_efforts and effort not in valid_efforts:
-            raise ValueError("Selected Kimi effort is not supported by this model")
-        enabled = settings.kimi_thinking or (settings.kimi_thinking is None and effort)
+        # The catalog's declared mode wins, then an explicit off, then the
+        # agent-core rule that a tier alone switches thinking on. With neither
+        # configured nothing thinking-related is sent and Kimi applies the
+        # model's own default, exactly as agent-core does.
         if mode == "only":
-            enabled = True
-        elif mode == "no":
-            enabled = False
-        if enabled:
+            state = "enabled"
+        elif mode == "no" or settings.kimi_thinking is False:
+            state = "disabled"
+        elif settings.kimi_thinking or effort:
+            state = "enabled"
+        else:
+            state = None
+        if state == "disabled":
+            kwargs["extra_body"]["thinking"] = {"type": "disabled"}
+        elif state == "enabled":
+            # The tier is checked only when it will be sent. With thinking off
+            # nothing thinking-related reaches the wire (as in agent-core, where
+            # an explicit off takes precedence over the effort setting), so a
+            # stale override must not block the client.
+            efforts = metadata.get("think_efforts", {})
+            valid_efforts = efforts.get("valid_efforts", []) if isinstance(efforts, dict) else []
+            if effort and valid_efforts and effort not in valid_efforts:
+                raise ValueError("Selected Kimi effort is not supported by this model")
             thinking = {"type": "enabled", "keep": "all"}
             if effort:
                 thinking["effort"] = effort
             kwargs["extra_body"]["thinking"] = thinking
 
-        # Kimi Code currently rejects every other value (HTTP 400: "only 0.6
-        # is allowed for this model"). Enforce the provider requirement even if
-        # a stale setting or explicit --temp override supplies another value.
-        self._add_optional_params(kwargs, 0.6, max_tokens)
+        # The configured temperature (0.6 by default) goes through like for
+        # every other provider; Kimi answers with its own error if it rejects
+        # a value, rather than this client silently overriding the setting.
+        self._add_optional_params(kwargs, temperature, max_tokens)
         return ChatOpenAI(**kwargs)
 
     def _create_compatible_client(
@@ -176,24 +183,32 @@ class ChatClientMixin:
         kwargs = {"model": model, "api_key": config.api_key, "base_url": config.base_url}
         self._add_optional_params(kwargs, temperature, max_tokens)
         effort = settings.default_reasoning_effort
+        # As in agent-core, "off" is absence on the wire for every provider
+        # here (OpenRouter, which has a real `none` tier, is handled apart).
+        tier = None if effort == "none" else effort
         if provider == "qwen":
+            # DashScope keeps thinking off by default on the qwen3-max/plus/flash
+            # families; preserve_thinking is its equivalent of Kimi's keep: all.
             body: Dict[str, Any] = {"preserve_thinking": True}
-            if effort:
+            if tier:
                 if model.lower().startswith("qwen3.8-max"):
-                    body["reasoning_effort"] = effort
+                    body["reasoning_effort"] = tier
                 elif model.lower().startswith("qwen") or model.lower() == "coder-model":
-                    body["enable_thinking"] = effort != "none"
+                    # Older hybrids have no effort ladder; it collapses to on/off.
+                    body["enable_thinking"] = True
             kwargs["extra_body"] = body
         elif provider == "openai":
-            # The platform's models all read the native top-level field, so the
-            # tier ships without a per-model list; "none" is absence on the wire
-            # (GPT-6 rejects it). Reasoning families accept only the server's
-            # default temperature, so it is omitted for them. Chat goes to
-            # /chat/completions; the pinned langchain-openai has no Responses
-            # API routing to turn off, so no provider-specific class is needed.
-            if effort and effort != "none":
-                kwargs["reasoning_effort"] = effort
-            if model.lower().startswith(_OPENAI_REASONING_PREFIXES):
+            # Only the reasoning families read the native top-level field;
+            # OpenAI returns 400 for it on gpt-4.x/4o/3.5, so those never get
+            # it. "none" is absence on the wire, i.e. the server default (GPT-6
+            # rejects an explicit none). Reasoning families also accept only
+            # the server's default temperature, so it is omitted for them.
+            # Chat goes to /chat/completions; the pinned langchain-openai has
+            # no Responses API routing to turn off, so no provider-specific
+            # class is needed.
+            if is_openai_reasoning_model(model):
+                if effort and effort != "none":
+                    kwargs["reasoning_effort"] = effort
                 kwargs.pop("temperature", None)
         elif provider == "anthropic":
             # Anthropic's OpenAI-compatible layer ("OpenAI SDK compatibility"
@@ -208,8 +223,10 @@ class ChatClientMixin:
                 kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
             elif effort:
                 kwargs["reasoning_effort"] = effort
-        elif effort and model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-")):
-            kwargs["reasoning_effort"] = effort
+        elif tier and is_openai_reasoning_model(model):
+            # Proxies in front of OpenAI (Copilot) and mixed endpoints (ACRC):
+            # only the reasoning families read the field; gpt-4.x would 400.
+            kwargs["reasoning_effort"] = tier
         return ChatOpenAI(**kwargs)
 
     def _get_model_config(
@@ -217,8 +234,8 @@ class ChatClientMixin:
     ) -> Optional[Dict[str, Any]]:
         """Return the PROVIDERS model entry whose model_name matches.
 
-        Used to read per-model knobs (e.g. OpenRouter provider routing or the
-        CLIProxyAPI reasoning_effort default) for a resolved model name.
+        Used to read per-model knobs (e.g. OpenRouter provider routing or Kimi
+        catalog metadata) for a resolved model name.
         """
         models = PROVIDERS.get(provider, {}).get("models", {})
         for model_data in models.values():
@@ -226,21 +243,18 @@ class ChatClientMixin:
                 return model_data
         return None
 
-    def _resolve_reasoning_effort(
-        self, model_config: Optional[Dict[str, Any]]
-    ) -> Optional[str]:
-        """Resolve reasoning effort: env/settings override > per-model default.
+    def _resolve_reasoning_effort(self, model_to_use: str) -> Optional[str]:
+        """The configured tier for a proxied model that reads it, else nothing.
 
-        ``GIT_TOOLS_REASONING_EFFORT`` (via ``settings.default_reasoning_effort``)
-        wins for models that declare ``reasoning_effort`` in their provider
-        definition; otherwise the model's per-model default applies (e.g. the
-        gpt-5 family defaults to ``xhigh``).
+        As in agent-core there is no implicit default: ``GIT_TOOLS_REASONING_EFFORT``
+        (``settings.default_reasoning_effort``) is forwarded when set and the
+        model is one of OpenAI's reasoning families; ``none`` is absence on the
+        wire.
         """
-        if not model_config or not model_config.get("reasoning_effort"):
+        effort = (settings.default_reasoning_effort or "").strip().lower()
+        if not effort or effort == "none" or not is_openai_reasoning_model(model_to_use):
             return None
-        if settings.default_reasoning_effort:
-            return settings.default_reasoning_effort.strip().lower() or None
-        return str(model_config["reasoning_effort"]).strip().lower() or None
+        return effort
 
     def _create_cliproxy_client(
         self,
@@ -251,36 +265,26 @@ class ChatClientMixin:
     ):
         """Create ChatOpenAI client for the CLIProxyAPI endpoint.
 
-        CLIProxyAPI fronts CLI-authenticated Codex/GPT-5 models. Those reasoning
-        models reject a custom ``temperature`` (only the server default is valid),
-        so it is omitted for the gpt-5 family. The completion cap covers reasoning
+        CLIProxyAPI fronts CLI-authenticated Codex/GPT models. The configured
+        ``temperature`` is sent to every model: the proxy's Codex backend
+        accepted 0.6 on gpt-6-astra and gpt-5.6-sol when probed (2026-10-15),
+        unlike OpenAI's own platform. The completion cap covers reasoning
         + visible tokens together, so it relies on the global ``default_max_tokens``
         (32k) being large enough to leave room for the answer. A stable
-        ``Session_id`` header keeps the run on one upstream session, and
-        ``reasoning_effort`` (default ``xhigh`` for the gpt-5 family) is forwarded when set.
+        ``Session_id`` header keeps the run on one upstream session, and the
+        configured ``reasoning_effort`` is forwarded to reasoning models when set.
         """
         from langchain_openai import ChatOpenAI
-
-        model_config = self._get_model_config("cliproxyapi", model_to_use)
 
         kwargs: Dict[str, Any] = {
             "model": model_to_use,
             "api_key": provider_config.api_key,
             "base_url": provider_config.base_url,
             "default_headers": {"Session_id": _CLIPROXY_SESSION_ID},
-            "max_tokens": max_tokens if max_tokens is not None else settings.default_max_tokens,
-            "max_retries": settings.default_max_retries,
         }
+        self._add_optional_params(kwargs, temperature, max_tokens)
 
-        # gpt-5 / Codex reasoning models reject a custom temperature; omit it so the
-        # server default applies. Non-reasoning models keep the configured value.
-        is_reasoning_model = str(model_to_use).strip().lower().startswith("gpt-5")
-        if not is_reasoning_model:
-            kwargs["temperature"] = (
-                temperature if temperature is not None else settings.default_temperature
-            )
-
-        reasoning_effort = self._resolve_reasoning_effort(model_config)
+        reasoning_effort = self._resolve_reasoning_effort(str(model_to_use))
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
 

@@ -24,11 +24,13 @@ from git_tools.settings.settings import (
     reload_settings,
     settings,
 )
+from git_tools.providers.kimi_code import KimiCodeModelEntry, default_choice_index, thinking_choices
+from git_tools.providers.openrouter import OpenRouterEndpoint
 from git_tools.settings.mappings import (
     LIVE_MODEL_PROVIDERS,
     PROVIDERS,
-    add_user_model,
     get_live_model_refresh_error,
+    is_openai_reasoning_model,
     provider_allows_manual_model,
     refresh_live_models,
     restore_provider_catalog,
@@ -138,9 +140,12 @@ def _ask_with_back(question: questionary.Question) -> Any:
 
 
 def _provider_default_model(provider: str) -> str:
-    """Return the first configured model name for a provider."""
+    """The provider module's default model (its curated list leads with it)."""
     provider = normalize_provider_name(provider)
-    models = list(PROVIDERS[provider]["models"].values())
+    definition = PROVIDERS[provider]
+    if definition.get("default_model"):
+        return definition["default_model"]
+    models = list(definition["models"].values())
     return models[0]["model_name"] if models else ""
 
 
@@ -407,15 +412,23 @@ def _build_settings_choices(
             value="openrouter-provider",
         ))
     if provider == "kimicli":
-        thinking = {True: "enabled", False: "disabled"}.get(state.get("kimi_thinking"), "default")
-        choices.append(Choice(styled("Kimi thinking: ", fmt_primary(thinking)), value="kimi-thinking"))
+        # Thinking and tier are one row, as in agent-cli's Kimi picker.
+        choices.append(Choice(styled("Kimi thinking: ", fmt_primary(_kimi_thinking_summary(state))),
+                              value="kimi-thinking"))
 
     effort = _effective_effort(
         provider,
         state.get("model"),
         state.get("reasoning_effort"),
     )
-    if effort or provider in {"openrouter", "qwen", "kimicli", "acrc", "copilot", "openai", "anthropic"}:
+    # OpenAI only honours a tier on its reasoning families; the row would be a
+    # dead setting for gpt-4.x/4o, so it is shown for reasoning models only.
+    effort_capable = (
+        is_openai_reasoning_model(state.get("model") or "")
+        if provider in {"openai", "cliproxyapi"}
+        else provider in {"openrouter", "qwen", "acrc", "copilot", "anthropic"}
+    )
+    if provider != "kimicli" and (effort or effort_capable):
         source = "override" if state.get("reasoning_effort") else "model default"
         choices.append(Choice(
             styled("Effort: ", fmt_primary(effort), fmt_dim(f" ({source})")), value="effort",
@@ -747,7 +760,7 @@ def pr(
         Optional[str],
         typer.Option(
             "--workflow-version",
-            help="Explicit X.Y.Z tuple for Start or Backmerge fixed-title PR modes when the repo state cannot infer it safely",
+            help="Explicit X.Y.Z tuple for Start/Backmerge modes; required for noninteractive hotfix backmerge (use the already-promoted version)",
         ),
     ] = None,
     interactive: Annotated[
@@ -1112,7 +1125,11 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
         raise typer.Exit(1)
     changed = selection != old_provider
     old_base = os.environ.get("GIT_TOOLS_API_BASE")
-    endpoint = PROVIDERS[selection]["default_base_url"] if changed else _current_api_base(selection)
+    # A switch applies the provider's own endpoint: the custom one remembered
+    # under its key when there is one, else the module default (agent-cli
+    # keeps a base URL per provider profile; agent-core never inherits
+    # another provider's endpoint).
+    endpoint = _provider_endpoint(selection) if changed else _current_api_base(selection)
     if selection == "qwen" and interactive_flow:
         endpoint = _ask_with_back(questionary.text(
             "Qwen API endpoint (exact plan/region URL):", default=endpoint or "",
@@ -1145,12 +1162,19 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
 def _prompt_provider_options(
     provider: str, model: str, state: dict[str, Any], changed: bool,
 ) -> dict[str, str] | None:
-    """Collect the rest of setup without saving partial selections."""
+    """Collect the rest of setup without saving partial selections.
+
+    On a provider change the prompts start from that provider's remembered
+    profile (agent-cli seeds its flow from the provider's profile the same
+    way); otherwise from the current values.
+    """
+    profile = _remembered_profile(provider) if changed else {}
+    current_support = profile.get("support_model") if changed else state.get("support_model")
     support = _ask_with_back(questionary.select(
         "Support model (reserved, unused):",
         choices=[Choice("Follow main dynamically", value="follow-main"),
-                 *_build_model_choices(provider, current_model=None if changed else state.get("support_model")
-                                       if state.get("support_model") != "follow-main" else None),
+                 *_build_model_choices(provider, current_model=current_support
+                                       if current_support and current_support != "follow-main" else None),
                  _back_choice()], style=TYPER_STYLE, qmark="❯"))
     if support in (None, _BACK):
         return None
@@ -1159,19 +1183,24 @@ def _prompt_provider_options(
         if support is None or not support.strip():
             return None
     updates = {"GIT_TOOLS_MODEL_SUPPORT": support.strip(),
-               "GIT_TOOLS_OPENROUTER_PROVIDER": "" if changed else state.get("openrouter_provider") or "",
-               "GIT_TOOLS_REASONING_EFFORT": "" if changed else state.get("reasoning_effort") or "",
+               "GIT_TOOLS_OPENROUTER_PROVIDER": (profile.get("openrouter_provider") or "") if changed
+               else state.get("openrouter_provider") or "",
+               "GIT_TOOLS_REASONING_EFFORT": (profile.get("reasoning_effort") or "") if changed
+               else state.get("reasoning_effort") or "",
                "GIT_TOOLS_KIMI_THINKING": ""}
     if provider == "openrouter":
-        from .settings.mappings import fetch_openrouter_upstreams
+        from .settings.mappings import fetch_openrouter_endpoints
         from .settings.settings import load_provider_config
         config = load_provider_config(provider)
-        upstreams = fetch_openrouter_upstreams(config.base_url, config.api_key, model)
+        endpoints = fetch_openrouter_endpoints(config.base_url, config.api_key, model)
+        remembered_pin = updates["GIT_TOOLS_OPENROUTER_PROVIDER"] or "any"
+        tags = [entry.tag for entry in endpoints]
         pin = _ask_with_back(questionary.select(
             "OpenRouter upstream for the main model:",
-            choices=[Choice("Any (unpinned)", value="any"),
-                     *[Choice(slug, value=slug) for slug in upstreams],
+            choices=[_any_upstream_choice(),
+                     *[_upstream_choice(entry, remembered_pin) for entry in endpoints],
                      Choice("Enter upstream slug manually", value=ADD_MODEL_SENTINEL), _back_choice()],
+            default=remembered_pin if remembered_pin in ("any", *tags) else None,
             style=TYPER_STYLE, qmark="❯"))
         if pin in (None, _BACK):
             return None
@@ -1180,32 +1209,34 @@ def _prompt_provider_options(
             if pin is None or not pin.strip():
                 return None
         updates["GIT_TOOLS_OPENROUTER_PROVIDER"] = "" if pin == "any" else pin.strip().lower()
-    metadata = _find_model_config(provider, model) or {}
-    thinking_enabled = True
     if provider == "kimicli":
-        mode = metadata.get("supports_thinking_type")
-        choices = ["default", "enabled", "disabled"]
-        if mode == "only":
-            choices = ["enabled"]
-        elif mode == "no":
-            choices = ["disabled"]
-        thinking = _ask_with_back(questionary.select(
-            "Kimi thinking:", choices=choices, style=TYPER_STYLE, qmark="❯"))
-        if thinking is None:
+        # Thinking and tier are one choice, from the catalog entry (agent-cli).
+        remembered = profile.get("kimi_thinking") if changed else (
+            None if state.get("kimi_thinking") is None else str(bool(state.get("kimi_thinking"))).lower())
+        current_thinking = {"true": True, "false": False}.get(remembered or "")
+        picked = _pick_kimi_thinking(
+            provider, model, current_thinking, updates["GIT_TOOLS_REASONING_EFFORT"] or None,
+            keep_current=not changed and model == state.get("model"),
+        )
+        if picked is None:
             return None
-        updates["GIT_TOOLS_KIMI_THINKING"] = "" if thinking == "default" else str(thinking == "enabled").lower()
-        thinking_enabled = thinking != "disabled"
-    if thinking_enabled and (provider in {"openrouter", "qwen", "kimicli", "openai", "anthropic"}
-                             or _model_effort(provider, model)
-                             or model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-"))):
+        thinking, effort = picked
+        updates["GIT_TOOLS_KIMI_THINKING"] = "" if thinking is None else str(thinking).lower()
+        updates["GIT_TOOLS_REASONING_EFFORT"] = effort or ""
+        return updates
+    if provider in {"openai", "cliproxyapi"}:
+        effort_capable = is_openai_reasoning_model(model)
+    else:
+        effort_capable = (provider in {"openrouter", "qwen", "anthropic"}
+                          or bool(_model_effort(provider, model))
+                          or model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-")))
+    if effort_capable:
         effort = _ask_with_back(questionary.select(
             "Reasoning effort:", choices=[*_build_effort_choices(provider, model, updates["GIT_TOOLS_REASONING_EFFORT"]), _back_choice()],
             style=TYPER_STYLE, qmark="❯"))
         if effort in (None, _BACK):
             return None
         updates["GIT_TOOLS_REASONING_EFFORT"] = effort
-    elif provider == "kimicli":
-        updates["GIT_TOOLS_REASONING_EFFORT"] = ""
     return updates
 
 
@@ -1255,7 +1286,8 @@ def _edit_provider_impl(state: dict[str, Any], value: Optional[str] = None,
             # cancellation or an exception restores the caller's old value.
             os.environ[env_var] = new_key
         try:
-            current_model = state["model"] if not provider_changed else ""
+            # A switch starts from the target provider's remembered model.
+            current_model = state["model"] if not provider_changed else (_remembered_profile(selection)["model"] or "")
             new_model = _choose_provider_model(selection, current_model)
             setup_choices = None
             if new_model is not None:
@@ -1282,7 +1314,7 @@ def _edit_provider_impl(state: dict[str, Any], value: Optional[str] = None,
         # Persist provider, optional key, and model in one atomic file replace.
         # A write failure restores the exact process environment used before
         # setup, so the whole operation remains transactional.
-        updates = {
+        updates: dict[str, str | None] = {
             "GIT_TOOLS_PROVIDER": selection,
             "GIT_TOOLS_DEFAULT_MODEL": new_model,
             "GIT_TOOLS_MODEL_MAIN": new_model,
@@ -1307,7 +1339,6 @@ def _edit_provider_impl(state: dict[str, Any], value: Optional[str] = None,
                 else:
                     os.environ.pop(env_var, None)
             raise
-        _remember_manual_model(selection, new_model)
         state["provider"] = selection
         state["model"] = new_model
         state["support_model"] = updates["GIT_TOOLS_MODEL_SUPPORT"]
@@ -1325,23 +1356,34 @@ def _edit_provider_impl(state: dict[str, Any], value: Optional[str] = None,
 
     # Direct `settings provider <name>` remains non-interactive and preserves
     # the previous behavior: switch immediately and select a valid fallback.
-    updates = {"GIT_TOOLS_PROVIDER": selection}
+    updates: dict[str, str | None] = {"GIT_TOOLS_PROVIDER": selection}
     if endpoint is not None:
         updates["GIT_TOOLS_API_BASE"] = endpoint
     if provider_changed:
+        # The target provider's profile comes back: its remembered model and
+        # sub-choices, else the provider default and a clean slate.
+        profile = _remembered_profile(selection)
         refresh_live_models(selection)
-        model_config = _find_model_config(selection, state["model"])
-        new_model = model_config["model_name"] if model_config else _provider_default_model(selection)
+        model_config = _find_model_config(selection, profile["model"] or state["model"])
+        if model_config:
+            new_model = model_config["model_name"]
+        else:
+            new_model = profile["model"] or _provider_default_model(selection)
         updates.update({"GIT_TOOLS_DEFAULT_MODEL": new_model, "GIT_TOOLS_MODEL_MAIN": new_model,
-                        "GIT_TOOLS_MODEL_SUPPORT": "follow-main", "GIT_TOOLS_OPENROUTER_PROVIDER": "",
-                        "GIT_TOOLS_REASONING_EFFORT": "", "GIT_TOOLS_KIMI_THINKING": ""})
+                        "GIT_TOOLS_MODEL_SUPPORT": profile["support_model"] or "follow-main",
+                        "GIT_TOOLS_OPENROUTER_PROVIDER": profile["openrouter_provider"] or "",
+                        "GIT_TOOLS_REASONING_EFFORT": profile["reasoning_effort"] or "",
+                        "GIT_TOOLS_KIMI_THINKING": profile["kimi_thinking"] or ""})
     save_settings(updates)
     state["provider"] = selection
     state["api_configured"], _ = check_api_key_configured(selection)
     if provider_changed:
         state["model"] = new_model
-        state["reasoning_effort"] = None
-        state["kimi_thinking"] = None
+        state["support_model"] = updates["GIT_TOOLS_MODEL_SUPPORT"]
+        state["openrouter_provider"] = updates["GIT_TOOLS_OPENROUTER_PROVIDER"] or None
+        state["reasoning_effort"] = updates["GIT_TOOLS_REASONING_EFFORT"] or None
+        thinking = updates["GIT_TOOLS_KIMI_THINKING"]
+        state["kimi_thinking"] = None if not thinking else thinking == "true"
     console.print()
     success(f"Provider set to {selection}")
 
@@ -1387,16 +1429,6 @@ def _print_model_catalog_status(provider: str, live: bool) -> None:
     )
 
 
-def _remember_manual_model(provider: str, model: str) -> None:
-    """Best-effort persistence for a selected model absent from the catalog."""
-    if _find_model_config(provider, model):
-        return
-    try:
-        add_user_model(provider, model)
-    except OSError as exc:
-        warning(f"Model selected, but its picker history could not be saved: {exc}")
-
-
 def _choose_provider_model(provider: str, current_model: str) -> str | None:
     """Discover and choose a model for one provider without persisting it."""
     live = refresh_live_models(provider, force=True)
@@ -1422,21 +1454,43 @@ def _choose_provider_model(provider: str, current_model: str) -> str | None:
         model_choice = new_model.strip() if new_model and new_model.strip() else None
         if not model_choice:
             return None
-    # Manual IDs are persisted only after the caller commits the selected model.
-    # This keeps cancellation and provider setup write failures side-effect free.
+    # A typed id is remembered only as the saved main model (agent-cli pins the
+    # saved model first in the picker; there is no separate list of manual ids).
     return model_choice
 
 
-def _list_openrouter_upstreams(model: str) -> list[str]:
-    """Upstream slugs OpenRouter can route ``model`` to; empty when unknown."""
-    from .settings.mappings import fetch_openrouter_upstreams
+def _list_openrouter_endpoints(model: str) -> list[OpenRouterEndpoint]:
+    """The upstreams OpenRouter can route ``model`` to, cheapest input first; empty when unknown."""
+    from .settings.mappings import fetch_openrouter_endpoints
     from .settings.settings import load_provider_config
 
     try:
         config = load_provider_config("openrouter")
     except ValueError:
         return []
-    return fetch_openrouter_upstreams(config.base_url, config.api_key, model)
+    return list(fetch_openrouter_endpoints(config.base_url, config.api_key, model))
+
+
+def _list_openrouter_upstreams(model: str) -> list[str]:
+    """Upstream slugs OpenRouter can route ``model`` to; empty when unknown."""
+    return [entry.tag for entry in _list_openrouter_endpoints(model)]
+
+
+def _upstream_choice(entry: OpenRouterEndpoint, current: Optional[str]) -> Choice:
+    """One upstream row as agent-cli shows it: name, slug, price, context, caching, uptime."""
+    parts = [fmt_primary(entry.label)]
+    if entry.tag != entry.label:
+        parts.append(fmt_dim(f" [{entry.tag}]"))
+    detail = entry.detail_text()
+    if detail:
+        parts.append(fmt_dim(f" — {detail}"))
+    if entry.tag == current:
+        parts.append(fmt_current())
+    return Choice(styled(*parts), value=entry.tag)
+
+
+def _any_upstream_choice() -> Choice:
+    return Choice(styled(fmt_dim("Any — let OpenRouter choose; caching may reset between turns")), value="any")
 
 
 def _upstream_serves(pin: str, upstreams: list[str]) -> bool:
@@ -1454,22 +1508,18 @@ def _prompt_openrouter_upstream(model: str, current: Optional[str]) -> Optional[
     current pin is still offered rather than silently dropped: an unpinned run
     can migrate between upstreams and lose its prompt cache.
     """
-    upstreams = _list_openrouter_upstreams(model)
+    endpoints = _list_openrouter_endpoints(model)
     manual = "__manual_upstream__"
     choices: list[Choice] = []
-    if upstreams:
-        for slug in upstreams:
-            parts = [fmt_primary(slug)]
-            if slug == current:
-                parts.append(fmt_current())
-            choices.append(Choice(styled(*parts), value=slug))
+    if endpoints:
+        choices.extend(_upstream_choice(entry, current) for entry in endpoints)
     else:
         warning(f"Could not list OpenRouter upstreams for {model}.")
         if current:
             choices.append(Choice(
                 styled(fmt_current(f"Keep current pin: {current}"), fmt_dim(" (unverified)")), value=current,
             ))
-    choices.extend([Choice(styled(fmt_dim("Any (unpinned)")), value="any"),
+    choices.extend([_any_upstream_choice(),
                     Choice(styled(fmt_dim("Enter upstream slug manually")), value=manual), _back_choice()])
     default = current if current and any(choice.value == current for choice in choices) else None
     value = _ask_with_back(questionary.select(
@@ -1547,7 +1597,6 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
     if routing_changed:
         updates["GIT_TOOLS_OPENROUTER_PROVIDER"] = pin
     save_settings(updates)
-    _remember_manual_model(provider, model_choice)
     state["model"] = model_choice
     if routing_changed:
         state["openrouter_provider"] = pin or None
@@ -1567,18 +1616,22 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
             state["model"],
             state["reasoning_effort"],
         )
+        choices = _build_effort_choices(state["provider"], state["model"], state["reasoning_effort"])
+        # A saved tier the model's catalog no longer declares is not offered;
+        # questionary rejects a default outside the list, so fall back to the
+        # model default and say why.
+        configured = (state["reasoning_effort"] or "").strip().lower()
+        default = configured if any(choice.value == configured for choice in choices) else ""
+        if configured and default != configured:
+            warning(
+                f"Saved effort {configured} is not one of this model's tiers; "
+                "pick a listed tier or the model default."
+            )
         effort_choice = _ask_with_back(
             questionary.select(
                 f"Reasoning effort (current: {effective_effort or 'unset'}):",
-                choices=[
-                    *_build_effort_choices(
-                        state["provider"],
-                        state["model"],
-                        state["reasoning_effort"],
-                    ),
-                    _back_choice(),
-                ],
-                default=state["reasoning_effort"] or "",
+                choices=[*choices, _back_choice()],
+                default=default,
                 style=TYPER_STYLE,
                 qmark="❯",
                 pointer="›",
@@ -1785,6 +1838,20 @@ def _current_api_base(provider: str) -> str:
         return os.environ.get("GIT_TOOLS_API_BASE", PROVIDERS[provider]["default_base_url"])
 
 
+def _provider_endpoint(provider: str) -> str:
+    """The endpoint a switch to ``provider`` applies: remembered custom, else default."""
+    from .settings.settings import saved_provider_base_url
+
+    return saved_provider_base_url(provider) or PROVIDERS[provider]["default_base_url"]
+
+
+def _remembered_profile(provider: str) -> dict[str, str | None]:
+    """The target provider's remembered choices (its profile), to seed a switch."""
+    from .settings.settings import saved_provider_profile
+
+    return saved_provider_profile(provider)
+
+
 def _validate_api_base(value: str) -> str:
     from urllib.parse import urlsplit
 
@@ -1856,24 +1923,87 @@ def _edit_openrouter_provider(state: dict[str, Any], value: Optional[str] = None
     success("OpenRouter routing saved.")
 
 
+def _kimi_entry(provider: str, model: str) -> KimiCodeModelEntry:
+    """The model's catalog record; an empty one when the catalog has none."""
+    config = _find_model_config(provider, model) or {}
+    return KimiCodeModelEntry.from_payload({**config, "id": model}) or KimiCodeModelEntry(id=model)
+
+
+def _kimi_thinking_summary(state: dict[str, Any]) -> str:
+    """The one-word state of the combined Kimi choice: off, on, a tier, or default."""
+    thinking = state.get("kimi_thinking")
+    effort = (state.get("reasoning_effort") or "").strip().lower()
+    if thinking is False:
+        return "off"
+    if effort and effort != "none":
+        return effort
+    if thinking is True:
+        return "on"
+    return "default"
+
+
+def _pick_kimi_thinking(
+    provider: str, model: str, current_thinking: Optional[bool], current_effort: Optional[str],
+    *, keep_current: bool = False,
+) -> tuple[Optional[bool], Optional[str]] | None:
+    """agent-cli's Kimi picker: one list of off, on, or the declared tiers.
+
+    Returns ``(thinking, effort)``. The catalog decides without asking when
+    the model is thinking-only or has no thinking; an incomplete record is
+    not guessed from (``keep_current`` keeps the current choice for the same
+    model, else nothing is set). ``None`` means the user backed out.
+    """
+    entry = _kimi_entry(provider, model)
+    choices = thinking_choices(entry)
+    if entry.supports_thinking_type == "no":
+        return (False, None)
+    if entry.supports_thinking_type == "only" and not choices:
+        return (True, None)
+    if not choices:
+        return (current_thinking, current_effort) if keep_current else (None, None)
+    index = default_choice_index(entry, choices, current_thinking=current_thinking, current_effort=current_effort)
+    rows: list[Choice] = []
+    for position, (label, _enabled, _effort) in enumerate(choices):
+        parts = [fmt_primary(label)]
+        if position == index and current_thinking is not None:
+            parts.append(fmt_current())
+        rows.append(Choice(styled(*parts), value=position))
+    picked = _ask_with_back(questionary.select(
+        f"Kimi thinking for {model}:", choices=[*rows, _back_choice()], default=rows[index],
+        style=TYPER_STYLE, qmark="❯", pointer="›", instruction="",
+    ))
+    if picked in (None, _BACK):
+        return None
+    _label, thinking, effort = choices[picked]
+    return (thinking, effort)
+
+
 def _edit_kimi_thinking(state: dict[str, Any], value: Optional[str] = None) -> None:
-    from .settings.settings import save_setting
+    from .settings.settings import save_setting, save_settings
 
     _ensure_kimi_catalog(state["provider"])
     if value is None:
-        metadata = _find_model_config(state["provider"], state["model"]) or {}
-        thinking_type = metadata.get("supports_thinking_type")
-        choices = ["default", "enabled", "disabled"]
-        if thinking_type == "only":
-            choices = ["default", "enabled"]
-        elif thinking_type == "no":
-            choices = ["default", "disabled"]
-        value = _ask_with_back(questionary.select(
-            "Kimi thinking:", choices=choices,
-            style=TYPER_STYLE, qmark="❯"))
-        if value is None:
+        picked = _pick_kimi_thinking(
+            state["provider"], state["model"], state.get("kimi_thinking"),
+            state.get("reasoning_effort"), keep_current=True,
+        )
+        if picked is None:
             return
-    choice = value.strip().lower()
+        thinking, effort = picked
+        rendered = "" if thinking is None else str(thinking).lower()
+        save_settings({"GIT_TOOLS_KIMI_THINKING": rendered, "GIT_TOOLS_REASONING_EFFORT": effort or ""})
+        state["kimi_thinking"] = thinking
+        state["reasoning_effort"] = effort or None
+        success("Kimi thinking saved.")
+        return
+    choice = {"off": "disabled", "on": "enabled"}.get(value.strip().lower(), value.strip().lower())
+    if choice in _declared_kimi_efforts(state["provider"], state["model"]):
+        # A tier names the thinking choice directly, as in agent-cli's picker.
+        save_settings({"GIT_TOOLS_KIMI_THINKING": "true", "GIT_TOOLS_REASONING_EFFORT": choice})
+        state["kimi_thinking"] = True
+        state["reasoning_effort"] = choice
+        success("Kimi thinking saved.")
+        return
     metadata = _find_model_config(state["provider"], state["model"]) or {}
     mode = metadata.get("supports_thinking_type")
     if (mode == "only" and choice in {"disabled", "false"}) or (mode == "no" and choice in {"enabled", "true"}):
@@ -1883,9 +2013,25 @@ def _edit_kimi_thinking(state: dict[str, Any], value: Optional[str] = None) -> N
         error("Kimi thinking must be default, enabled, or disabled.")
         raise typer.Exit(1)
     rendered = "" if choice == "default" else str(choice in {"enabled", "true"}).lower()
-    save_setting("GIT_TOOLS_KIMI_THINKING", rendered)
+    configured_effort = (state.get("reasoning_effort") or "").strip().lower()
+    if rendered == "false" and configured_effort:
+        # agent-cli's picker chooses thinking and tier together, so "off" never
+        # leaves a tier behind; the split editors here do the same explicitly.
+        save_settings({"GIT_TOOLS_KIMI_THINKING": rendered, "GIT_TOOLS_REASONING_EFFORT": ""})
+        state["reasoning_effort"] = None
+    else:
+        save_setting("GIT_TOOLS_KIMI_THINKING", rendered)
     state["kimi_thinking"] = None if not rendered else rendered == "true"
     success("Kimi thinking saved.")
+    if rendered == "false" and configured_effort:
+        success(f"Effort override {configured_effort} cleared: thinking is off, so no tier is sent.")
+    elif rendered == "true" and configured_effort:
+        declared = _declared_kimi_efforts(state["provider"], state["model"])
+        if declared and configured_effort not in declared:
+            warning(
+                f"Saved effort {configured_effort} is not one of this model's tiers "
+                f"({', '.join(declared)}); set one with `git-tools settings effort` before generating."
+            )
 
 
 # Menu order, and the names accepted by `git-tools settings <name> [value]`.

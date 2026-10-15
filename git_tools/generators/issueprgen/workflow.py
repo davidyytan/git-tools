@@ -11,7 +11,7 @@ from ..bumpgen import (
     load_bump_config,
     release_tuple,
 )
-from .contexts import RELEASE_BRANCH_PATTERN, WorkflowPrContext, _format_release_tuple
+from .contexts import RELEASE_BRANCH_PATTERN, WorkflowPrContext
 
 
 class WorkflowContextMixin:
@@ -56,25 +56,6 @@ class WorkflowContextMixin:
 
         current_version = Version.parse(current_version_text)
         return f"{current_version.major}.{current_version.minor + 1}.0"
-
-    def _infer_hotfix_target_version(self) -> Optional[str]:
-        base_branch = self._default_release_base_branch()
-        base_version_text = self._load_version_from_ref(base_branch)
-        current_version_text = self._load_current_branch_version()
-        if base_version_text is None:
-            return None
-
-        base_version = Version.parse(base_version_text)
-        target_version = base_version.bump("PATCH")
-
-        if current_version_text is None:
-            return _format_release_tuple(target_version.release)
-
-        current_version = Version.parse(current_version_text)
-        if current_version.release == target_version.release:
-            return _format_release_tuple(current_version.release)
-
-        return _format_release_tuple(target_version.release)
 
     def _resolve_start_pr_context(self, base_branch: str) -> Optional[WorkflowPrContext]:
         if not self.start_pr:
@@ -172,10 +153,12 @@ class WorkflowContextMixin:
         self._require_develop_base_branch(base_branch, mode="Backmerge hotfix PR mode")
 
         current_branch = self._get_current_branch_name()
-        inferred_target = self._infer_hotfix_target_version()
+        # Backmerge names the hotfix already promoted, not master + PATCH.
+        # Master may have advanced again, and synchronization with develop can
+        # overwrite the source version. Neither reliably identifies that release.
         target_version = self._resolve_workflow_target_version(
-            label="backmerge hotfix version",
-            inferred=inferred_target,
+            label="already-promoted hotfix version",
+            inferred=None,
         )
         base_version_text = self._load_version_from_ref(base_branch) or ""
         current_version_text = self._load_current_branch_version() or ""
@@ -186,11 +169,7 @@ class WorkflowContextMixin:
             base_branch=base_branch,
             fixed_title=f"Backmerge Hotfix {target_version}",
             target_version=target_version,
-            target_source=(
-                "repo version state and current branch context"
-                if inferred_target is not None and inferred_target == target_version
-                else "explicit workflow version input"
-            ),
+            target_source="explicit workflow version input",
             base_version=base_version_text,
             current_version=current_version_text,
             behavior_summary=(

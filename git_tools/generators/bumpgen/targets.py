@@ -12,7 +12,11 @@ from ..utils.version_sync import (
     sync_npm_versions, sync_section_version, sync_uv_lock,
 )
 from .errors import ConfigError, ConsistencyError
-from .version import INLINE_VERSION_REGEX, version_to_uv_version
+from .version import Version, version_to_uv_version
+
+# Capture complete version-like tokens, including unsupported suffixes, so a
+# stable prefix is never rewritten inside a prerelease, build, or longer value.
+_CUSTOM_VERSION_TOKEN = re.compile(r"(?<![\w.+-])\d+\.\d+\.\d+[\w.+-]*")
 
 # Warnings keep the package logger name so existing log filters still match.
 _LOGGER = logging.getLogger(__package__)
@@ -76,50 +80,54 @@ class PatternVersionTarget(VersionTarget):
         new_version: str,
         check_consistency: bool,
     ) -> tuple[str, bool]:
-        matched_lines: list[str] = []
-        current_version_found = False
+        lines = text.splitlines(keepends=True)
+        replacements: dict[int, re.Match[str]] = {}
+        source_versions: set[str] = set()
 
-        for line in text.splitlines(keepends=True):
-            if self.regex.search(line):
-                matched_lines.append(line)
-                if current_version in line:
-                    current_version_found = True
+        # Validate the entire target before producing any replacement. A regex
+        # selects lines, not fields; multiple values on one line are unsafe even
+        # when they happen to carry the same version today.
+        for index, line in enumerate(lines):
+            if not self.regex.search(line):
+                continue
+            matches = list(_CUSTOM_VERSION_TOKEN.finditer(line))
+            if not matches:
+                continue
+            if len(matches) != 1:
+                raise ConsistencyError(
+                    f"{self.label} in {self.path} is ambiguous: multiple version "
+                    f"values on line {index + 1}."
+                )
+            match = matches[0]
+            try:
+                Version.parse(match.group(0))
+            except ConfigError as exc:
+                raise ConsistencyError(
+                    f"{self.label} in {self.path} has an unsupported version "
+                    f"token on line {index + 1}: {match.group(0)!r}."
+                ) from exc
+            replacements[index] = match
+            source_versions.add(match.group(0))
 
-        if check_consistency and not current_version_found:
+        if not replacements:
+            raise ConfigError(
+                f"{self.label} in {self.path} did not select any supported version tokens."
+            )
+        if len(source_versions) != 1:
+            raise ConsistencyError(
+                f"{self.label} in {self.path} is ambiguous: selected lines "
+                "contain differing versions."
+            )
+        source_version = next(iter(source_versions))
+        if check_consistency and source_version != current_version:
             raise ConsistencyError(
                 f"{self.label} in {self.path} does not contain {current_version}."
             )
 
-        if not matched_lines:
-            raise ConfigError(f"{self.label} in {self.path} did not match any lines.")
-
-        actual_versions = sorted(
-            {
-                match.group(0)
-                for line in matched_lines
-                for match in INLINE_VERSION_REGEX.finditer(line)
-            }
-        )
-
-        if current_version_found:
-            source_version = current_version
-        elif len(actual_versions) == 1:
-            source_version = actual_versions[0]
-        else:
-            raise ConsistencyError(
-                f"{self.label} in {self.path} is ambiguous; expected {current_version}."
-            )
-
-        changed = False
-        updated_lines: list[str] = []
-        for line in text.splitlines(keepends=True):
-            if self.regex.search(line):
-                updated_line = line.replace(source_version, new_version)
-                changed = changed or updated_line != line
-                updated_lines.append(updated_line)
-            else:
-                updated_lines.append(line)
-        return "".join(updated_lines), changed
+        for index, match in replacements.items():
+            line = lines[index]
+            lines[index] = line[:match.start()] + new_version + line[match.end():]
+        return "".join(lines), source_version != new_version
 
 
 @dataclass(frozen=True)

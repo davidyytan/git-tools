@@ -148,8 +148,13 @@ class FixedTitleMixin:
         if self.backmerge_hotfix_pr:
             if self._workflow_pr_context is not None:
                 return self._workflow_pr_context.fixed_title
-            inferred_target = self._infer_hotfix_target_version()
-            return f"Backmerge Hotfix {inferred_target}" if inferred_target else None
+            if self._cli_workflow_version:
+                target = self._validate_semver_tuple(
+                    self._cli_workflow_version.strip(),
+                    label="already-promoted hotfix version",
+                )
+                return f"Backmerge Hotfix {target}"
+            return None
 
         return None
 

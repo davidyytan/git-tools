@@ -5,95 +5,70 @@ catalog behavior, and static fallback models — lives in code here. There is no
 external ``mappings.json`` to copy or maintain in the repo.
 
 Live providers expose an OpenAI-compatible ``GET {base_url}/models``
-catalog; ``refresh_live_models`` merges that account/endpoint-specific catalog
-into ``PROVIDERS`` for pickers and validation. ACRC is live too: its built-in
-entries are the picker default and the fallback when the VPN or endpoint is
-unreachable. Qwen stays curated because its catalog varies by plan and region.
-Static entries remain the offline fallback, while manually entered model IDs
-are saved in ``~/.git-tools/models.json`` and retained across refreshes.
+catalog; ``refresh_live_models`` resolves it exactly as agent-cli's provider
+flow does (``resolve_provider_catalog``) and places the result in
+``PROVIDERS`` for pickers, editors and clients. There is no list of git-tools'
+own: the modules' built-in lists are the only fallback, Kimi Code keeps
+agent-cli's last-known-good cache, and a typed model id is remembered only as
+the saved main model.
+
+Endpoints, default models, aliases, curated lists and the catalog codecs come
+from ``git_tools.providers``, the provider package copied from agent-cli; this
+module wraps those modules with git-tools' own wiring (credential env vars,
+config classes, live/manual picker flags, per-model knobs) and keeps the
+registry shape the rest of the application reads.
 """
 
 import copy
 import hashlib
-import json
-import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict
 
-import typer
-
-# OpenRouter model used when nothing else is configured.
-DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6"
-
-# User settings file holding manually entered model IDs by provider. Kept inside
-# ~/.git-tools/ so a full reset stays a single `rm -rf ~/.git-tools`.
-USER_MODELS_PATH = Path.home() / ".git-tools" / "models.json"
-MODEL_CATALOG_PATH = Path.home() / ".git-tools" / "model-catalog.json"
-
-# Live-discovered CLIProxyAPI models matching these prefixes are
-# effort-capable and receive this per-model default.
-_LIVE_EFFORT_DEFAULT = "xhigh"
-_AUTH_STATUSES = frozenset({401, 402, 403})
-
-# OpenAI's platform ``/models`` lists everything the key can reach: chat models
-# beside audio, realtime, image, embedding and moderation ids that no chat
-# completion can use. The picker shows the chat families only: ``gpt-*``,
-# ``chatgpt-*`` and the ``o<digit>`` reasoning series, minus modality variants.
-_OPENAI_CHAT_FAMILY = re.compile(r"^(gpt-|chatgpt-|o\d)")
-_OPENAI_NON_CHAT_MARKERS = (
-    "-realtime", "-audio", "-transcribe", "-tts", "-image", "-search",
-    "-instruct", "-embedding", "-moderation",
-    # Responses-API-only families. agent-cli keeps them because its newer
-    # langchain-openai routes them there; the client pinned here speaks chat
-    # completions only, so they would fail at request time.
-    "-pro", "codex", "-deep-research",
+from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen
+from git_tools.providers.catalog import (
+    MODEL_CATALOG_FILENAME,
+    CatalogFetchResult,
+    ModelCatalogEntry,
+    fetch_model_catalog_sync,
+)
+from git_tools.providers.kimi_code import (
+    KimiCodeModelEntry,
+    fetch_kimi_code_catalog_sync,
+    load_cached_kimi_code_catalog,
+    save_cached_kimi_code_catalog,
 )
 
-# Anthropic's Models API refuses a request without a version header.
-ANTHROPIC_API_VERSION = "2023-06-01"
+# OpenRouter model used when nothing else is configured: agent-cli's.
+DEFAULT_OPENROUTER_MODEL = openrouter.DEFAULT_MODEL
+
+# Kimi Code's last-known-good catalog, in agent-cli's cache format and under
+# its file name. Kept inside ~/.git-tools/ so a full reset stays a single
+# `rm -rf ~/.git-tools`.
+MODEL_CATALOG_PATH = Path.home() / ".git-tools" / MODEL_CATALOG_FILENAME
+
+# OpenAI's reasoning families read the native ``reasoning_effort`` field and
+# accept only the server's default temperature. The platform's other chat
+# models (gpt-4.x, gpt-4o, gpt-3.5 and the ``*-chat-latest`` variants) reject
+# the field outright and take a temperature instead. This is git-tools' wire
+# policy; agent-core reaches the same outcome by sending OpenAI's default
+# temperature of 1.
+_OPENAI_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4", "codex")
+_OPENAI_NON_REASONING_MARKERS = ("-chat",)
+
+# Kept as names for callers and tests; the catalog itself is resolved by the
+# provider modules (see ``resolve_provider_catalog``).
+is_openai_chat_model = openai.is_chat_model
+ANTHROPIC_API_VERSION = anthropic.API_VERSION
+anthropic_catalog_headers = anthropic.catalog_headers
 
 
-def is_openai_chat_model(model_id: str) -> bool:
-    """Whether an id OpenAI's platform lists can serve ``/chat/completions``."""
+def is_openai_reasoning_model(model_id: str) -> bool:
+    """Whether an OpenAI model reads ``reasoning_effort`` (and refuses a temperature)."""
     normalized = model_id.strip().lower()
-    if not _OPENAI_CHAT_FAMILY.match(normalized):
+    if not normalized.startswith(_OPENAI_REASONING_PREFIXES):
         return False
-    return not any(marker in normalized for marker in _OPENAI_NON_CHAT_MARKERS)
-
-
-def anthropic_catalog_headers(api_key: str) -> Dict[str, str]:
-    """Headers Anthropic's native ``GET /v1/models`` wants beside Bearer auth.
-
-    Chat goes through the OpenAI-compatible endpoint, but the catalog is the
-    native Models API, which reads the key from ``x-api-key`` and needs an
-    ``anthropic-version``.
-    """
-    headers = {"anthropic-version": ANTHROPIC_API_VERSION}
-    if api_key:
-        headers["x-api-key"] = api_key
-    return headers
-
-
-class LiveModelList(list[str]):
-    """Model IDs plus bounded failure details for interactive diagnostics."""
-
-    def __init__(
-        self,
-        values: List[str] | None = None,
-        *,
-        error_kind: str | None = None,
-        error: str | None = None,
-        status: int | None = None,
-        metadata: Dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(values or [])
-        self.error_kind = error_kind
-        self.error = error
-        self.status = status
-        self.metadata = metadata or {}
+    return not any(marker in normalized for marker in _OPENAI_NON_REASONING_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -116,117 +91,113 @@ class ProviderCatalogSnapshot:
     error: LiveModelRefreshError | None
 
 
-# Built-in provider definitions (source of truth). ``default_base_url`` is UI
-# metadata only; the actual runtime value still comes from each config class so
+# Built-in provider definitions (source of truth). Endpoint, default model,
+# aliases and curated lists come from the provider modules copied from
+# agent-cli (``git_tools.providers``); what is added here is git-tools' own
+# wiring: the credential env var, the config class, the UI label, which
+# pickers are live, and per-model knobs. ``default_base_url`` is UI metadata
+# only; the actual runtime value still comes from each config class so
 # request behavior remains unchanged.
+
+
+def _static_models(entries: tuple[ModelCatalogEntry, ...]) -> Dict[str, Any]:
+    """A provider module's curated ``MODELS`` as registry entries, in picker order."""
+    models: Dict[str, Any] = {}
+    for entry in entries:
+        model: Dict[str, Any] = {"model_name": entry.id}
+        if entry.display_name:
+            model["display_name"] = entry.display_name
+        models[entry.id] = model
+    return models
+
+
 _BUILTIN_PROVIDERS: Dict[str, Any] = {
-    "openrouter": {
+    openrouter.PROVIDER_ID: {
         "label": "OpenRouter",
-        "aliases": ("router",),
+        "aliases": openrouter.ALIASES,
         "api_key_env": "OPENROUTER_API_KEY",
         "config_class": "OpenRouterConfig",
-        "default_base_url": "https://openrouter.ai/api/v1",
+        "default_base_url": openrouter.BASE_URL,
+        "default_model": openrouter.DEFAULT_MODEL,
         "live_models": True,
         "allow_manual_model": True,
-        "live_model_defaults": {"data_collection": "deny"},
-        "models": {
-            DEFAULT_OPENROUTER_MODEL: {
-                "model_name": DEFAULT_OPENROUTER_MODEL,
-                "data_collection": "deny",
-            },
-        },
+        # The catalog is live; agent-cli ships no static list and neither does this.
+        "models": {},
     },
-    "acrc": {
-        "label": "ACRC", "aliases": (), "api_key_env": "ACRC_API_KEY",
+    acrc.PROVIDER_ID: {
+        "label": "ACRC", "aliases": acrc.ALIASES, "api_key_env": "ACRC_API_KEY",
         "config_class": "ACRCConfig",
-        "default_base_url": "https://fmodel.ai.acrc.a-star.edu.sg/v1",
+        "default_base_url": acrc.BASE_URL,
+        "default_model": acrc.DEFAULT_MODEL,
         # Live /models drives the picker; these built-ins lead the list and
         # are the fallback when the VPN/endpoint cannot be reached.
         "live_models": True, "allow_manual_model": True,
-        "models": {
-            "deepseek-v4.1-flash": {"model_name": "deepseek-v4.1-flash", "display_name": "DeepSeek V4.1 Flash"},
-            "glm-5-3-flash": {"model_name": "glm-5-3-flash", "display_name": "GLM 5-3 Flash"},
-            "mimo-v2.6-pro": {"model_name": "mimo-v2.6-pro", "display_name": "MiMo V2.6 Pro"},
-        },
+        "models": _static_models(acrc.MODELS),
     },
-    "copilot": {
-        "label": "Copilot proxy", "aliases": (), "api_key_env": "COPILOT_API_KEY",
-        "config_class": "CopilotConfig", "default_base_url": "http://localhost:4141/v1",
+    copilot.PROVIDER_ID: {
+        "label": "Copilot proxy", "aliases": copilot.ALIASES, "api_key_env": "COPILOT_API_KEY",
+        "config_class": "CopilotConfig", "default_base_url": copilot.BASE_URL,
+        "default_model": copilot.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "models": {"gpt-4.1": {"model_name": "gpt-4.1"}},
+        "models": _static_models(copilot.MODELS),
     },
-    "qwen": {
-        "label": "Qwen / DashScope", "aliases": ("dashscope", "alibaba"),
+    qwen.PROVIDER_ID: {
+        "label": "Qwen / DashScope", "aliases": qwen.ALIASES,
         "api_key_env": "DASHSCOPE_API_KEY", "config_class": "QwenConfig",
-        "default_base_url": "", "live_models": False, "allow_manual_model": True,
+        # No endpoint on purpose (see the module): the host depends on the
+        # plan, region and workspace, so the flow asks for it.
+        "default_base_url": qwen.PRESET.get("base_url", ""),
+        "default_model": qwen.DEFAULT_MODEL,
+        "live_models": False, "allow_manual_model": True,
         "curated_models": True,
-        "models": {
-            "qwen3.8-max": {"model_name": "qwen3.8-max"},
-            "qwen3.8-max-preview": {"model_name": "qwen3.8-max-preview"},
-        },
+        "models": _static_models(qwen.MODELS),
     },
     "kimicli": {
         "label": "Kimi Code",
         # Keep the existing git-tools provider key for compatibility while
         # accepting agent-core/agent-cli's canonical spelling and shorthand.
-        "aliases": ("kimicode", "kimi"),
+        "aliases": (kimi_code.PROVIDER_ID, *kimi_code.ALIASES),
         "api_key_env": "KIMICODE_API_KEY",
         "config_class": "KimiCLIConfig",
-        "default_base_url": "https://api.kimi.com/coding/v1",
+        "default_base_url": kimi_code.BASE_URL,
+        "default_model": kimi_code.DEFAULT_MODEL,
         "live_models": True,
         "allow_manual_model": True,
-        "models": {
-            "kimi-for-coding": {"model_name": "kimi-for-coding"},
-            "kimi-k2.5": {"model_name": "kimi-k2.5"},
-        },
+        # The account-aware catalog is live; no static list, as in agent-cli.
+        "models": {},
     },
-    "cliproxyapi": {
+    cliproxyapi.PROVIDER_ID: {
         "label": "CLIProxyAPI",
-        "aliases": ("proxy",),
+        "aliases": cliproxyapi.ALIASES,
         "api_key_env": "CLIPROXYAPI_API_KEY",
         "config_class": "CLIProxyAPIConfig",
-        "default_base_url": "http://localhost:8317/v1",
+        "default_base_url": cliproxyapi.BASE_URL,
+        "default_model": cliproxyapi.DEFAULT_MODEL,
         "live_models": True,
         "allow_manual_model": True,
-        "live_effort_prefixes": ("gpt-5", "gpt-6"),
-        "models": {
-            "gpt-6-astra": {"model_name": "gpt-6-astra", "reasoning_effort": "xhigh"},
-            "gpt-5.6-sol": {"model_name": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
-            "gpt-5.5": {"model_name": "gpt-5.5", "reasoning_effort": "xhigh"},
-            "gpt-5.4": {"model_name": "gpt-5.4", "reasoning_effort": "xhigh"},
-        },
+        # The proxy's /models is the catalog; no static list, as in agent-cli.
+        "models": {},
     },
     # OpenAI's own platform, spoken as chat completions like every provider
     # here. Live /models is narrowed to chat models; the built-ins lead the
     # picker and are the fallback when the call cannot be made.
-    "openai": {
-        "label": "OpenAI", "aliases": (), "api_key_env": "OPENAI_API_KEY",
-        "config_class": "OpenAIConfig", "default_base_url": "https://api.openai.com/v1",
+    openai.PROVIDER_ID: {
+        "label": "OpenAI", "aliases": openai.ALIASES, "api_key_env": "OPENAI_API_KEY",
+        "config_class": "OpenAIConfig", "default_base_url": openai.BASE_URL,
+        "default_model": openai.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "live_model_filter": is_openai_chat_model,
-        "models": {
-            "gpt-6-astra": {"model_name": "gpt-6-astra", "display_name": "GPT-6 Astra"},
-            "gpt-6.1-sol": {"model_name": "gpt-6.1-sol", "display_name": "GPT-6.1 Sol"},
-        },
+        "models": _static_models(openai.MODELS),
     },
     # Anthropic through its OpenAI-compatible endpoint: the Messages API host
     # also answers /v1/chat/completions with Bearer auth. Thinking is adaptive
     # there by default and `reasoning_effort` is ignored by that layer (see the
     # client). Only the catalog call differs.
-    "anthropic": {
-        "label": "Anthropic", "aliases": ("claude",), "api_key_env": "ANTHROPIC_API_KEY",
-        "config_class": "AnthropicConfig", "default_base_url": "https://api.anthropic.com/v1",
+    anthropic.PROVIDER_ID: {
+        "label": "Anthropic", "aliases": anthropic.ALIASES, "api_key_env": "ANTHROPIC_API_KEY",
+        "config_class": "AnthropicConfig", "default_base_url": anthropic.BASE_URL,
+        "default_model": anthropic.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "live_model_headers": anthropic_catalog_headers,
-        # The Models API pages at 20 by default, newest first; ask for the
-        # whole list so older built-ins do not silently fall off the picker.
-        "live_model_query": "limit=1000",
-        "models": {
-            "claude-opus-5-5": {"model_name": "claude-opus-5-5", "display_name": "Claude Opus 5.5"},
-            "claude-sonnet-5-5": {"model_name": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5"},
-            "claude-haiku-5-5": {"model_name": "claude-haiku-5-5", "display_name": "Claude Haiku 5.5"},
-            "claude-fable-5-1": {"model_name": "claude-fable-5-1", "display_name": "Claude Fable 5.1"},
-        },
+        "models": _static_models(anthropic.MODELS),
     },
 }
 
@@ -257,185 +228,163 @@ def _normalize_provider_key(provider: str) -> str:
     return PROVIDER_ALIASES.get(key, key)
 
 
-def _provider_model_entry(provider: str, model_id: str) -> Dict[str, Any]:
-    """Build provider-aware metadata for a discovered or manual model ID."""
-    entry: Dict[str, Any] = {"model_name": model_id}
-    definition = _BUILTIN_PROVIDERS[provider]
-    entry.update(copy.deepcopy(definition.get("live_model_defaults", {})))
-    prefixes = tuple(definition.get("live_effort_prefixes", ()))
-    if prefixes and model_id.startswith(prefixes):
-        entry["reasoning_effort"] = _LIVE_EFFORT_DEFAULT
-    return entry
+# Provider map used across the app. ``models`` starts as the module's curated
+# list (empty for the live-only providers) and is replaced by the resolved
+# catalog once ``refresh_live_models`` has asked the endpoint.
+PROVIDERS = copy.deepcopy(_BUILTIN_PROVIDERS)
 
 
-def _load_user_model_map() -> Dict[str, List[str]]:
-    """Return clean, de-duplicated manually saved model IDs by provider."""
-    if not USER_MODELS_PATH.exists():
-        return {}
-
-    try:
-        data = json.loads(USER_MODELS_PATH.read_text())
-    except (json.JSONDecodeError, OSError) as e:
-        typer.echo(
-            typer.style(
-                f"Warning: Error loading {USER_MODELS_PATH.name}: {e}",
-                fg=typer.colors.YELLOW,
-            )
-        )
-        return {}
-
-    if not isinstance(data, dict):
-        return {}
-
-    result: Dict[str, List[str]] = {}
-    for raw_provider, raw_models in data.items():
-        if not isinstance(raw_provider, str) or not isinstance(raw_models, list):
-            continue
-        provider = _normalize_provider_key(raw_provider)
-        if provider not in _BUILTIN_PROVIDERS:
-            continue
-        seen: set[str] = set()
-        models: List[str] = []
-        for item in raw_models:
-            if not isinstance(item, str):
-                continue
-            model_id = item.strip()
-            if model_id and model_id not in seen:
-                seen.add(model_id)
-                models.append(model_id)
-        if models:
-            result[provider] = models
-    return result
-
-
-def _load_user_openrouter_models() -> List[str]:
-    """Compatibility helper returning saved OpenRouter model IDs."""
-    return _load_user_model_map().get("openrouter", [])
-
-
-_USER_MODELS = _load_user_model_map()
-
-
-def _build_providers() -> Dict[str, Any]:
-    """Assemble provider definitions plus manually saved model IDs."""
-    providers = copy.deepcopy(_BUILTIN_PROVIDERS)
-    for provider, model_ids in _USER_MODELS.items():
-        models = providers[provider]["models"]
-        for model_id in model_ids:
-            models.setdefault(model_id, _provider_model_entry(provider, model_id))
-    return providers
-
-
-# Provider map used across the app.
-PROVIDERS = _build_providers()
-
-# Immutable-ish fallback catalogs. Live refreshes always merge against these,
-# not against a prior live result, so force-refreshing cannot lose static model
-# metadata such as privacy defaults or reasoning effort.
-_FALLBACK_MODELS: Dict[str, Dict[str, Any]] = {
-    provider: copy.deepcopy(definition["models"])
-    for provider, definition in PROVIDERS.items()
-}
+def _builtin_models(provider: str) -> Dict[str, Any]:
+    return copy.deepcopy(_BUILTIN_PROVIDERS[provider]["models"])
 
 
 def normalize_catalog_metadata(raw: Any) -> Dict[str, Any]:
-    """Validate optional endpoint metadata before UI or request construction."""
+    """Validate optional endpoint metadata before UI or request construction.
+
+    Parsing is Kimi Code's current ``/models`` codec from agent-cli
+    (``KimiCodeModelEntry.from_payload``); this keeps the dict shape the
+    registry, the settings editors and the clients read. Registry entries
+    carry ``model_name`` rather than ``id``, and a malformed value must
+    degrade to "no metadata", never fail the caller.
+    """
     if not isinstance(raw, dict):
         return {}
+    payload = dict(raw)
+    model_id = payload.get("id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        payload["id"] = "entry"
+    # The codec tests membership in a set; an unhashable value would raise
+    # instead of being dropped.
+    if not isinstance(payload.get("supports_thinking_type"), str):
+        payload["supports_thinking_type"] = None
+    entry = KimiCodeModelEntry.from_payload(payload)
+    if entry is None:
+        return {}
     result: Dict[str, Any] = {}
-    display = raw.get("display_name")
-    if isinstance(display, str) and display.strip():
-        result["display_name"] = display.strip()
-    mode = raw.get("supports_thinking_type")
-    if isinstance(mode, str) and mode in {"only", "both", "no"}:
-        result["supports_thinking_type"] = mode
-    context = raw.get("context_length")
-    if isinstance(context, int) and not isinstance(context, bool) and context > 0:
-        result["context_length"] = context
+    if entry.display_name:
+        result["display_name"] = entry.display_name
+    if entry.supports_thinking_type:
+        result["supports_thinking_type"] = entry.supports_thinking_type
+    if entry.supports_reasoning is not None:
+        # agent-cli's picker preselects a tier only for models that reason.
+        result["supports_reasoning"] = entry.supports_reasoning
+    if entry.context_length:
+        result["context_length"] = entry.context_length
     efforts = raw.get("think_efforts")
     if isinstance(efforts, dict) and efforts.get("support") is True:
-        values = efforts.get("valid_efforts")
-        valid = list(dict.fromkeys(value.strip() for value in values
-                     if isinstance(value, str) and value.strip())) if isinstance(values, list) else []
-        clean: Dict[str, Any] = {"support": True, "valid_efforts": valid}
-        default = efforts.get("default_effort")
-        if isinstance(default, str) and default.strip():
-            clean["default_effort"] = default.strip()
+        clean: Dict[str, Any] = {"support": True, "valid_efforts": list(entry.valid_efforts)}
+        if entry.default_effort:
+            clean["default_effort"] = entry.default_effort
         result["think_efforts"] = clean
     return result
 
 
-def fetch_live_models(
-    base_url: str,
-    api_key: str,
-    timeout: float = 4.0,
-    *,
-    headers: Dict[str, str] | None = None,
-    query: str | None = None,
-) -> LiveModelList:
-    """GET ``{base_url}/models`` and return IDs plus failure metadata.
+def _entry_config(entry: ModelCatalogEntry) -> Dict[str, Any]:
+    """A catalog entry as the registry's per-model config dict."""
+    config: Dict[str, Any] = {"model_name": entry.id}
+    if entry.display_name:
+        config["display_name"] = entry.display_name
+    if isinstance(entry, KimiCodeModelEntry):
+        if entry.supports_thinking_type:
+            config["supports_thinking_type"] = entry.supports_thinking_type
+        if entry.supports_reasoning is not None:
+            config["supports_reasoning"] = entry.supports_reasoning
+        if entry.context_length:
+            config["context_length"] = entry.context_length
+        if entry.valid_efforts or entry.default_effort:
+            efforts: Dict[str, Any] = {"support": True, "valid_efforts": list(entry.valid_efforts)}
+            if entry.default_effort:
+                efforts["default_effort"] = entry.default_effort
+            config["think_efforts"] = efforts
+    return config
 
-    The list remains backward-compatible with callers that only need model IDs,
-    while interactive settings can distinguish authentication, network, HTTP,
-    and malformed-catalog failures instead of silently showing a fallback as if
-    it were the complete live catalog. ``headers`` are sent beside the shared
-    Bearer one for catalogs that want their own auth or version headers, and
-    ``query`` is appended to the URL for catalogs that page.
-    """
+
+# ---------------------------------------------------------------------------
+# Catalog resolution: agent-cli's ``/settings provider`` flow, synchronous.
+# ---------------------------------------------------------------------------
+
+def _catalog_result(value: Any) -> CatalogFetchResult:
+    """Normalize ID lists (tests, older callers) and the structured fetch result."""
+    if isinstance(value, CatalogFetchResult):
+        return value
+    if isinstance(value, (list, tuple)):
+        entries: list[ModelCatalogEntry] = []
+        for item in value:
+            if isinstance(item, ModelCatalogEntry):
+                entries.append(item)
+            elif isinstance(item, str) and item.strip():
+                entries.append(ModelCatalogEntry(id=item.strip()))
+        return CatalogFetchResult(entries=tuple(entries), source="live" if entries else "none")
+    return CatalogFetchResult(error_kind="malformed", error="unsupported model catalog result")
+
+
+def _fetch_models_sync(base_url: str, api_key: str, timeout: float = 4.0) -> CatalogFetchResult:
+    """Fetch a provider-neutral OpenAI-compatible model catalog."""
+    return fetch_model_catalog_sync(base_url, api_key, timeout=timeout)
+
+
+def _fetch_kimi_code_models_sync(base_url: str, api_key: str, timeout: float = 4.0) -> CatalogFetchResult:
+    """Fetch the current Kimi Code model schema."""
+    return fetch_kimi_code_catalog_sync(base_url, api_key, timeout=timeout)
+
+
+def _fetch_anthropic_models_sync(base_url: str, api_key: str, timeout: float = 4.0) -> CatalogFetchResult:
+    """Fetch Anthropic's model list with the headers its Models API wants."""
+    return anthropic.fetch_catalog_sync(base_url, api_key, timeout=timeout)
+
+
+def _fetch_catalog(fetcher: Callable[[str, str], Any], base_url: str, api_key: str) -> CatalogFetchResult:
+    """agent-cli's ``_fetch_catalog_async`` without the thread: never raises."""
     if not base_url:
-        return LiveModelList(
-            error_kind="malformed",
-            error="provider base URL is empty",
-        )
-    url = base_url.rstrip("/") + "/models" + (f"?{query}" if query else "")
+        return CatalogFetchResult(error_kind="malformed", error="provider base URL is empty")
     try:
-        req = urllib.request.Request(url)
-        req.add_header("Accept", "application/json")
-        if api_key:
-            req.add_header("Authorization", f"Bearer {api_key}")
-        for name, value in (headers or {}).items():
-            req.add_header(name, value)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as exc:
-        status = int(exc.code)
-        kind = "auth" if status in _AUTH_STATUSES else "server" if status >= 500 else "http"
-        return LiveModelList(
-            error_kind=kind,
-            error=f"model catalog request failed with HTTP {status}",
-            status=status,
-        )
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        return LiveModelList(
-            error_kind="network",
-            error=str(exc) or type(exc).__name__,
-        )
-    except (json.JSONDecodeError, UnicodeError, TypeError, ValueError) as exc:
-        return LiveModelList(error_kind="malformed", error=str(exc))
+        return _catalog_result(fetcher(base_url, api_key))
+    except Exception as exc:
+        return CatalogFetchResult(error_kind="network", error=str(exc))
 
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        return LiveModelList(
-            error_kind="malformed",
-            error="model catalog response does not contain a data array",
-        )
-    ids = [
-        str(model.get("id")).strip()
-        for model in data
-        if isinstance(model, dict) and isinstance(model.get("id"), str) and model["id"].strip()
-    ]
-    unique = sorted(dict.fromkeys(model_id for model_id in ids if model_id))
-    if not unique:
-        return LiveModelList(
-            error_kind="malformed",
-            error="provider returned no usable model entries",
-        )
-    metadata = {}
-    for item in data:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-            continue
-        metadata[item["id"].strip()] = normalize_catalog_metadata(item)
-    return LiveModelList(unique, metadata=metadata)
+
+def _kimi_catalog(base_url: str, api_key: str, live: CatalogFetchResult) -> CatalogFetchResult:
+    """Persist live Kimi metadata or resolve its last-known-good copy.
+
+    agent-cli's ``_kimi_catalog_for_picker`` without the console: the cache
+    file and format are its, scoped to this endpoint and key.
+    """
+    if live.source == "live" and live.entries:
+        try:
+            save_cached_kimi_code_catalog(MODEL_CATALOG_PATH, base_url=base_url, api_key=api_key, result=live)
+        except OSError:
+            pass  # A cache write failure must not block model selection.
+        return live
+    cached = load_cached_kimi_code_catalog(MODEL_CATALOG_PATH, base_url=base_url, api_key=api_key)
+    return kimi_code.resolve_catalog(live, cached)
+
+
+def resolve_provider_catalog(provider: str, base_url: str, api_key: str) -> CatalogFetchResult:
+    """One provider's model catalog, resolved as agent-cli's provider flow does it.
+
+    - Kimi Code: the account-aware ``/models``; on failure the last-known-good
+      copy for this endpoint and key (``source == "cache"``), unless the
+      failure was an HTTP client error.
+    - ACRC, OpenAI, Anthropic: the endpoint's own list with the module's
+      display names overlaid and the default first, or the module's built-in
+      list with the error carried along when the call cannot be made.
+      OpenAI's is narrowed to chat models; Anthropic's comes from the native
+      Models API with its own headers.
+    - Qwen: the module's curated list; nothing is fetched.
+    - OpenRouter, CLIProxyAPI, Copilot: exactly what the endpoint lists.
+    """
+    provider = _normalize_provider_key(provider)
+    if provider == "kimicli":
+        return _kimi_catalog(base_url, api_key, _fetch_catalog(_fetch_kimi_code_models_sync, base_url, api_key))
+    if provider == acrc.PROVIDER_ID:
+        return acrc.resolve_catalog(_fetch_catalog(_fetch_models_sync, base_url, api_key))
+    if provider == qwen.PROVIDER_ID:
+        return qwen.catalog()
+    if provider == openai.PROVIDER_ID:
+        return openai.resolve_catalog(_fetch_catalog(_fetch_models_sync, base_url, api_key))
+    if provider == anthropic.PROVIDER_ID:
+        return anthropic.resolve_catalog(_fetch_catalog(_fetch_anthropic_models_sync, base_url, api_key))
+    return _fetch_catalog(_fetch_models_sync, base_url, api_key)
 
 
 # Providers refreshed this process. The identity map prevents a successful
@@ -487,112 +436,35 @@ def _catalog_identity(base_url: str, api_key: str) -> tuple[str, str]:
     return (base_url.strip().rstrip("/"), credential)
 
 
-def _live_catalog_headers(provider: str, api_key: str) -> Dict[str, str]:
-    """Extra headers a provider's catalog endpoint wants beside Bearer auth."""
-    builder = _BUILTIN_PROVIDERS[provider].get("live_model_headers")
-    return builder(api_key) if builder else {}
+def fetch_openrouter_endpoints(base_url: str, api_key: str, model_id: str) -> tuple[openrouter.OpenRouterEndpoint, ...]:
+    """The upstreams OpenRouter can route ``model_id`` to, with price, context and caching.
 
-
-def _filter_live_models(provider: str, live: LiveModelList) -> LiveModelList:
-    """Drop listed ids that cannot serve chat completions, when a provider says so."""
-    keep = _BUILTIN_PROVIDERS[provider].get("live_model_filter")
-    if not keep or not live:
-        return live
-    kept = [model_id for model_id in live if keep(model_id)]
-    if not kept:
-        return LiveModelList(error_kind="malformed", error="provider listed no chat models")
-    details = getattr(live, "metadata", {})
-    return LiveModelList(kept, metadata={model_id: details[model_id] for model_id in kept if model_id in details})
-
-
-def _fallback_models(provider: str) -> Dict[str, Any]:
-    """Return static plus manually saved models for an offline provider."""
-    fallback = copy.deepcopy(_FALLBACK_MODELS[provider])
-    for model_id in _load_user_model_map().get(provider, []):
-        fallback.setdefault(model_id, _provider_model_entry(provider, model_id))
-    return fallback
+    agent-cli's endpoint discovery, so the order is its picker order (cheapest
+    input first). Empty when the endpoint cannot be listed.
+    """
+    if not base_url or not model_id:
+        return ()
+    return openrouter.fetch_endpoints_sync(model_id, api_key, base_url=base_url).entries
 
 
 def fetch_openrouter_upstreams(base_url: str, api_key: str, model_id: str) -> list[str]:
-    """Discover routable upstream slugs for the selected OpenRouter model."""
-    from urllib.parse import quote
-
-    if not base_url or not model_id:
-        return []
-    try:
-        request = urllib.request.Request(
-            base_url.rstrip("/") + "/models/" + quote(model_id.strip(), safe="/") + "/endpoints",
-            headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-        with urllib.request.urlopen(request, timeout=4.0) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        endpoints = payload.get("data", {}).get("endpoints", [])
-        if not isinstance(endpoints, list):
-            return []
-        return list(dict.fromkeys(item["tag"].strip() for item in endpoints
-                    if isinstance(item, dict) and isinstance(item.get("tag"), str)
-                    and item["tag"].strip()))
-    except (OSError, ValueError, TypeError, AttributeError):
-        return []
-
-
-def _cached_catalog(provider: str, identity: tuple[str, str]) -> LiveModelList:
-    try:
-        payload = json.loads(MODEL_CATALOG_PATH.read_text())
-        key = hashlib.sha256(f"{provider}:{identity}".encode()).hexdigest()
-        record = payload.get(key, {})
-        ids = record.get("ids", [])
-        if not isinstance(ids, list) or not all(isinstance(x, str) and x for x in ids):
-            return LiveModelList()
-        metadata = record.get("metadata", {})
-        if not isinstance(metadata, dict):
-            metadata = {}
-        return LiveModelList(ids, metadata=metadata)
-    except (OSError, ValueError, TypeError, AttributeError):
-        return LiveModelList()
-
-
-def _save_catalog(provider: str, identity: tuple[str, str], live: LiveModelList) -> None:
-    import os
-    import tempfile
-
-    temp_path = None
-    try:
-        try:
-            payload = json.loads(MODEL_CATALOG_PATH.read_text())
-        except (OSError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        key = hashlib.sha256(f"{provider}:{identity}".encode()).hexdigest()
-        payload[key] = {"ids": list(live), "metadata": getattr(live, "metadata", {})}
-        MODEL_CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=MODEL_CATALOG_PATH.parent,
-                                         delete=False) as handle:
-            temp_path = Path(handle.name)
-            json.dump(payload, handle)
-        os.replace(temp_path, MODEL_CATALOG_PATH)
-    except (OSError, ValueError, TypeError):
-        pass  # Catalog persistence must not block provider selection.
-    finally:
-        if temp_path is not None:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+    """The routing slugs of ``fetch_openrouter_endpoints``."""
+    return [entry.tag for entry in fetch_openrouter_endpoints(base_url, api_key, model_id)]
 
 
 def refresh_live_models(provider: str, *, force: bool = False) -> bool:
-    """Refresh one provider's model catalog from its configured ``/models``.
+    """Resolve one provider's catalog into ``PROVIDERS[provider]["models"]``.
 
-    Static entries still served live keep their metadata and priority order.
-    Stale static entries are dropped for the live result, manually saved entries
-    remain available as explicit user choices, and newly served IDs append in
-    catalog order. A failed fetch keeps the current catalog for the same
-    endpoint/key, or resets to static/manual fallbacks after an identity change.
+    ``resolve_provider_catalog`` decides what is shown, exactly as agent-cli's
+    provider flow does; this only places it in the registry the pickers,
+    editors and clients read, and memoizes a successful fetch per process for
+    one endpoint and key. There is no git-tools list of its own: nothing is
+    merged, remembered or retained across a failed fetch beyond the modules'
+    built-in lists and Kimi's on-disk last-known-good copy.
 
-    Returns ``True`` when a live catalog is available (including a memoized one)
-    and ``False`` for unknown providers or failed fetches.
+    Returns ``True`` when the endpoint answered (or did so earlier in this
+    process for the same endpoint and key); ``False`` for unknown or curated
+    providers, failed fetches, and a stale Kimi copy.
     """
     provider = _normalize_provider_key(provider)
     if provider not in LIVE_MODEL_PROVIDERS:
@@ -610,9 +482,7 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
             # interactive diagnostic useful without ever retaining credentials.
             message=f"{type(exc).__name__}: provider configuration is invalid or incomplete",
         )
-        # Configuration is no longer sufficient to identify the account. Never
-        # retain a live catalog fetched under an earlier credential.
-        PROVIDERS[provider]["models"] = _fallback_models(provider)
+        PROVIDERS[provider]["models"] = _builtin_models(provider)
         _LIVE_REFRESHED.discard(provider)
         _LIVE_REFRESH_IDENTITIES.pop(provider, None)
         return False
@@ -625,110 +495,28 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         and provider in _LIVE_REFRESHED
         and _LIVE_REFRESH_IDENTITIES.get(provider) == identity
     ):
-        return provider not in _LIVE_REFRESH_ERRORS
+        return True
 
-    live = _filter_live_models(
-        provider,
-        fetch_live_models(
-            base_url, api_key,
-            headers=_live_catalog_headers(provider, api_key),
-            query=_BUILTIN_PROVIDERS[provider].get("live_model_query"),
-        ),
+    catalog = resolve_provider_catalog(provider, base_url, api_key)
+    PROVIDERS[provider]["models"] = (
+        {entry.id: _entry_config(entry) for entry in catalog.entries}
+        if catalog.entries
+        else _builtin_models(provider)
     )
-    fetch_failed = not live
-    if fetch_failed:
-        cached = _cached_catalog(provider, identity)
-        if cached and getattr(live, "error_kind", None) != "http":
-            _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
-                kind=getattr(live, "error_kind", None) or "unknown",
-                message="Live discovery failed; showing last-known-good cached catalog",
-                status=getattr(live, "status", None), retained_live_catalog=True,
-            )
-            live = cached
-    if not live:
-        retained_live_catalog = (
-            provider in _LIVE_REFRESHED
-            and _LIVE_REFRESH_IDENTITIES.get(provider) == identity
-        )
-        _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
-            kind=getattr(live, "error_kind", None) or "unknown",
-            message=getattr(live, "error", None) or "live model discovery failed",
-            status=getattr(live, "status", None),
-            retained_live_catalog=retained_live_catalog,
-        )
-        # If this provider was previously refreshed under a different endpoint
-        # or credential, do not leak that old catalog into the new identity.
-        if (
-            provider in _LIVE_REFRESHED
-            and (_LIVE_REFRESH_IDENTITIES.get(provider) != identity
-                 or getattr(live, "error_kind", None) == "http")
-        ):
-            PROVIDERS[provider]["models"] = _fallback_models(provider)
-            _LIVE_REFRESHED.discard(provider)
-            _LIVE_REFRESH_IDENTITIES.pop(provider, None)
-        return False
-
-    live_ids = set(live)
-    remembered = _load_user_model_map().get(provider, [])
-    remembered_ids = set(remembered)
-    fallback = _FALLBACK_MODELS[provider]
-    merged: Dict[str, Any] = {}
-    for key, entry in fallback.items():
-        model_id = entry.get("model_name")
-        if model_id in live_ids or model_id in remembered_ids:
-            merged[key] = copy.deepcopy(entry)
-    for model_id in live:
-        entry = merged.setdefault(model_id, _provider_model_entry(provider, model_id))
-        details = getattr(live, "metadata", {}).get(model_id, {})
-        entry.update(normalize_catalog_metadata(details))
-    for model_id in remembered:
-        merged.setdefault(model_id, _provider_model_entry(provider, model_id))
-
-    PROVIDERS[provider]["models"] = merged
-    _LIVE_REFRESHED.add(provider)
-    _LIVE_REFRESH_IDENTITIES[provider] = identity
-    if not fetch_failed:
+    if catalog.source == "live" and catalog.error_kind is None:
         _LIVE_REFRESH_ERRORS.pop(provider, None)
-        _save_catalog(provider, identity, live)
-    return not fetch_failed
-
-
-def add_user_model(provider: str, model_id: str) -> bool:
-    """Persist a manual model ID for a provider and expose it immediately.
-
-    Returns ``True`` if a new ID was saved, and ``False`` for blank input or a
-    duplicate. Unknown providers raise ``ValueError`` because they cannot be
-    loaded by the current provider registry.
-    """
-    provider = _normalize_provider_key(provider)
-    if provider not in PROVIDERS:
-        raise ValueError(f"Unknown provider: {provider}")
-
-    model_id = (model_id or "").strip()
-    if not model_id:
-        return False
-
-    saved = _load_user_model_map()
-    provider_models = saved.setdefault(provider, [])
-    is_new = model_id not in provider_models
-    if is_new:
-        provider_models.append(model_id)
-        USER_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        USER_MODELS_PATH.write_text(json.dumps(saved, indent=2) + "\n")
-
-    _USER_MODELS.setdefault(provider, [])
-    if model_id not in _USER_MODELS[provider]:
-        _USER_MODELS[provider].append(model_id)
-
-    entry = _provider_model_entry(provider, model_id)
-    _FALLBACK_MODELS[provider].setdefault(model_id, copy.deepcopy(entry))
-    PROVIDERS[provider]["models"].setdefault(model_id, entry)
-    return is_new
-
-
-def add_user_openrouter_model(slug: str) -> bool:
-    """Compatibility wrapper for callers that add an OpenRouter model slug."""
-    return add_user_model("openrouter", slug)
+        _LIVE_REFRESHED.add(provider)
+        _LIVE_REFRESH_IDENTITIES[provider] = identity
+        return True
+    _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
+        kind=catalog.error_kind or "unknown",
+        message=catalog.error or "live model discovery failed",
+        status=catalog.status,
+        retained_live_catalog=catalog.source == "cache",
+    )
+    _LIVE_REFRESHED.discard(provider)
+    _LIVE_REFRESH_IDENTITIES.pop(provider, None)
+    return False
 
 
 def provider_allows_manual_model(provider: str) -> bool:
@@ -740,19 +528,19 @@ __all__ = [
     "ANTHROPIC_API_VERSION",
     "DEFAULT_OPENROUTER_MODEL",
     "LIVE_MODEL_PROVIDERS",
-    "LiveModelList",
     "LiveModelRefreshError",
     "MANUAL_MODEL_PROVIDERS",
+    "MODEL_CATALOG_PATH",
     "PROVIDER_ALIASES",
     "ProviderCatalogSnapshot",
     "PROVIDERS",
-    "USER_MODELS_PATH",
-    "add_user_model",
-    "add_user_openrouter_model",
-    "fetch_live_models",
+    "fetch_openrouter_endpoints",
+    "fetch_openrouter_upstreams",
     "get_live_model_refresh_error",
+    "normalize_catalog_metadata",
     "provider_allows_manual_model",
     "refresh_live_models",
+    "resolve_provider_catalog",
     "restore_provider_catalog",
     "snapshot_provider_catalog",
 ]

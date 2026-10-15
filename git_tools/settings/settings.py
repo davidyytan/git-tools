@@ -14,6 +14,8 @@ from typing import Any, Optional, Tuple
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
 
+from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter
+
 from .mappings import PROVIDER_ALIASES, PROVIDERS
 
 # Whitelist of allowed configuration classes for security
@@ -122,6 +124,100 @@ def provider_label(provider: str) -> str:
     return str(definition.get("label") or provider_lower.title())
 
 
+def provider_base_url_env(provider: str) -> str:
+    """The provider's own endpoint key (``OPENAI_BASE_URL``, ``QWEN_BASE_URL``, …).
+
+    Every config class reads the shared ``GIT_TOOLS_API_BASE`` first and this
+    key second; the settings editors use it to remember a custom endpoint per
+    provider, the way agent-cli keeps a base URL per provider profile.
+    """
+    alias = _provider_config_class(provider).model_fields["base_url"].validation_alias
+    choices = [str(choice) for choice in getattr(alias, "choices", [])]
+    return next(choice for choice in choices if choice != "GIT_TOOLS_API_BASE")
+
+
+def _saved_value(key: str) -> str | None:
+    """A setting as the process environment or the settings files hold it.
+
+    The environment wins, then the settings files in their usual order (last
+    found wins). ``None`` when the key is nowhere.
+    """
+    value = os.environ.get(key)
+    if value is None:
+        from dotenv import dotenv_values
+
+        for path in _get_env_file_paths():
+            if path.exists():
+                found = dotenv_values(path).get(key)
+                if found is not None:
+                    value = found
+    return value
+
+
+def saved_provider_base_url(provider: str) -> str | None:
+    """A custom endpoint remembered for ``provider``, from its own key."""
+    value = (_saved_value(provider_base_url_env(provider)) or "").strip()
+    return value or None
+
+
+# Provider profiles. agent-cli keeps a profile per provider (model, support
+# model, reasoning tier, Kimi thinking, OpenRouter pin, endpoint); git-tools
+# keeps the same under provider-scoped keys. The plain keys always hold the
+# current provider's values, so generators and config classes never change:
+# every save of a plain key is mirrored into the current provider's profile
+# (``save_settings``), and a provider switch reads the target provider's
+# profile back into the plain keys. API keys are per provider already.
+_PROFILE_FIELDS = {
+    "GIT_TOOLS_MODEL_MAIN": "MODEL_MAIN",
+    "GIT_TOOLS_DEFAULT_MODEL": "MODEL_MAIN",
+    "GIT_TOOLS_MODEL_SUPPORT": "MODEL_SUPPORT",
+    "GIT_TOOLS_REASONING_EFFORT": "REASONING_EFFORT",
+    "GIT_TOOLS_KIMI_THINKING": "KIMI_THINKING",
+    "GIT_TOOLS_OPENROUTER_PROVIDER": "OPENROUTER_PROVIDER",
+}
+
+
+def provider_profile_key(provider: str, field: str) -> str:
+    """The provider-scoped key for one profile field (``GIT_TOOLS_OPENAI_MODEL_MAIN``)."""
+    return f"GIT_TOOLS_{normalize_provider_name(provider).upper()}_{field}"
+
+
+def saved_provider_profile(provider: str) -> dict[str, str | None]:
+    """A provider's remembered choices; ``None`` for anything never saved."""
+    return {
+        "model": _saved_value(provider_profile_key(provider, "MODEL_MAIN")),
+        "support_model": _saved_value(provider_profile_key(provider, "MODEL_SUPPORT")),
+        "reasoning_effort": _saved_value(provider_profile_key(provider, "REASONING_EFFORT")),
+        "kimi_thinking": _saved_value(provider_profile_key(provider, "KIMI_THINKING")),
+        "openrouter_provider": _saved_value(provider_profile_key(provider, "OPENROUTER_PROVIDER")),
+        "api_base": saved_provider_base_url(provider),
+    }
+
+
+def _mirror_profile(updates: dict[str, str | None]) -> dict[str, str | None]:
+    """``updates`` plus their provider-profile mirrors for the provider they belong to.
+
+    The provider is the one being switched to when the updates carry
+    ``GIT_TOOLS_PROVIDER``, else the saved current one. A custom endpoint is
+    mirrored under the provider's own endpoint key; the default endpoint is
+    not, and setting it again forgets a remembered custom one.
+    """
+    provider = updates.get("GIT_TOOLS_PROVIDER") or _saved_value("GIT_TOOLS_PROVIDER") or ""
+    provider = normalize_provider_name(provider) if provider else ""
+    if provider not in PROVIDERS:
+        return dict(updates)
+    mirrored: dict[str, str | None] = dict(updates)
+    for key, value in updates.items():
+        field = _PROFILE_FIELDS.get(key)
+        if field:
+            mirrored[provider_profile_key(provider, field)] = value
+        elif key == "GIT_TOOLS_API_BASE" and value is not None:
+            default = (PROVIDERS[provider].get("default_base_url") or "").rstrip("/")
+            custom = value.rstrip("/") != default
+            mirrored[provider_base_url_env(provider)] = value if custom else None
+    return mirrored
+
+
 def provider_api_key_env(provider: str) -> str:
     """Return the primary API-key environment variable for a provider."""
     return _get_provider_api_key_envs(provider)[0]
@@ -163,10 +259,17 @@ def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | 
     return False, None
 
 
-def _render_settings_updates(content: str, updates: dict[str, str]) -> str:
-    """Return settings file content with all updates applied in memory."""
+def _render_settings_updates(content: str, updates: dict[str, str | None]) -> str:
+    """Return settings file content with all updates applied in memory.
+
+    A ``None`` value removes the key's line, so a setting can be forgotten
+    rather than left behind as an empty string.
+    """
     for key, value in updates.items():
         pattern = re.compile(rf'^{re.escape(key)}\s*=.*$', re.MULTILINE)
+        if value is None:
+            content = re.sub(rf'^{re.escape(key)}\s*=.*\n?', "", content, flags=re.MULTILINE)
+            continue
         line = f'{key}="{value}"'
         if pattern.search(content):
             # A callable replacement keeps backslashes in values literal; a
@@ -177,14 +280,17 @@ def _render_settings_updates(content: str, updates: dict[str, str]) -> str:
     return content
 
 
-def save_settings(updates: dict[str, str]) -> bool:
-    """Atomically apply multiple settings with a single file replacement."""
+def save_settings(updates: dict[str, str | None]) -> bool:
+    """Atomically apply multiple settings with a single file replacement.
+
+    A ``None`` value removes that key from the file.
+    """
     if not updates:
         return True
 
     DEFAULT_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     content = DEFAULT_SETTINGS_PATH.read_text() if DEFAULT_SETTINGS_PATH.exists() else ""
-    rendered = _render_settings_updates(content, updates)
+    rendered = _render_settings_updates(content, _mirror_profile(updates))
 
     temp_path: Path | None = None
     try:
@@ -449,7 +555,7 @@ class OpenRouterConfig(BaseLLMConfig):
         validation_alias="OPENROUTER_API_KEY",
     )
     base_url: Optional[str] = Field(
-        default="https://openrouter.ai/api/v1",
+        default=openrouter.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "OPENROUTER_BASE_URL"),
     )
 
@@ -467,7 +573,7 @@ class KimiCLIConfig(BaseLLMConfig):
         validation_alias="KIMICODE_API_KEY",
     )
     base_url: Optional[str] = Field(
-        default="https://api.kimi.com/coding/v1",
+        default=kimi_code.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "KIMICLI_BASE_URL"),
     )
 
@@ -482,8 +588,9 @@ class CLIProxyAPIConfig(BaseLLMConfig):
     CLIProxyAPI (https://github.com/router-for-me/CLIProxyAPI) exposes a local
     OpenAI-compatible proxy in front of CLI-authenticated models such as the
     Codex/GPT-5 family. Because git-tools runs on the host, the default base URL
-    points at localhost; override it with GIT_TOOLS_API_BASE if the proxy lives
-    elsewhere (e.g. http://host.docker.internal:8317/v1 from inside a container).
+    is the loopback address agent-cli presets; override it with GIT_TOOLS_API_BASE
+    if the proxy lives elsewhere (e.g. http://host.docker.internal:8317/v1 from
+    inside a container).
 
     The client key defaults to the ``cliproxyapi`` placeholder the proxy ships
     with, so it need not be set; override CLIPROXYAPI_API_KEY only if the proxy
@@ -496,7 +603,7 @@ class CLIProxyAPIConfig(BaseLLMConfig):
         validation_alias="CLIPROXYAPI_API_KEY",
     )
     base_url: Optional[str] = Field(
-        default="http://localhost:8317/v1",
+        default=cliproxyapi.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "CLIPROXYAPI_BASE_URL"),
     )
 
@@ -510,7 +617,7 @@ class ACRCConfig(BaseLLMConfig):
 
     api_key: str = Field(..., min_length=1, validation_alias="ACRC_API_KEY")
     base_url: Optional[str] = Field(
-        default="https://fmodel.ai.acrc.a-star.edu.sg/v1",
+        default=acrc.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "ACRC_BASE_URL"),
     )
 
@@ -524,7 +631,7 @@ class CopilotConfig(BaseLLMConfig):
 
     api_key: str = Field(..., min_length=1, validation_alias="COPILOT_API_KEY")
     base_url: Optional[str] = Field(
-        default="http://localhost:4141/v1",
+        default=copilot.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "COPILOT_BASE_URL"),
     )
 
@@ -563,7 +670,7 @@ class OpenAIConfig(BaseLLMConfig):
 
     api_key: str = Field(..., min_length=1, validation_alias="OPENAI_API_KEY")
     base_url: Optional[str] = Field(
-        default="https://api.openai.com/v1",
+        default=openai.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "OPENAI_BASE_URL"),
     )
 
@@ -577,7 +684,7 @@ class AnthropicConfig(BaseLLMConfig):
 
     api_key: str = Field(..., min_length=1, validation_alias="ANTHROPIC_API_KEY")
     base_url: Optional[str] = Field(
-        default="https://api.anthropic.com/v1",
+        default=anthropic.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "ANTHROPIC_BASE_URL"),
     )
 
@@ -598,6 +705,12 @@ def load_provider_config(provider: str) -> BaseLLMConfig:
     Raises:
         ValueError: If provider is unknown or config class is not whitelisted
     """
+    # Load config (only API keys from .env, other settings from JSON)
+    return _provider_config_class(provider)()
+
+
+def _provider_config_class(provider: str) -> type[BaseLLMConfig]:
+    """The whitelisted config class registered for ``provider``."""
     provider_lower = normalize_provider_name(provider)
     if provider_lower not in PROVIDERS:
         raise ValueError(f"Unknown provider: {provider}")
@@ -617,6 +730,4 @@ def load_provider_config(provider: str) -> BaseLLMConfig:
 
     if config_class is None:
         raise ValueError(f"Config class '{config_class_name}' not found in module")
-
-    # Load config (only API keys from .env, other settings from JSON)
-    return config_class()
+    return config_class

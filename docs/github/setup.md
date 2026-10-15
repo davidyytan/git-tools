@@ -15,37 +15,20 @@
 
 ### Workflow file
 
-`git-tools init` writes `.cz.toml`; it does **not** install Actions workflows,
-create branches, configure repository settings/secrets, or push to GitHub.
-The active classic workflow in this source repository versions **git-tools
-itself**. It is not installed into your application by the CLI.
+`git-tools init` writes `.cz.toml`; it does **not** install Actions workflows, create branches, configure repository settings/secrets, or push to GitHub. The active classic workflow in this source repository versions **git-tools itself**. It is not installed into your application by the CLI.
 
-Activate exactly one workflow by copying or renaming one example to a real
-`.yml` file in `.github/workflows/`:
+Activate exactly one workflow by copying or renaming one example to a real `.yml` file in `.github/workflows/`:
 
 - `.github/workflows/version-bump-git-flow-variant-release-led.yml.example` -> `.github/workflows/version-bump-git-flow-variant-release-led.yml`
 - `.github/workflows/version-bump-git-flow-classic.yml.example` -> `.github/workflows/version-bump-git-flow-classic.yml`
 
 ### Tool-source ref and bot identity
 
-The workflow clones `GIT_TOOLS_REPO` separately from the repository being
-versioned. Its `GIT_TOOLS_REF` selects the implementation of the version
-strategy, not your application's default branch. The supplied classic example
-currently uses `develop`; the release-led example uses `master`. Inspect and
-set this value explicitly before activation: the selected ref must contain
-`decide_version_strategy`, the bump runner, and the fixed-title/backmerge
-behavior described by these guides. Local edits or installing a newer CLI do
-not update that remote CI clone.
+The workflow clones `GIT_TOOLS_REPO` separately from the repository being versioned. Its `GIT_TOOLS_REF` selects the implementation of the version strategy, not your application's default branch. The supplied classic example currently uses `develop`; the release-led example uses `master`. Inspect and set this value explicitly before activation: the selected ref must contain `decide_version_strategy`, the bump runner, and the fixed-title/backmerge behavior described by these guides. Local edits or installing a newer CLI do not update that remote CI clone.
 
-For reproducible CI, use a maintained release tag that contains the required
-behavior rather than a moving development branch. The examples use
-`git clone --branch "$GIT_TOOLS_REF"`, which accepts a branch or tag, **not an
-arbitrary commit SHA**; checking out a SHA requires adapting the clone/fetch
-step. Keep exactly one version workflow active to avoid competing version
-commits and tags.
+For reproducible CI, use a maintained release tag that contains the required behavior rather than a moving development branch. The examples use `git clone --branch "$GIT_TOOLS_REF"`, which accepts a branch or tag, **not an arbitrary commit SHA**; checking out a SHA requires adapting the clone/fetch step. Keep exactly one version workflow active to avoid competing version commits and tags.
 
-Set `GIT_BOT_NAME` and `GIT_BOT_EMAIL` to your automation identity. Copy the
-chosen example from this repository:
+Set `GIT_BOT_NAME` and `GIT_BOT_EMAIL` to your automation identity. Copy the chosen example from this repository:
 
 - [Classic workflow example](../../.github/workflows/version-bump-git-flow-classic.yml.example)
 - [Release-led workflow example](../../.github/workflows/version-bump-git-flow-variant-release-led.yml.example)
@@ -55,24 +38,11 @@ chosen example from this repository:
 - `BOT_SSH_SECRETKEY`
 - `BOT_GPG_SECRETKEY`
 
-`BOT_SSH_SECRETKEY` is the private SSH key for an identity allowed to write to
-the target repository (for example, a write-enabled deploy key or bot account).
-`BOT_GPG_SECRETKEY` is the private signing key used for version commits and
-tags. Register the matching public keys as appropriate, store private keys
-only in Actions secrets, and do not commit them to the repository.
+`BOT_SSH_SECRETKEY` is the private SSH key for an identity allowed to write to the target repository (for example, a write-enabled deploy key or bot account). `BOT_GPG_SECRETKEY` is the private signing key used for version commits and tags. Register the matching public keys as appropriate, store private keys only in Actions secrets, and do not commit them to the repository.
 
-The supplied workflow does not configure a GPG passphrase input. Use a dedicated
-key suitable for unattended signing, or adapt the import step to supply a
-passphrase securely. Plan expiry, rotation, revocation, and backup; never use
-an unattended automation key as a personal signing key.
+The supplied workflow does not configure a GPG passphrase input. Use a dedicated key suitable for unattended signing, or adapt the import step to supply a passphrase securely. Plan expiry, rotation, revocation, and backup; never use an unattended automation key as a personal signing key.
 
-Branch protections/rulesets must permit this bot to push signed version
-commits and tags on the workflow's target branches. In reviewed flows, require
-human changes to arrive through PRs while narrowly granting the automation
-identity the required bypass. The workflow's final `git push` uses the SSH
-checkout credentials; merely granting `GITHUB_TOKEN` write permissions does
-not make an SSH identity writable. Validate bootstrap in a test repository
-before enforcing the final protections.
+Branch protections/rulesets must permit this bot to push signed version commits and tags on the workflow's target branches. In reviewed flows, require human changes to arrive through PRs while narrowly granting the automation identity the required bypass. The workflow's final `git push` uses the SSH checkout credentials; merely granting `GITHUB_TOKEN` write permissions does not make an SSH identity writable. Validate bootstrap in a test repository before enforcing the final protections.
 
 ## Merge Settings
 
@@ -83,9 +53,7 @@ This flow supports two GitHub merge styles:
 
 Do not use `Rebase merge` for this automated flow.
 
-The rule that matters is the final commit subject on the target branch. GitHub
-may append a trailing `(#123)` to merged workflow PR subjects; the workflow
-matcher ignores that suffix.
+The rule that matters is the final commit subject on the target branch. GitHub may append a trailing `(#123)` to merged workflow PR subjects; the workflow matcher ignores that suffix.
 
 #### Subjects into `develop`
 
@@ -117,8 +85,7 @@ matcher ignores that suffix.
 - for the closest classic Git Flow feel, use merge commits for `feature/*`,
   `bugfix/*`, `release/*`, and `hotfix/*` PRs
 
-GitHub's default merge-commit subject `Merge pull request #...` is not suitable
-for this flow because the version workflow reads the latest commit subject.
+GitHub's default merge-commit subject `Merge pull request #...` is not suitable for this flow because the version workflow reads the latest commit subject.
 
 Why:
 
@@ -153,8 +120,7 @@ Why:
 
 ## Bootstrap `master` and `develop`
 
-For a **fresh** target repository, copy and configure the chosen adapter before
-staging the first commit. Do not use this recipe to migrate existing history.
+For a **fresh** target repository, copy and configure the chosen adapter before staging the first commit. Do not use this recipe to migrate existing history.
 
 ```bash
 git init -b master
@@ -165,12 +131,7 @@ git commit -m "Release 0.1.0"
 git push -u origin master
 ```
 
-Review staged files before committing, and never stage signing-key exports.
-Set the remote default branch to `master` after it exists. Direct initialization
-seeds `.cz.toml` at `0.0.1`; initialize `[project].version` to the same baseline
-if present. The first master run should create stable `0.1.0`. The subject
-`Release 0.0.1` is also accepted for bootstrap. Interactive initialization must
-retain the same baseline to obtain this documented result.
+Review staged files before committing, and never stage signing-key exports. Set the remote default branch to `master` after it exists. Direct initialization seeds `.cz.toml` at `0.0.1`; initialize `[project].version` to the same baseline if present. The first master run should create stable `0.1.0`. The subject `Release 0.0.1` is also accepted for bootstrap. Interactive initialization must retain the same baseline to obtain this documented result.
 
 Wait for CI to publish successfully, then:
 
@@ -182,18 +143,11 @@ git checkout -b develop
 git push -u origin develop
 ```
 
-Before every dependent operation, pull the bot commit and fetch tags. Promote
-only after the release/hotfix branch contains the expected `rc` version; wait
-for stable publication on `master` before backmerge. Creating a branch or
-opening a PR alone does not bump it.
+Before every dependent operation, pull the bot commit and fetch tags. Promote only after the release/hotfix branch contains the expected `rc` version; wait for stable publication on `master` before backmerge. Creating a branch or opening a PR alone does not bump it.
 
 ## Local CLI and PR Descriptions
 
-Direct `git-tools commit` generates and commits by default; use `--no-commit`
-to review output first. `git-tools pr` generates text, not a GitHub PR. Push the
-source branch, create the PR in GitHub, and use the documented base and title.
-See [CLI usage](../usage.md) for direct/interactive options and PR length
-preferences, and [configuration](../configuration.md) for provider settings.
+Direct `git-tools commit` generates and commits by default; use `--no-commit` to review output first. `git-tools pr` generates text, not a GitHub PR. Push the source branch, create the PR in GitHub, and use the documented base and title. See [CLI usage](../usage.md) for direct/interactive options and PR length preferences, and [configuration](../configuration.md) for provider settings.
 
 ## After Setup
 
@@ -206,7 +160,4 @@ Continue with one of these standalone guides:
 
 ## Publication and Recovery
 
-The selected engine ref must also contain `git_tools.generators.publish`.
-Publishing dry-runs an atomic push, logs its choice, and falls back only when the
-server explicitly lacks atomic support. Other failures stop. See
-[publication and missing-tag recovery](../publication.md).
+The selected engine ref must also contain `git_tools.generators.publish`. Publishing dry-runs an atomic push, logs its choice, and falls back only when the server explicitly lacks atomic support. Other failures stop. See [publication and missing-tag recovery](../publication.md).

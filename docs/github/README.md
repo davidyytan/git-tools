@@ -11,9 +11,7 @@
 | [Release-led](release-led.md) | `release/X.Y.Z` | Direct human commits | Squash or merge commit |
 | [Release-led — Reviewed](release-led-reviewed.md) | Same as release-led | Inner PRs | Squash |
 
-Reviewed modes share their base adapter. Activate **one** versioning workflow,
-not one per mode. Review requirements are enforced by repository policies;
-generated bot version commits need a narrowly approved direct-push exception.
+Reviewed modes share their base adapter. Activate **one** versioning workflow, not one per mode. Review requirements are enforced by repository policies; generated bot version commits need a narrowly approved direct-push exception.
 
 ## How It Works
 
@@ -27,9 +25,7 @@ Push branch / complete PR with the intended final subject
   → user waits for CI, pulls bot commit, and fetches tags
 ```
 
-The CLI generates PR text locally; it does not create or merge hosted PRs.
-`git-tools init` writes `.cz.toml`, not a workflow. Versioning CI needs no LLM
-key; ordinary local commit/PR generation uses your configured provider.
+The CLI generates PR text locally; it does not create or merge hosted PRs. `git-tools init` writes `.cz.toml`, not a workflow. Versioning CI needs no LLM key; ordinary local commit/PR generation uses your configured provider.
 
 ## Start Here
 
@@ -48,6 +44,4 @@ key; ordinary local commit/PR generation uses your configured provider.
 - [Configuration and provider settings](../configuration.md)
 - [Optional manual DVC workflow](../dvc.md)
 
-GitHub has no automatic PR length target by default; Azure does. The CLI usage
-page is the authoritative home for opt-in targets and aliases. Platform setup
-is the authoritative home for credential and merge configuration.
+GitHub has no automatic PR length target by default; Azure does. The CLI usage page is the authoritative home for opt-in targets and aliases. Platform setup is the authoritative home for credential and merge configuration.

@@ -4,46 +4,31 @@
 
 Use this flow if you want the release branch to choose the final release line.
 
-Use this workflow example and activate it as
-`.azure/workflows/version-bump-git-flow-variant-release-led.yml`:
+Use this workflow example and activate it as `.azure/workflows/version-bump-git-flow-variant-release-led.yml`:
 
 ```text
 .azure/workflows/version-bump-git-flow-variant-release-led.yml.example
 ```
 
-This is the direct-push variant: commits land directly on `release/*` and
-`hotfix/*`. If you want the same release-led model but with every change reviewed
-through inner PRs and squash merges, use
-[Variant — Reviewed](release-led-reviewed.md) instead.
+This is the direct-push variant: commits land directly on `release/*` and `hotfix/*`. If you want the same release-led model but with every change reviewed through inner PRs and squash merges, use [Variant — Reviewed](release-led-reviewed.md) instead.
 
 ## Subjects and Commands
 
-Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy)
-and [platform setup](setup.md) before following these recipes.
-Replace placeholders with actual paths and versions; these are separate steps,
-not a single script. Direct `git-tools commit` commits by default; use
-`--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR.
-Review staged files before committing. Wait for CI, pull bot commits, and
-fetch tags before dependent operations.
-Keep promotion branches until backmerge completes.
+Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and [platform setup](setup.md) before following these recipes. Replace placeholders with actual paths and versions; these are separate steps, not a single script. Direct `git-tools commit` commits by default; use `--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR. Review staged files before committing. Wait for CI, pull bot commits, and fetch tags before dependent operations. Keep promotion branches until backmerge completes.
 
 ## Merge Strategy
 
-Squash or merge commits are supported when the final subject is the PR title.
-Configure the [platform merge settings](setup.md#merge-settings); do not use
-rebase completion. This direct-change mode does not require inner PRs.
+Squash or merge commits are supported when the final subject is the PR title. Configure the [platform merge settings](setup.md#merge-settings); do not use rebase completion. This direct-change mode does not require inner PRs.
 
 ## Synchronization Policy
 
-Not required in this mode. Synchronization changes may be pushed directly;
-use the reviewed sister guide if all human stabilization changes require PRs.
+Not required in this mode. Synchronization changes may be pushed directly; use the reviewed sister guide if all human stabilization changes require PRs.
 
 ## Command Recipes
 
 ### Bootstrap on `master`
 
-Follow [platform bootstrap](setup.md#bootstrap-master-and-develop). For Azure,
-use the ordered setup runbook, including manual pipeline authorization/run.
+Follow [platform bootstrap](setup.md#bootstrap-master-and-develop). For Azure, use the ordered setup runbook, including manual pipeline authorization/run.
 
 ### Feature or bugfix PR into `develop`
 
@@ -123,17 +108,13 @@ git-tools pr --backmerge-hotfix-pr --workflow-version 1.6.1
 
 ## Feature and Bugfix Policy
 
-Most feature and bugfix work lands on `develop` with a normal Conventional
-Commit title. `develop` creates or continues tagged `alpha` prereleases.
+Most feature and bugfix work lands on `develop` with a normal Conventional Commit title. `develop` creates or continues tagged `alpha` prereleases.
 
-On a freshly created `develop` branch that still matches the latest stable
-release, the first develop PR may use the fixed title `Start X.Y.Z` while the
-branch commit itself stays Conventional Commit based.
+On a freshly created `develop` branch that still matches the latest stable release, the first develop PR may use the fixed title `Start X.Y.Z` while the branch commit itself stays Conventional Commit based.
 
 ## Release-Line Policy
 
-The release branch selects the target; cutting it does not itself open `rc.0`.
-An optional `Start` PR opens a new develop line independently of this cut.
+The release branch selects the target; cutting it does not itself open `rc.0`. An optional `Start` PR opens a new develop line independently of this cut.
 
 ## Release Stabilization and Promotion
 
@@ -153,8 +134,7 @@ Promotion PR title into `master`:
 Release X.Y.Z
 ```
 
-If `master` has moved since the release was cut (for example a hotfix landed),
-pre-merge `master` into the release branch before opening the promotion PR:
+If `master` has moved since the release was cut (for example a hotfix landed), pre-merge `master` into the release branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
@@ -173,18 +153,13 @@ Rules:
 - if `develop` is not ahead yet, the backmerge may catch `develop` up to stable `X.Y.Z` without tagging
 - after that stable catch-up, open a new `develop` cycle later with `Start A.B.C` when you are ready
 
-Before creating the backmerge PR, pre-merge `develop` into the release branch
-to resolve version-file divergence (develop's alpha line vs the release's stable
-line):
+Before creating the backmerge PR, pre-merge `develop` into the release branch to resolve version-file divergence (develop's alpha line vs the release's stable line):
 
 See the [command recipe](#release-backmerge-into-develop) for the synchronization commands.
 
-When version files conflict, preserve the intended develop line (the ahead alpha
-when present, otherwise the promoted stable target) consistently in `.cz.toml`
-and any project version field. Do not resolve by lexical string order.
+When version files conflict, preserve the intended develop line (the ahead alpha when present, otherwise the promoted stable target) consistently in `.cz.toml` and any project version field. Do not resolve by lexical string order.
 
-If you need to explicitly open a new `develop` cycle after a release, use the
-fixed title on the first PR for that cycle:
+If you need to explicitly open a new `develop` cycle after a release, use the fixed title on the first PR for that cycle:
 
 See the [command recipe](#release-backmerge-into-develop) for the synchronization commands.
 
@@ -207,9 +182,7 @@ Promotion PR title into `master`:
 Hotfix X.Y.Z
 ```
 
-If `master` has moved since the hotfix was created (for example another hotfix
-landed), pre-merge `master` into the hotfix branch before opening the promotion
-PR:
+If `master` has moved since the hotfix was created (for example another hotfix landed), pre-merge `master` into the hotfix branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
@@ -228,15 +201,11 @@ Rules:
 - if `develop` is not ahead yet, the backmerge may catch `develop` up to stable patch `X.Y.Z` without tagging
 - after that stable catch-up, open a new `develop` cycle later with `Start A.B.C` when you are ready
 
-Before creating the backmerge PR, pre-merge `develop` into the hotfix branch
-to resolve version-file divergence (develop's alpha line vs the hotfix's patch
-line):
+Before creating the backmerge PR, pre-merge `develop` into the hotfix branch to resolve version-file divergence (develop's alpha line vs the hotfix's patch line):
 
 See the [command recipe](#hotfix-backmerge-into-develop) for the synchronization commands.
 
-When version files conflict, preserve the intended develop line (the ahead alpha
-when present, otherwise the promoted stable target) consistently in `.cz.toml`
-and any project version field. Do not resolve by lexical string order.
+When version files conflict, preserve the intended develop line (the ahead alpha when present, otherwise the promoted stable target) consistently in `.cz.toml` and any project version field. Do not resolve by lexical string order.
 
 ## Summary
 

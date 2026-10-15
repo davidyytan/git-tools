@@ -32,8 +32,7 @@ The guides are parallel sister copies: choose a platform and a mode. Platform-sp
 | Release-led | [Release-led](github/release-led.md) | [Release-led](azure-devops/release-led.md) |
 | Release-led reviewed | [Release-led reviewed](github/release-led-reviewed.md) | [Release-led reviewed](azure-devops/release-led-reviewed.md) |
 
-Platform indexes: [GitHub](github/README.md) · [Azure DevOps](azure-devops/README.md).
-Reviewed modes share their base adapter; install one adapter, not four.
+Platform indexes: [GitHub](github/README.md) · [Azure DevOps](azure-devops/README.md). Reviewed modes share their base adapter; install one adapter, not four.
 
 ## Project Maintenance
 

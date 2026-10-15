@@ -2,39 +2,22 @@
 
 [Azure DevOps guides](README.md) · [Setup](setup.md) · [CLI usage](../usage.md)
 
-Use this flow if you want the **release branch to choose the final release line**
-(like [Variant — Release-led](release-led.md)) **and** every human
-change to land through a PR for review, including stabilization fixes that
-target an open `release/*` or `hotfix/*` branch.
+Use this flow if you want the **release branch to choose the final release line** (like [Variant — Release-led](release-led.md)) **and** every human change to land through a PR for review, including stabilization fixes that target an open `release/*` or `hotfix/*` branch.
 
-This is [Variant — Release-led](release-led.md) plus an inner PR
-layer, merged by squash:
+This is [Variant — Release-led](release-led.md) plus an inner PR layer, merged by squash:
 
 - `release-fix/<name>` → `release/X.Y.Z` (squash PR)
 - `hotfix-fix/<name>`  → `hotfix/<name>` (squash PR)
 
-`develop`, promotion, and backmerge PRs are unchanged from the release-led
-variant. Pick this flow when the release manager owns the version line **and**
-compliance or org policy requires a review trail for human changes. Otherwise use
-[Variant — Release-led](release-led.md) — the inner PR layer
-adds friction.
+`develop`, promotion, and backmerge PRs are unchanged from the release-led variant. Pick this flow when the release manager owns the version line **and** compliance or org policy requires a review trail for human changes. Otherwise use [Variant — Release-led](release-led.md) — the inner PR layer adds friction.
 
 ## Subjects and Commands
 
-Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy)
-and [platform setup](setup.md) before following these recipes.
-Replace placeholders with actual paths and versions; these are separate steps,
-not a single script. Direct `git-tools commit` commits by default; use
-`--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR.
-Review staged files before committing. Wait for CI, pull bot commits, and
-fetch tags before dependent operations.
-Keep promotion branches until backmerge completes.
+Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and [platform setup](setup.md) before following these recipes. Replace placeholders with actual paths and versions; these are separate steps, not a single script. Direct `git-tools commit` commits by default; use `--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR. Review staged files before committing. Wait for CI, pull bot commits, and fetch tags before dependent operations. Keep promotion branches until backmerge completes.
 
 ## Merge Strategy
 
-This flow uses **squash merges**. The squashed commit subject on `release/X.Y.Z`
-or `hotfix/<name>` is the input to the rc-bump logic, so it must be the inner PR
-title and a Conventional Commit.
+This flow uses **squash merges**. The squashed commit subject on `release/X.Y.Z` or `hotfix/<name>` is the input to the rc-bump logic, so it must be the inner PR title and a Conventional Commit.
 
 - Complete inner PRs using **Squash commit** and set the final subject to the
   PR title.
@@ -42,41 +25,21 @@ title and a Conventional Commit.
   allow squash only for this strict squash profile; prohibit rebase completion.
 - Do not leave an unrelated generated subject in the completion dialog.
 
-Azure may prefix the subject with `Merged PR 42:`; the supported engine
-normalizes that prefix. The remaining subject must still be the Conventional
-Commit PR title. See [setup merge settings](setup.md#merge-settings).
+Azure may prefix the subject with `Merged PR 42:`; the supported engine normalizes that prefix. The remaining subject must still be the Conventional Commit PR title. See [setup merge settings](setup.md#merge-settings).
 
 ## Synchronization Policy
 
-Require reviewers and PRs into `release/*` and `hotfix/*` through Azure Repos
-branch policies. Apply policies to each new stabilization branch, or use an
-administrator-managed branch-prefix policy. Do not grant developers blanket
-policy bypass. The automation identity may need a narrowly approved push
-exception for generated version commits; see [setup](setup.md#7-grant-build-service-permissions).
+Require reviewers and PRs into `release/*` and `hotfix/*` through Azure Repos branch policies. Apply policies to each new stabilization branch, or use an administrator-managed branch-prefix policy. Do not grant developers blanket policy bypass. The automation identity may need a narrowly approved push exception for generated version commits; see [setup](setup.md#7-grant-build-service-permissions).
 
-The synchronization snippets below describe the Git merge subjects and
-conflict resolutions required by the engine. If the target stabilization
-branch requires PRs, perform those merges on a temporary `release-fix/*` or
-`hotfix-fix/*` source branch and submit an inner PR instead of directly pushing
-the protected branch. For preparation merges, preserve the exact subject
-`chore: merge master for release`, `chore: merge master for hotfix`, or
-`chore: merge develop for backmerge` as appropriate; this is synchronization,
-not a new stabilization fix. Pull the completed PR and automation result
-before generating the promotion or backmerge text. Keep the promotion branch
-until its backmerge is complete; do not select source-branch deletion early.
+The synchronization snippets below describe the Git merge subjects and conflict resolutions required by the engine. If the target stabilization branch requires PRs, perform those merges on a temporary `release-fix/*` or `hotfix-fix/*` source branch and submit an inner PR instead of directly pushing the protected branch. For preparation merges, preserve the exact subject `chore: merge master for release`, `chore: merge master for hotfix`, or `chore: merge develop for backmerge` as appropriate; this is synchronization, not a new stabilization fix. Pull the completed PR and automation result before generating the promotion or backmerge text. Keep the promotion branch until its backmerge is complete; do not select source-branch deletion early.
 
-An empty commit may not yield a file diff that Azure Repos can use to create
-an inner PR. If Azure will not offer that PR, include a small legitimate
-tracked stabilization/documentation change and keep the inner PR title
-`chore: open release`; do not bypass the review policy with a direct opener
-push. The empty-commit snippets express the engine's accepted opener subject.
+An empty commit may not yield a file diff that Azure Repos can use to create an inner PR. If Azure will not offer that PR, include a small legitimate tracked stabilization/documentation change and keep the inner PR title `chore: open release`; do not bypass the review policy with a direct opener push. The empty-commit snippets express the engine's accepted opener subject.
 
 ## Command Recipes
 
 ### Bootstrap on `master`
 
-Follow [platform bootstrap](setup.md#bootstrap-master-and-develop). For Azure,
-use the ordered setup runbook, including manual pipeline authorization/run.
+Follow [platform bootstrap](setup.md#bootstrap-master-and-develop). For Azure, use the ordered setup runbook, including manual pipeline authorization/run.
 
 ### Feature or bugfix PR into `develop`
 
@@ -90,9 +53,7 @@ git push -u origin feature/<name>
 git-tools pr --base develop
 ```
 
-`develop` keeps producing tagged `alpha` prereleases on its current line. Feature
-work into `develop` is unchanged; the reviewed inner PRs only apply to the
-release and hotfix branches.
+`develop` keeps producing tagged `alpha` prereleases on its current line. Feature work into `develop` is unchanged; the reviewed inner PRs only apply to the release and hotfix branches.
 
 ### Cut `release/X.Y.Z` (release-led — no `Start` needed)
 
@@ -103,9 +64,7 @@ git checkout -b release/X.Y.Z
 git push -u origin release/X.Y.Z
 ```
 
-The release branch chooses the line, so there is no `Start` PR. `develop` keeps
-its current `alpha`. Cutting the branch alone does not start `rc.0` — the first
-inner PR does.
+The release branch chooses the line, so there is no `Start` PR. `develop` keeps its current `alpha`. Cutting the branch alone does not start `rc.0` — the first inner PR does.
 
 ### Release branch fix via inner PR
 
@@ -124,9 +83,7 @@ git push -u origin release-fix/<name>
 git-tools pr --base release/X.Y.Z
 ```
 
-Squash-merging the inner PR pushes its Conventional Commit title onto
-`release/X.Y.Z`, which opens `X.Y.Z-rc.0` on the first PR and advances
-`X.Y.Z-rc.N` on later ones.
+Squash-merging the inner PR pushes its Conventional Commit title onto `release/X.Y.Z`, which opens `X.Y.Z-rc.0` on the first PR and advances `X.Y.Z-rc.N` on later ones.
 
 ### Release PR into `master`
 
@@ -172,8 +129,7 @@ git push -u origin hotfix-fix/<sub-name>
 git-tools pr --base hotfix/<name>
 ```
 
-When the inner PR squash-merges, the push to `hotfix/<name>` triggers the bump
-workflow and advances the patch `rc` line.
+When the inner PR squash-merges, the push to `hotfix/<name>` triggers the bump workflow and advances the patch `rc` line.
 
 ### Hotfix PR into `master`
 
@@ -206,19 +162,15 @@ git-tools pr --backmerge-hotfix-pr --workflow-version 1.6.1
 
 Same as [Variant — Release-led](release-led.md#feature-and-bugfix-policy).
 
-Feature work into `develop` is unchanged. Reviewed flow only adds inner PRs to
-the release and hotfix branches, not to develop.
+Feature work into `develop` is unchanged. Reviewed flow only adds inner PRs to the release and hotfix branches, not to develop.
 
 ## Release-Line Policy
 
-The release branch selects the target; cutting it does not itself open `rc.0`.
-An optional `Start` PR opens a new develop line independently of this cut.
+The release branch selects the target; cutting it does not itself open `rc.0`. An optional `Start` PR opens a new develop line independently of this cut.
 
 ## Release Stabilization and Promotion
 
-The release branch chooses the final release line. In reviewed flow, no direct
-commits land on `release/X.Y.Z` — every change arrives via an inner PR from a
-`release-fix/<name>` branch and squash-merges with a Conventional Commit subject.
+The release branch chooses the final release line. In reviewed flow, no direct commits land on `release/X.Y.Z` — every change arrives via an inner PR from a `release-fix/<name>` branch and squash-merges with a Conventional Commit subject.
 
 Rules:
 
@@ -234,10 +186,7 @@ Branch naming:
 - `release-fix/<name>` for any change targeting an open `release/X.Y.Z`
 - one inner PR per logical fix; small focused PRs are easier to review
 
-Inner PR title: a normal Conventional Commit (e.g. `fix: tighten input validation`).
-Do **not** use any of the reserved fixed titles (`Release X.Y.Z`,
-`Backmerge Release X.Y.Z`, etc.) for inner PRs — those are reserved for the
-boundary-crossing PRs only.
+Inner PR title: a normal Conventional Commit (e.g. `fix: tighten input validation`). Do **not** use any of the reserved fixed titles (`Release X.Y.Z`, `Backmerge Release X.Y.Z`, etc.) for inner PRs — those are reserved for the boundary-crossing PRs only.
 
 Promotion PR title into `master`:
 
@@ -245,8 +194,7 @@ Promotion PR title into `master`:
 Release X.Y.Z
 ```
 
-If `master` has moved since the release was cut (for example a hotfix landed),
-pre-merge `master` into the release branch before opening the promotion PR:
+If `master` has moved since the release was cut (for example a hotfix landed), pre-merge `master` into the release branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
@@ -257,14 +205,11 @@ git merge origin/master -m "chore: merge master for release"
 
 Same as [Variant — Release-led](release-led.md#release-backmerge).
 
-The backmerge PR is the only `release/* -> develop` boundary crossing. It is not
-affected by the inner-PR rule.
+The backmerge PR is the only `release/* -> develop` boundary crossing. It is not affected by the inner-PR rule.
 
 ## Hotfix Stabilization and Promotion
 
-Hotfix branch work also goes through inner PRs. Hotfixes are often a single fix,
-in which case the hotfix branch holds exactly one inner PR. Multi-fix hotfix
-lines work the same way as release lines.
+Hotfix branch work also goes through inner PRs. Hotfixes are often a single fix, in which case the hotfix branch holds exactly one inner PR. Multi-fix hotfix lines work the same way as release lines.
 
 Rules:
 
@@ -279,8 +224,7 @@ Branch naming:
 - `hotfix-fix/<sub-name>` is the short-lived branch for each inner PR
 - if a hotfix is truly one commit, you can still use one `hotfix-fix/*` PR — the policy is uniform
 
-Inner PR title: a normal Conventional Commit. Reserved fixed titles
-(`Hotfix X.Y.Z`, `Backmerge Hotfix X.Y.Z`) are not allowed as inner PR titles.
+Inner PR title: a normal Conventional Commit. Reserved fixed titles (`Hotfix X.Y.Z`, `Backmerge Hotfix X.Y.Z`) are not allowed as inner PR titles.
 
 Promotion PR title into `master`:
 
@@ -288,8 +232,7 @@ Promotion PR title into `master`:
 Hotfix X.Y.Z
 ```
 
-If `master` has moved since the hotfix was created, pre-merge `master` into the
-hotfix branch before opening the promotion PR:
+If `master` has moved since the hotfix was created, pre-merge `master` into the hotfix branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
@@ -300,8 +243,7 @@ git merge origin/master -m "chore: merge master for hotfix"
 
 Same as [Variant — Release-led](release-led.md#hotfix-backmerge).
 
-The backmerge PR is the only `hotfix/* -> develop` boundary crossing. It is not
-affected by the inner-PR rule.
+The backmerge PR is the only `hotfix/* -> develop` boundary crossing. It is not affected by the inner-PR rule.
 
 ## Summary
 

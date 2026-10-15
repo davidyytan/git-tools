@@ -56,6 +56,8 @@ git-tools commit --commit
 | `--force-sensitive` | Off; refuses generation when staged paths match sensitive-file rules |
 | `--workflow-kind open-release` | Off; uses the fixed subject `chore: open release` instead of an LLM |
 
+**Current fallback limitation:** if the provider key is unavailable, commit generation automatically attempts to copy a locally prepared prompt, even with `--no-copy`. The flag is honored on the normal generated-message path, but not this missing-key fallback.
+
 Ordinary generation needs a staged diff and does not stage files for you. Sensitive-file checks match filenames/path patterns, not secret contents: they are not a substitute for reviewing the diff or using a secret scanner. In interactive mode you can confirm matched files; direct mode requires unstaging them or explicitly using `--force-sensitive`. This override also allows the selected content to enter the generation workflow.
 
 ### Release-opening commit
@@ -110,10 +112,7 @@ git-tools pr --base develop --backmerge-release-pr --workflow-version 1.6.0
 git-tools pr --base develop --backmerge-hotfix-pr --workflow-version 1.6.1
 ```
 
-Hotfix backmerge uses the **already-promoted** hotfix version, not the next patch.
-Supply it with `--workflow-version`; interactive mode asks for it without a guessed
-default. Neither latest master nor a source version synchronized with develop
-reliably identifies that earlier promotion, so this mode does not infer a version.
+Hotfix backmerge uses the **already-promoted** hotfix version, not the next patch. Supply it with `--workflow-version`; interactive mode asks for it without a guessed default. Neither latest master nor a source version synchronized with develop reliably identifies that earlier promotion, so this mode does not infer a version.
 
 Review generated titles and the final merge/squash subject: those subjects drive CI strategy decisions. These flags generate guidance, not hosting actions or branch transitions. See [GitHub flows](github/README.md) or [Azure DevOps flows](azure-devops/README.md) for completion policy.
 

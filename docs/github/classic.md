@@ -2,11 +2,9 @@
 
 [GitHub guides](README.md) · [Setup](setup.md) · [CLI and interactive usage](../usage.md)
 
-Use this flow if `develop` chooses the release line first and the first PR for
-the next cycle should land as `Start X.Y.Z` after cutting `release/X.Y.Z`.
+Use this flow if `develop` chooses the release line first and the first PR for the next cycle should land as `Start X.Y.Z` after cutting `release/X.Y.Z`.
 
-Use this workflow example and activate it as
-`.github/workflows/version-bump-git-flow-classic.yml`:
+Use this workflow example and activate it as `.github/workflows/version-bump-git-flow-classic.yml`:
 
 ```text
 .github/workflows/version-bump-git-flow-classic.yml.example
@@ -14,32 +12,21 @@ Use this workflow example and activate it as
 
 ## Subjects and Commands
 
-Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy)
-and [platform setup](setup.md) before following these recipes.
-Replace placeholders with actual paths and versions; these are separate steps,
-not a single script. Direct `git-tools commit` commits by default; use
-`--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR.
-Review staged files before committing. Wait for CI, pull bot commits, and
-fetch tags before dependent operations.
-Keep promotion branches until backmerge completes.
+Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and [platform setup](setup.md) before following these recipes. Replace placeholders with actual paths and versions; these are separate steps, not a single script. Direct `git-tools commit` commits by default; use `--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR. Review staged files before committing. Wait for CI, pull bot commits, and fetch tags before dependent operations. Keep promotion branches until backmerge completes.
 
 ## Merge Strategy
 
-Squash or merge commits are supported when the final subject is the PR title.
-Configure the [platform merge settings](setup.md#merge-settings); do not use
-rebase completion. This direct-change mode does not require inner PRs.
+Squash or merge commits are supported when the final subject is the PR title. Configure the [platform merge settings](setup.md#merge-settings); do not use rebase completion. This direct-change mode does not require inner PRs.
 
 ## Synchronization Policy
 
-Not required in this mode. Synchronization changes may be pushed directly;
-use the reviewed sister guide if all human stabilization changes require PRs.
+Not required in this mode. Synchronization changes may be pushed directly; use the reviewed sister guide if all human stabilization changes require PRs.
 
 ## Command Recipes
 
 ### Bootstrap on `master`
 
-Follow [platform bootstrap](setup.md#bootstrap-master-and-develop).
-Do this once in a fresh repository, not on every release.
+Follow [platform bootstrap](setup.md#bootstrap-master-and-develop). Do this once in a fresh repository, not on every release.
 
 ### Feature or bugfix PR into `develop`
 
@@ -64,10 +51,7 @@ git checkout -b release/X.Y.Z
 git push -u origin release/X.Y.Z
 ```
 
-Cutting the branch does not change `develop` on its own — `develop` stays on
-`X.Y.Z-alpha.N`. To stop `develop` advancing the line you are now releasing, the
-next `develop` PR must land with the fixed `Start A.B.C` title (`A.B.C` a forward
-step above `X.Y.Z`):
+Cutting the branch does not change `develop` on its own — `develop` stays on `X.Y.Z-alpha.N`. To stop `develop` advancing the line you are now releasing, the next `develop` PR must land with the fixed `Start A.B.C` title (`A.B.C` a forward step above `X.Y.Z`):
 
 ```bash
 git checkout develop
@@ -82,9 +66,7 @@ git push -u origin feature/<name>
 git-tools pr --start-pr --workflow-version A.B.C
 ```
 
-Landing `Start A.B.C` on `develop` must produce `A.B.C-alpha.0`. If you instead
-land an ordinary feature next, `develop` keeps producing `X.Y.Z-alpha.N` and
-collides with the line `release/X.Y.Z` is stabilizing.
+Landing `Start A.B.C` on `develop` must produce `A.B.C-alpha.0`. If you instead land an ordinary feature next, `develop` keeps producing `X.Y.Z-alpha.N` and collides with the line `release/X.Y.Z` is stabilizing.
 
 ### Release branch work and release PR into `master`
 
@@ -148,12 +130,9 @@ git-tools pr --backmerge-hotfix-pr --workflow-version 1.6.1
 
 ## Feature and Bugfix Policy
 
-Most feature and bugfix work lands on `develop` with a normal Conventional
-Commit title. `develop` creates or continues tagged `alpha` prereleases.
+Most feature and bugfix work lands on `develop` with a normal Conventional Commit title. `develop` creates or continues tagged `alpha` prereleases.
 
-On a freshly created `develop` branch that still matches the latest stable
-release, the first develop PR may use the fixed title `Start X.Y.Z` while the
-branch commit itself stays Conventional Commit based.
+On a freshly created `develop` branch that still matches the latest stable release, the first develop PR may use the fixed title `Start X.Y.Z` while the branch commit itself stays Conventional Commit based.
 
 ## Release-Line Policy
 
@@ -193,8 +172,7 @@ Promotion PR title into `master`:
 Release X.Y.Z
 ```
 
-If `master` has moved since the release was cut (for example a hotfix landed),
-pre-merge `master` into the release branch before opening the promotion PR:
+If `master` has moved since the release was cut (for example a hotfix landed), pre-merge `master` into the release branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
@@ -214,15 +192,11 @@ Rules:
 - after that stable catch-up, open the next cycle later with `Start A.B.C` when you are ready
 - if the backmerge is effectively version-only or otherwise no-op while `develop` already matches the target stable line, keeping the same version is acceptable
 
-Before creating the backmerge PR, pre-merge `develop` into the release branch
-to resolve version-file divergence (develop's alpha line vs the release's stable
-line):
+Before creating the backmerge PR, pre-merge `develop` into the release branch to resolve version-file divergence (develop's alpha line vs the release's stable line):
 
 See the [command recipe](#release-backmerge-into-develop) for the synchronization commands.
 
-When version files conflict, preserve the intended develop line (the ahead alpha
-when present, otherwise the promoted stable target) consistently in `.cz.toml`
-and any project version field. Do not resolve by lexical string order.
+When version files conflict, preserve the intended develop line (the ahead alpha when present, otherwise the promoted stable target) consistently in `.cz.toml` and any project version field. Do not resolve by lexical string order.
 
 ## Hotfix Stabilization and Promotion
 
@@ -241,9 +215,7 @@ Promotion PR title into `master`:
 Hotfix X.Y.Z
 ```
 
-If `master` has moved since the hotfix was created (for example another hotfix
-landed), pre-merge `master` into the hotfix branch before opening the promotion
-PR:
+If `master` has moved since the hotfix was created (for example another hotfix landed), pre-merge `master` into the hotfix branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
@@ -262,15 +234,11 @@ Rules:
 - if `develop` is not ahead yet, the backmerge may catch `develop` up to stable patch `X.Y.Z` without tagging
 - after that stable catch-up, open the next cycle later with `Start A.B.C` when you are ready
 
-Before creating the backmerge PR, pre-merge `develop` into the hotfix branch
-to resolve version-file divergence (develop's alpha line vs the hotfix's patch
-line):
+Before creating the backmerge PR, pre-merge `develop` into the hotfix branch to resolve version-file divergence (develop's alpha line vs the hotfix's patch line):
 
 See the [command recipe](#hotfix-backmerge-into-develop) for the synchronization commands.
 
-When version files conflict, preserve the intended develop line (the ahead alpha
-when present, otherwise the promoted stable target) consistently in `.cz.toml`
-and any project version field. Do not resolve by lexical string order.
+When version files conflict, preserve the intended develop line (the ahead alpha when present, otherwise the promoted stable target) consistently in `.cz.toml` and any project version field. Do not resolve by lexical string order.
 
 ## Summary
 

@@ -126,7 +126,7 @@ class CliTests(unittest.TestCase):
             }
             return True
 
-        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5"])
+        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5", "follow-main", "default", ""])
         original_models = mappings.PROVIDERS["kimicli"]["models"]
         self.addCleanup(
             mappings.PROVIDERS["kimicli"].__setitem__,
@@ -151,7 +151,10 @@ class CliTests(unittest.TestCase):
                 "discover:kimicli:True",
                 "save:{'KIMICODE_API_KEY': 'new-kimi-key', "
                 "'GIT_TOOLS_PROVIDER': 'kimicli', "
-                "'GIT_TOOLS_DEFAULT_MODEL': 'kimi-k2.5'}",
+                "'GIT_TOOLS_DEFAULT_MODEL': 'kimi-k2.5', 'GIT_TOOLS_MODEL_MAIN': 'kimi-k2.5', "
+                "'GIT_TOOLS_API_BASE': 'https://api.kimi.com/coding/v1', "
+                "'GIT_TOOLS_MODEL_SUPPORT': 'follow-main', 'GIT_TOOLS_OPENROUTER_PROVIDER': '', "
+                "'GIT_TOOLS_REASONING_EFFORT': '', 'GIT_TOOLS_KIMI_THINKING': ''}",
             ],
         )
         self.assertEqual(state["provider"], "kimicli")
@@ -203,7 +206,7 @@ class CliTests(unittest.TestCase):
             "model": "anthropic/claude-sonnet-4.6",
             "api_configured": True,
         }
-        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5"])
+        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5", "follow-main", "default", ""])
         original_models = mappings.PROVIDERS["kimicli"]["models"].copy()
 
         def refresh(_provider: str, *, force: bool = False) -> bool:
@@ -310,9 +313,9 @@ class CliTests(unittest.TestCase):
             titles[:4],
             [
                 "Provider: cliproxyapi",
-                "Model: gpt-5.5",
-                "Effort: xhigh (model default)",
-                "API Key (cliproxyapi): not set",
+                "Main Model: gpt-5.5",
+                "Support Model (unused): follow-main",
+                "API Endpoint",
             ],
         )
         self.assertEqual(titles[-1], "Done")
@@ -330,13 +333,13 @@ class CliTests(unittest.TestCase):
 
         titles = [choice.title for choice in _build_settings_choices(state)]
 
-        self.assertNotIn("Effort:", "\n".join(titles))
+        self.assertIn("Effort: high (override)", "\n".join(titles))
         self.assertEqual(
             titles[:3],
             [
                 "Provider: kimicli",
-                "Model: kimi-k2.5",
-                "API Key (kimicli): configured",
+                "Main Model: kimi-k2.5",
+                "Support Model (unused): follow-main",
             ],
         )
 
@@ -363,13 +366,13 @@ class CliTests(unittest.TestCase):
         titles = [choice.title for choice in choices]
         values = [choice.value for choice in choices]
 
-        self.assertEqual(values, ["openrouter", "kimicli", "cliproxyapi"])
+        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen"})
         self.assertIn(
             "OpenRouter [openrouter] — https://openrouter.ai/api/v1", titles[0]
         )
-        self.assertIn("Kimi Code [kimicli]", titles[1])
-        self.assertIn("(current)", titles[1])
-        self.assertIn("CLIProxyAPI [cliproxyapi]", titles[2])
+        self.assertIn("Kimi Code [kimicli]", titles[values.index("kimicli")])
+        self.assertIn("(current)", titles[values.index("kimicli")])
+        self.assertIn("CLIProxyAPI [cliproxyapi]", titles[values.index("cliproxyapi")])
 
     def test_model_choices_mark_and_reorder_listed_current_model(self) -> None:
         choices = _build_model_choices(
@@ -388,7 +391,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(choices[0].title, "account-only-kimi (current)")
         self.assertEqual(choices[0].value, "account-only-kimi")
-        self.assertEqual(choices[1].title, "kimi-k2.5")
+        self.assertEqual(choices[1].title, "kimi-for-coding")
 
     def test_model_catalog_auth_failure_names_the_key_to_fix(self) -> None:
         from git_tools.settings.mappings import LiveModelRefreshError
@@ -442,7 +445,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("gpt-5.5 (effort: xhigh)", cliproxy_titles)
         for titles in (cliproxy_titles, kimi_titles, openrouter_titles):
             self.assertEqual(titles[-1], "Enter a model ID manually…")
-        self.assertEqual(kimi_titles[0], "kimi-k2.5")
+        self.assertEqual(kimi_titles[0], "kimi-for-coding")
 
 
 if __name__ == "__main__":

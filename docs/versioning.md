@@ -41,7 +41,7 @@ Previews return before write-time target validation and are not a complete sync 
 
 ## Automatic Targets
 
-Only files at the target repository root are automatically considered.
+Automatic targets are at the repository root, plus the conventional `src-tauri/` Cargo pair. No workspace/package-tree scan is performed.
 
 | File | Fields attempted |
 | --- | --- |
@@ -50,10 +50,12 @@ Only files at the target repository root are automatically considered.
 | `package.json` | Top-level `version` |
 | `package-lock.json` | Top-level `version` and `packages[""].version`, independently where valid |
 | `npm-shrinkwrap.json` | Top-level `version` and `packages[""].version`, independently where valid |
+| `Cargo.toml`, `src-tauri/Cargo.toml` | Literal `[package].version` |
+| `Cargo.lock`, `src-tauri/Cargo.lock` | Unique local crate entry selected by the sibling manifest's exact package name and old version; no `source` field |
 
 Python lock prereleases use the package form: for example `.cz.toml` version
 `0.2.0-alpha.16` becomes `0.2.0a16` in `uv.lock`. Dependency versions are not bumped;
-no `uv lock`, `npm install`, or package-manager command is run.
+no `uv lock`, `npm install`, `cargo update`, or other package-manager command is run.
 
 ### Node.js, TypeScript, Express, and Electron
 
@@ -64,12 +66,33 @@ in npm lockfiles remain untouched. Missing or non-string version fields warn and
 are not invented. JSON formatting may be normalized; common indentation and final
 newline conventions are preserved.
 
+### Rust and Cargo
+
+Cargo sync is another **best-effort try during the normal bump**, not a separate
+release authority. It updates a standalone app crate's literal `[package].version`
+and attempts its matching local `Cargo.lock` entry. TOML is validated and comments,
+quoting, and normal layout are retained. Rust prereleases use the computed version
+text directly (for example `1.3.0-alpha.0`), not Python's compact prerelease form.
+
+Registry/git package versions, dependency requirements, lockfile format versions,
+and unrelated workspace crates are untouched. A stale, ambiguous, malformed, or
+unsupported lockfile warns and skips independently of its manifest. Version-qualified
+lockfile dependency references are not rewritten; that lockfile is skipped with a
+warning so it can be regenerated with Cargo. A skipped lockfile may need repair
+before `cargo build --locked` or packaging.
+
+Virtual workspaces, `[workspace.package].version`, and `version.workspace = true`
+are **not** automatically rewritten: changing a shared version can affect many
+crates. They warn and skip rather than guessing. Other crate locations require
+explicit extra targets; there is no automatic workspace recursion.
+
 ### Tauri
 
 If Tauri's version already references `package.json`, **leave that reference intact**.
 The bump attempts to update `package.json`, not replace the reference with a literal
-version. Tauri configuration and Rust `Cargo.toml`/`Cargo.lock` are not automatically
-synced. Configure extra targets only if the project actually requires them.
+version. The conventional `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` are
+also attempted using the Cargo rules above. Tauri configuration itself is not
+rewritten. Custom Rust backend paths require explicit extra targets.
 
 ### Monorepos and Other Lockfiles
 
@@ -92,8 +115,8 @@ Entries support a path/glob and an optional colon-separated regular expression.
 The matcher works **line by line**, not as a JSON/TOML parser: use narrowly selected
 lines and inspect the diff. Without a pattern, it searches for the current version.
 Invalid patterns, unmatched paths, unreadable files, and ambiguous matching content
-warn and skip. Root automatic npm targets always use JSON-aware handling, not a
-configured replacement pattern. `.cz.toml` remains the authoritative target.
+warn and skip. Automatic npm/Cargo targets always use their ecosystem-aware handling, not a
+configured replacement pattern. Explicit regex entries cannot override their safe field selection. `.cz.toml` remains the authoritative target.
 
 ## Safety and Recovery
 

@@ -120,7 +120,7 @@ The default limit is `4000` **UTF-16 units**, configurable downward. An oversize
 
 ## `bump`
 
-The authoritative version configuration is `.cz.toml`; see [versioning](versioning.md) for best-effort Python/Node sync targets and supported schemes. All auxiliary sync failures warn and skip without blocking the core bump/tag; core configuration and Git failures still stop it. Prefer a clean working tree and index: the bump stages managed files and runs `git commit`, so unrelated already-staged changes can be included.
+The authoritative version configuration is `.cz.toml`; see [versioning](versioning.md) for best-effort Python/Node/Rust sync targets and supported schemes. All auxiliary sync failures warn and skip without blocking the core bump/tag; core configuration and Git failures still stop it. Prefer a clean working tree and index: the bump stages managed files and runs `git commit`, so unrelated already-staged changes can be included.
 
 ```bash
 git-tools bump --dry-run       # Compute and describe the change, without writes
@@ -177,13 +177,16 @@ The version syntax selects `semver2` (for example `1.0.0-alpha.0`) or `semver` (
 
 ```bash
 git-tools settings                         # Interactive settings picker
+git-tools settings provider                # Complete interactive provider setup
+git-tools settings provider openrouter --interactive
+git-tools settings provider openrouter --non-interactive
 git-tools settings temperature             # Edit one setting interactively
 git-tools settings temperature 0.4         # Save a value without prompts
 git-tools settings pr-limit auto
 git-tools settings pr-max-chars 3500
 ```
 
-Supported names: `provider`, `model`, `effort`, `api-key`, `temperature`, `max-tokens`, `max-retries`, `pr-limit`, and `pr-max-chars`. The last two also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
+Supported names: `provider`, `main-model` (`model` alias), `support-model` (`sub-model` alias; reserved/unused), `api-base` (`endpoint` alias), `openrouter-provider`, `kimi-thinking`, `effort`, `api-key`, `temperature`, `max-tokens`, `max-retries`, `pr-limit`, and `pr-max-chars`. The last two also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
 
 For provider choices, credential handling, model discovery, validation, defaults, and setting precedence, use [configuration](configuration.md). Prefer the masked API-key prompt over passing secrets as command arguments (which may enter shell history/process listings).
 

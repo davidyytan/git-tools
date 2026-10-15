@@ -98,6 +98,11 @@ class TestFetchLiveModels(unittest.TestCase):
 
 class TestRefreshLiveModels(unittest.TestCase):
     def setUp(self) -> None:
+        cache_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(cache_dir.cleanup)
+        cache_patch = patch.object(mappings, "MODEL_CATALOG_PATH", Path(cache_dir.name) / "catalog.json")
+        cache_patch.start()
+        self.addCleanup(cache_patch.stop)
         self._saved_models = {
             provider: copy.deepcopy(PROVIDERS[provider]["models"])
             for provider in PROVIDERS
@@ -120,9 +125,9 @@ class TestRefreshLiveModels(unittest.TestCase):
         mappings._LIVE_REFRESH_ERRORS.clear()
 
     def test_every_registered_provider_supports_dynamic_catalogs(self) -> None:
-        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS))
+        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS) - {"acrc", "qwen"})
 
-        for provider in PROVIDERS:
+        for provider in LIVE_MODEL_PROVIDERS:
             with self.subTest(provider=provider):
                 fake_config = SimpleNamespace(
                     base_url=f"https://{provider}.example/v1",
@@ -270,7 +275,7 @@ class TestRefreshLiveModels(unittest.TestCase):
 
         self.assertEqual(
             list(PROVIDERS["cliproxyapi"]["models"]),
-            ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
+            ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
         )
         self.assertNotIn("cliproxyapi", mappings._LIVE_REFRESHED)
 
@@ -299,7 +304,7 @@ class TestRefreshLiveModels(unittest.TestCase):
         self.assertNotIn("old-endpoint-only", PROVIDERS["cliproxyapi"]["models"])
         self.assertEqual(
             list(PROVIDERS["cliproxyapi"]["models"]),
-            ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
+            ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
         )
         self.assertNotIn("cliproxyapi", mappings._LIVE_REFRESHED)
 
@@ -347,7 +352,7 @@ class TestLiveProviderModelTrust(unittest.TestCase):
         from git_tools.cli import _resolve_current_model
 
         self.assertEqual(
-            _resolve_current_model("cliproxyapi", None), "gpt-5.6-sol"
+            _resolve_current_model("cliproxyapi", None), "gpt-6-astra"
         )
 
     def test_generator_default_keeps_live_only_model(self) -> None:
@@ -355,7 +360,7 @@ class TestLiveProviderModelTrust(unittest.TestCase):
         from git_tools.settings import settings as settings_module
 
         models = PROVIDERS["cliproxyapi"]["models"]
-        with patch.object(
+        with patch.object(settings_module.settings, "main_model", None), patch.object(
             settings_module.settings, "default_model", "gpt-5.6-terra"
         ):
             resolved = BaseGenerator._get_default_model(

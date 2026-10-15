@@ -2,6 +2,8 @@
 
 CLI for AI-assisted Conventional Commits, issue/PR text, and Git Flow versioning.
 Supports GitHub and Azure DevOps, with classic and release-led workflows and reviewed variants.
+LLM providers: OpenRouter, Kimi Code, CLIProxyAPI, ACRC, Copilot proxy, and Qwen.
+Model pickers use endpoint discovery where supported; main handles generation and support is reserved for future use.
 
 ## Install
 
@@ -48,7 +50,7 @@ Start with the **[documentation index](docs/README.md)**.
 | --- | --- |
 | Commands, defaults, safety, and interactive usage | [CLI usage](docs/usage.md) |
 | Providers, credentials, models, and settings | [Configuration](docs/configuration.md) |
-| Version authority and optional Python/Node sync | [Versioning](docs/versioning.md) |
+| Version authority and optional Python/Node/Rust sync | [Versioning](docs/versioning.md) |
 | Choosing classic/release-led and reviewed modes | [Flow comparison](docs/git-flow-guide.md) |
 | GitHub setup and four workflow guides | [GitHub](docs/github/README.md) |
 | Azure DevOps setup and four workflow guides | [Azure DevOps](docs/azure-devops/README.md) |
@@ -57,7 +59,8 @@ Start with the **[documentation index](docs/README.md)**.
 
 `.cz.toml` is the **sole version and Git-tag authority**. During bump, other version
 files are best-effort sync targets: failures warn and skip rather than block the core bump.
-Root `package.json` and npm lockfiles are supported without framework-specific logic.
+Root npm manifests/lockfiles and standalone Cargo app versions (including the
+conventional `src-tauri/` pair) are supported without bumping dependencies.
 See [versioning](docs/versioning.md) for exact targets and limitations.
 
 Workflow adapters are examples to copy and configure in the target repository;

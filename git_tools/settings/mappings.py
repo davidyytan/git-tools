@@ -5,10 +5,12 @@ catalog behavior, and static fallback models — lives in code here. There is no
 external ``mappings.json`` to copy or maintain in the repo.
 
 Live providers expose an OpenAI-compatible ``GET {base_url}/models``
-catalog; ACRC and Qwen use curated choices matching agent-cli. ``refresh_live_models`` merges that account/endpoint-specific catalog
-into ``PROVIDERS`` for pickers and validation. Static entries remain the offline
-fallback, while manually entered model IDs are saved in
-``~/.git-tools/models.json`` and retained across refreshes.
+catalog; ``refresh_live_models`` merges that account/endpoint-specific catalog
+into ``PROVIDERS`` for pickers and validation. ACRC is live too: its built-in
+entries are the picker default and the fallback when the VPN or endpoint is
+unreachable. Qwen stays curated because its catalog varies by plan and region.
+Static entries remain the offline fallback, while manually entered model IDs
+are saved in ``~/.git-tools/models.json`` and retained across refreshes.
 """
 
 import copy
@@ -99,11 +101,13 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "label": "ACRC", "aliases": (), "api_key_env": "ACRC_API_KEY",
         "config_class": "ACRCConfig",
         "default_base_url": "https://fmodel.ai.acrc.a-star.edu.sg/v1",
-        "live_models": False, "allow_manual_model": True, "curated_models": True,
+        # Live /models drives the picker; these built-ins lead the list and
+        # are the fallback when the VPN/endpoint cannot be reached.
+        "live_models": True, "allow_manual_model": True,
         "models": {
-            "deepseek-v4.1-flash": {"model_name": "deepseek-v4.1-flash"},
-            "glm-5-3-flash": {"model_name": "glm-5-3-flash"},
-            "mimo-v2.6-pro": {"model_name": "mimo-v2.6-pro"},
+            "deepseek-v4.1-flash": {"model_name": "deepseek-v4.1-flash", "display_name": "DeepSeek V4.1 Flash"},
+            "glm-5-3-flash": {"model_name": "glm-5-3-flash", "display_name": "GLM 5-3 Flash"},
+            "mimo-v2.6-pro": {"model_name": "mimo-v2.6-pro", "display_name": "MiMo V2.6 Pro"},
         },
     },
     "copilot": {

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
+from git_tools.generators.base import plain_title
 from git_tools.settings import mappings
 
 from git_tools.cli import (
@@ -307,7 +308,7 @@ class CliTests(unittest.TestCase):
             "api_configured": False,
         }
 
-        titles = [choice.title for choice in _build_settings_choices(state)]
+        titles = [plain_title(choice.title) for choice in _build_settings_choices(state)]
 
         self.assertEqual(
             titles[:4],
@@ -331,7 +332,7 @@ class CliTests(unittest.TestCase):
             "api_configured": True,
         }
 
-        titles = [choice.title for choice in _build_settings_choices(state)]
+        titles = [plain_title(choice.title) for choice in _build_settings_choices(state)]
 
         self.assertIn("Effort: high (override)", "\n".join(titles))
         self.assertEqual(
@@ -355,7 +356,7 @@ class CliTests(unittest.TestCase):
         }
 
         titles = [
-            choice.title
+            plain_title(choice.title)
             for choice in _build_settings_choices(state, done_label="← Back")
         ]
 
@@ -363,10 +364,10 @@ class CliTests(unittest.TestCase):
 
     def test_provider_choices_are_built_from_registry_metadata(self) -> None:
         choices = _build_provider_choices("kimicli")
-        titles = [choice.title for choice in choices]
+        titles = [plain_title(choice.title) for choice in choices]
         values = [choice.value for choice in choices]
 
-        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen"})
+        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic"})
         self.assertIn(
             "OpenRouter [openrouter] — https://openrouter.ai/api/v1", titles[0]
         )

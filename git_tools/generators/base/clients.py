@@ -8,6 +8,10 @@ from git_tools.settings.settings import normalize_provider_name, settings
 
 from .openrouter import _get_openrouter_extra_body
 
+# OpenAI's reasoning families reject a custom temperature (only the server
+# default is valid); the platform's chat models outside them still take one.
+_OPENAI_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4", "codex")
+
 # Stable per-process session id for CLIProxyAPI prompt-cache affinity. CLIProxyAPI
 # keys reasoning/cache continuity off the Session_id header, so one id per run keeps
 # a single git-tools invocation on the same upstream session.
@@ -43,7 +47,7 @@ class ChatClientMixin:
                 self.chatclient = self._create_cliproxy_client(
                     model_to_use, provider_config, temperature, max_tokens
                 )
-            elif provider in {"acrc", "copilot", "qwen"}:
+            elif provider in {"acrc", "copilot", "qwen", "openai", "anthropic"}:
                 self.chatclient = self._create_compatible_client(
                     provider, model_to_use, provider_config, temperature, max_tokens
                 )
@@ -136,7 +140,11 @@ class ChatClientMixin:
 
         metadata = normalize_catalog_metadata(self._get_model_config("kimicli", model_to_use) or {})
         mode = metadata.get("supports_thinking_type")
+        # Kimi has no "none" tier: off is absence on the wire, so a global
+        # `none` must not switch thinking on with an effort the API rejects.
         effort = settings.default_reasoning_effort
+        if effort == "none":
+            effort = None
         efforts = metadata.get("think_efforts", {})
         valid_efforts = efforts.get("valid_efforts", []) if isinstance(efforts, dict) else []
         if effort and valid_efforts and effort not in valid_efforts:
@@ -176,6 +184,30 @@ class ChatClientMixin:
                 elif model.lower().startswith("qwen") or model.lower() == "coder-model":
                     body["enable_thinking"] = effort != "none"
             kwargs["extra_body"] = body
+        elif provider == "openai":
+            # The platform's models all read the native top-level field, so the
+            # tier ships without a per-model list; "none" is absence on the wire
+            # (GPT-6 rejects it). Reasoning families accept only the server's
+            # default temperature, so it is omitted for them. Chat goes to
+            # /chat/completions; the pinned langchain-openai has no Responses
+            # API routing to turn off, so no provider-specific class is needed.
+            if effort and effort != "none":
+                kwargs["reasoning_effort"] = effort
+            if model.lower().startswith(_OPENAI_REASONING_PREFIXES):
+                kwargs.pop("temperature", None)
+        elif provider == "anthropic":
+            # Anthropic's OpenAI-compatible layer ("OpenAI SDK compatibility"
+            # docs) returns 400 on Claude 4.7+ for any temperature below 1, so
+            # none is ever sent. It lists `reasoning_effort` as ignored: the
+            # tier is still forwarded, for parity with agent-core and in case
+            # the layer starts honouring it, while thinking itself is adaptive
+            # and on by default. The one tier that acts is "none", sent as the
+            # layer's documented `thinking` switch.
+            kwargs.pop("temperature", None)
+            if effort == "none":
+                kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            elif effort:
+                kwargs["reasoning_effort"] = effort
         elif effort and model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-")):
             kwargs["reasoning_effort"] = effort
         return ChatOpenAI(**kwargs)

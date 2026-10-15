@@ -133,6 +133,9 @@ class TestRefreshLiveModels(unittest.TestCase):
                     base_url=f"https://{provider}.example/v1",
                     api_key=f"{provider}-key",
                 )
+                # OpenAI narrows its catalog to chat families, so its served id
+                # must look like one; every other provider keeps ids verbatim.
+                live_id = "gpt-live-model" if provider == "openai" else f"{provider}-live-model"
                 with (
                     patch(
                         "git_tools.settings.settings.load_provider_config",
@@ -141,13 +144,11 @@ class TestRefreshLiveModels(unittest.TestCase):
                     patch.object(
                         mappings,
                         "fetch_live_models",
-                        return_value=[f"{provider}-live-model"],
+                        return_value=[live_id],
                     ),
                 ):
                     self.assertTrue(refresh_live_models(provider, force=True))
-                self.assertIn(
-                    f"{provider}-live-model", PROVIDERS[provider]["models"]
-                )
+                self.assertIn(live_id, PROVIDERS[provider]["models"])
 
     def test_unknown_provider_is_noop(self) -> None:
         self.assertFalse(refresh_live_models("unknown"))

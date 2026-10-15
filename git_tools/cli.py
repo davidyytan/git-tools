@@ -34,7 +34,10 @@ from git_tools.settings.mappings import (
     restore_provider_catalog,
     snapshot_provider_catalog,
 )
-from git_tools.generators.base import TYPER_STYLE, console, success, warning, error
+from git_tools.generators.base import (
+    TYPER_STYLE, console, success, warning, error,
+    fmt_current, fmt_dim, fmt_ok, fmt_primary, fmt_warn, styled,
+)
 
 # Override Typer's console with configurable width offset for terminal border wrapping
 _typer_width = Console(force_terminal=True).width
@@ -105,8 +108,13 @@ ADD_MODEL_SENTINEL = "__git_tools_add_model__"
 _BACK = "__git_tools_back__"
 
 
-def _back_choice() -> Choice:
-    return Choice("← Back", value=_BACK)
+def _back_choice(*, plain: bool = False) -> Choice:
+    """The "← Back" row; ``plain`` keeps it a bare string for searchable lists.
+
+    questionary's type-to-filter lowercases every title, so a list that uses
+    it cannot contain styled (formatted-text) rows at all.
+    """
+    return Choice("← Back" if plain else styled(fmt_dim("← Back")), value=_BACK)
 
 
 def _ask_with_back(question: questionary.Question) -> Any:
@@ -182,6 +190,35 @@ def _model_effort(provider: str, model: str | None) -> str | None:
     return str(effort).strip().lower() if effort else None
 
 
+def _ensure_kimi_catalog(provider: str) -> None:
+    """Load the account-aware Kimi catalog once so effort/thinking metadata is current.
+
+    Kimi's valid efforts and thinking modes come from its live ``/models``.
+    Without this, a direct ``settings effort`` would validate against the
+    built-in entries, which declare none, and the client would reject the
+    saved value at generation time. The refresh is memoized per process.
+    """
+    if provider == "kimicli":
+        refresh_live_models(provider)
+
+
+def _declared_kimi_efforts(provider: str, model: str | None) -> list[str]:
+    """Efforts the Kimi catalog declares for ``model``; empty when it declares none.
+
+    The account-aware Kimi catalog is authoritative: when it lists efforts, the
+    picker and the direct setter accept exactly those, and the client
+    constructor rejects anything else.
+    """
+    if provider != "kimicli":
+        return []
+    metadata = _find_model_config(provider, model) or {}
+    think_efforts = metadata.get("think_efforts", {})
+    declared = think_efforts.get("valid_efforts", []) if isinstance(think_efforts, dict) else []
+    if not isinstance(declared, list):
+        return []
+    return [effort for effort in declared if isinstance(effort, str) and effort.strip()]
+
+
 def _effective_effort(
     provider: str,
     model: str | None,
@@ -220,10 +257,10 @@ def _build_provider_choices(current_provider: str) -> list[Choice]:
     for provider, definition in PROVIDERS.items():
         label = str(definition.get("label") or provider)
         endpoint = str(definition.get("default_base_url") or "custom endpoint")
-        current = " (current)" if provider == current_provider else ""
-        choices.append(
-            Choice(f"{label} [{provider}] — {endpoint}{current}", value=provider)
-        )
+        parts = [fmt_primary(label), fmt_dim(f" [{provider}] — {endpoint}")]
+        if provider == current_provider:
+            parts.append(fmt_current())
+        choices.append(Choice(styled(*parts), value=provider))
     return choices
 
 
@@ -258,62 +295,52 @@ def _build_model_choices(
     return choices
 
 
+# Catalogs longer than this get type-to-filter on top of the arrow-key list.
+_SEARCHABLE_CATALOG_SIZE = 15
+
+
 def _ask_model_choice(
     provider: str,
     *,
     current_model: str,
     default_model: str,
 ) -> str | None:
-    """Pick a model, using searchable autocomplete for large live catalogs."""
-    choices = [
-        *_build_model_choices(provider, current_model=current_model),
-        _back_choice(),
-    ]
+    """Pick a model from a list; large live catalogs add type-to-filter.
+
+    OpenRouter, OpenAI and local proxies can expose hundreds of models, so past
+    ``_SEARCHABLE_CATALOG_SIZE`` entries the list gains a search filter: the
+    current model starts highlighted, arrows move, typing narrows, Enter picks
+    the highlighted entry. A free-text autocomplete was used before, but it
+    pre-typed the current model's title, so nothing else matched until the
+    whole line was erased. Manual IDs stay reachable through the explicit
+    "Enter a model ID manually…" entry.
+    """
+    model_rows = _build_model_choices(provider, current_model=current_model)
+    searchable = len(model_rows) + 1 > _SEARCHABLE_CATALOG_SIZE
+    # Every title must stay a plain string when the filter is on (see _back_choice).
+    choices = [*model_rows, _back_choice(plain=searchable)]
     prompt = (
         f"Select model (current: {current_model or 'unset'}, "
         f"default: {_provider_default_model(provider)}):"
     )
-
-    if len(choices) <= 15:
-        selected = _ask_with_back(
-            questionary.select(
-                prompt,
-                choices=choices,
-                default=default_model,
-                style=TYPER_STYLE,
-                qmark="❯",
-                pointer="›",
-                instruction="",
-            )
-        )
-        return None if selected is None or selected == _BACK else str(selected)
-
-    # OpenRouter and local proxies can expose hundreds of models. Searching is
-    # faster and keeps the menu bounded; an unmatched typed value naturally
-    # becomes the manual model ID for providers that allow one.
-    titles = [str(choice.title) for choice in choices]
-    values = {str(choice.title): choice.value for choice in choices}
-    default_title = next(
-        (
-            str(choice.title)
-            for choice in choices
-            if choice.value == default_model
-        ),
-        "",
-    )
+    default = default_model if any(choice.value == default_model for choice in choices) else None
     selected = _ask_with_back(
-        questionary.autocomplete(
+        questionary.select(
             prompt,
-            choices=titles,
-            default=default_title,
+            choices=choices,
+            default=default,
             style=TYPER_STYLE,
             qmark="❯",
+            pointer="›",
+            use_search_filter=searchable,
+            use_jk_keys=not searchable,
+            instruction=(
+                "(↑↓ move · type to filter · Enter picks · Esc back)"
+                if searchable else "(↑↓ move · Enter picks · Esc back)"
+            ),
         )
     )
-    if selected is None:
-        return None
-    resolved = values.get(str(selected), selected)
-    return None if resolved == _BACK else str(resolved).strip() or None
+    return None if selected is None or selected == _BACK else str(selected)
 
 
 def _build_effort_choices(
@@ -324,18 +351,23 @@ def _build_effort_choices(
     """Build reasoning-effort choices for effort-capable models."""
     model_effort = _model_effort(provider, model)
     choices = []
-    metadata = _find_model_config(provider, model) or {}
-    think_efforts = metadata.get("think_efforts", {})
-    declared_efforts = think_efforts.get("valid_efforts", []) if isinstance(think_efforts, dict) else []
-    if provider == "kimicli" and isinstance(declared_efforts, list) and declared_efforts:
-        return [Choice("Model default", value=""),
-                *[Choice(effort, value=effort) for effort in declared_efforts
-                  if isinstance(effort, str) and effort.strip()]]
+    configured = (configured_effort or "").strip().lower()
+
+    def tier(effort: str) -> Choice:
+        parts = [fmt_primary(effort)]
+        if effort == configured:
+            parts.append(fmt_current())
+        return Choice(styled(*parts), value=effort)
+
+    declared_efforts = _declared_kimi_efforts(provider, model)
+    if declared_efforts:
+        return [Choice(styled(fmt_dim("Model default")), value=""),
+                *[tier(effort) for effort in declared_efforts]]
 
     if model_effort:
-        choices.append(Choice(f"Model default ({model_effort})", value=""))
+        choices.append(Choice(styled(fmt_dim(f"Model default ({model_effort})")), value=""))
     else:
-        choices.append(Choice("Unset", value=""))
+        choices.append(Choice(styled(fmt_dim("Unset")), value=""))
 
     effort_values = []
     for effort in (configured_effort, model_effort, *REASONING_EFFORT_CHOICES):
@@ -344,7 +376,7 @@ def _build_effort_choices(
             if normalized and normalized not in effort_values:
                 effort_values.append(normalized)
 
-    choices.extend(Choice(effort, value=effort) for effort in effort_values)
+    choices.extend(tier(effort) for effort in effort_values)
     return choices
 
 
@@ -355,47 +387,55 @@ def _build_settings_choices(
 ) -> list[Choice]:
     """Build the top-level settings menu in provider/model/effort/API-key order."""
     provider = normalize_provider_name(state["provider"])
-    api_status = "configured" if state["api_configured"] else "not set"
+    api_status = fmt_ok("configured") if state["api_configured"] else fmt_warn("not set")
     choices = [
-        Choice(f"Provider: {provider}", value="provider"),
+        Choice(styled("Provider: ", fmt_primary(provider)), value="provider"),
         Choice(
-            f"Main Model: {_format_model_display(provider, state.get('model'))}",
+            styled("Main Model: ", fmt_primary(_format_model_display(provider, state.get("model")))),
             value="model",
         ),
     ]
 
     choices.extend([
-        Choice(f"Support Model (unused): {state.get('support_model', 'follow-main')}", value="support-model"),
-        Choice("API Endpoint", value="api-base"),
+        Choice(styled("Support Model (unused): ", fmt_dim(state.get("support_model", "follow-main"))),
+               value="support-model"),
+        Choice(styled("API Endpoint"), value="api-base"),
     ])
     if provider == "openrouter":
-        choices.append(Choice("OpenRouter upstream routing", value="openrouter-provider"))
+        choices.append(Choice(
+            styled("OpenRouter upstream routing: ", fmt_primary(state.get("openrouter_provider") or "any")),
+            value="openrouter-provider",
+        ))
     if provider == "kimicli":
-        choices.append(Choice("Kimi thinking", value="kimi-thinking"))
+        thinking = {True: "enabled", False: "disabled"}.get(state.get("kimi_thinking"), "default")
+        choices.append(Choice(styled("Kimi thinking: ", fmt_primary(thinking)), value="kimi-thinking"))
 
     effort = _effective_effort(
         provider,
         state.get("model"),
         state.get("reasoning_effort"),
     )
-    if effort or provider in {"openrouter", "qwen", "kimicli", "acrc", "copilot"}:
+    if effort or provider in {"openrouter", "qwen", "kimicli", "acrc", "copilot", "openai", "anthropic"}:
         source = "override" if state.get("reasoning_effort") else "model default"
-        choices.append(Choice(f"Effort: {effort} ({source})", value="effort"))
+        choices.append(Choice(
+            styled("Effort: ", fmt_primary(effort), fmt_dim(f" ({source})")), value="effort",
+        ))
 
+    pr_limit = (
+        styled("PR Limit: ", fmt_primary("auto"), fmt_dim(" (enabled only for Azure DevOps)"))
+        if state.get("azure_pr_limit", "auto") == "auto"
+        else styled("PR Limit: ", fmt_primary("disabled"))
+    )
     choices.extend(
         [
-            Choice(f"API Key ({provider}): {api_status}", value="api-key"),
-            Choice(f"Temperature: {state['temperature']}", value="temperature"),
-            Choice(f"Max Tokens: {state['max_tokens']}", value="max-tokens"),
-            Choice(f"Max Retries: {state['max_retries']}", value="max-retries"),
-            Choice(
-                "PR Limit: auto (enabled only for Azure DevOps)"
-                if state.get("azure_pr_limit", "auto") == "auto"
-                else "PR Limit: disabled",
-                value="azure-pr-limit",
-            ),
-            Choice(f"PR Max Chars: {state.get('azure_pr_max_chars', 4000)}", value="azure-pr-max-chars"),
-            Choice(done_label, value="done"),
+            Choice(styled(f"API Key ({provider}): ", api_status), value="api-key"),
+            Choice(styled("Temperature: ", fmt_primary(state["temperature"])), value="temperature"),
+            Choice(styled("Max Tokens: ", fmt_primary(state["max_tokens"])), value="max-tokens"),
+            Choice(styled("Max Retries: ", fmt_primary(state["max_retries"])), value="max-retries"),
+            Choice(pr_limit, value="azure-pr-limit"),
+            Choice(styled("PR Max Chars: ", fmt_primary(state.get("azure_pr_max_chars", 4000))),
+                   value="azure-pr-max-chars"),
+            Choice(styled(fmt_dim(done_label) if done_label.startswith("←") else done_label), value="done"),
         ]
     )
     return choices
@@ -1155,7 +1195,7 @@ def _prompt_provider_options(
             return None
         updates["GIT_TOOLS_KIMI_THINKING"] = "" if thinking == "default" else str(thinking == "enabled").lower()
         thinking_enabled = thinking != "disabled"
-    if thinking_enabled and (provider in {"openrouter", "qwen", "kimicli"}
+    if thinking_enabled and (provider in {"openrouter", "qwen", "kimicli", "openai", "anthropic"}
                              or _model_effort(provider, model)
                              or model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-"))):
         effort = _ask_with_back(questionary.select(
@@ -1387,14 +1427,102 @@ def _choose_provider_model(provider: str, current_model: str) -> str | None:
     return model_choice
 
 
+def _list_openrouter_upstreams(model: str) -> list[str]:
+    """Upstream slugs OpenRouter can route ``model`` to; empty when unknown."""
+    from .settings.mappings import fetch_openrouter_upstreams
+    from .settings.settings import load_provider_config
+
+    try:
+        config = load_provider_config("openrouter")
+    except ValueError:
+        return []
+    return fetch_openrouter_upstreams(config.base_url, config.api_key, model)
+
+
+def _upstream_serves(pin: str, upstreams: list[str]) -> bool:
+    """Whether ``pin`` names one of ``upstreams`` (``deepinfra`` matches ``deepinfra/fp4``)."""
+    wanted = pin.strip().lower()
+    return any(wanted in {tag.lower(), tag.lower().split("/", 1)[0]} for tag in upstreams)
+
+
+def _prompt_openrouter_upstream(model: str, current: Optional[str]) -> Optional[str]:
+    """Pick which upstream OpenRouter routes ``model`` to.
+
+    Upstream availability is per model, so the list is fetched live for the
+    model being configured. Returns the slug, ``""`` to let OpenRouter route,
+    or ``None`` when the user backs out. When the list cannot be fetched the
+    current pin is still offered rather than silently dropped: an unpinned run
+    can migrate between upstreams and lose its prompt cache.
+    """
+    upstreams = _list_openrouter_upstreams(model)
+    manual = "__manual_upstream__"
+    choices: list[Choice] = []
+    if upstreams:
+        for slug in upstreams:
+            parts = [fmt_primary(slug)]
+            if slug == current:
+                parts.append(fmt_current())
+            choices.append(Choice(styled(*parts), value=slug))
+    else:
+        warning(f"Could not list OpenRouter upstreams for {model}.")
+        if current:
+            choices.append(Choice(
+                styled(fmt_current(f"Keep current pin: {current}"), fmt_dim(" (unverified)")), value=current,
+            ))
+    choices.extend([Choice(styled(fmt_dim("Any (unpinned)")), value="any"),
+                    Choice(styled(fmt_dim("Enter upstream slug manually")), value=manual), _back_choice()])
+    default = current if current and any(choice.value == current for choice in choices) else None
+    value = _ask_with_back(questionary.select(
+        f"OpenRouter upstream for {model}:", choices=choices, default=default,
+        style=TYPER_STYLE, qmark="❯"))
+    if value in (None, _BACK):
+        return None
+    if value == manual:
+        value = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
+        if value is None:
+            return None
+    pin = value.strip().lower()
+    return "" if pin in {"", "any", "default", "unpinned"} else pin
+
+
+def _reconcile_openrouter_upstream(model: str, pin: str) -> str:
+    """Keep ``pin`` for ``model`` only while it is known to serve it.
+
+    A non-interactive model change cannot ask, so the pin is checked against
+    the model's live upstream list. A pin that verifiably does not serve the
+    model is cleared, because a pinned request cannot fall back and would fail
+    outright; an unverifiable one is kept with a warning rather than dropped.
+    """
+    upstreams = _list_openrouter_upstreams(model)
+    if not upstreams:
+        warning(f"Could not verify that upstream {pin} serves {model}; keeping the pin. "
+                "Use `git-tools settings openrouter-provider` to change it.")
+        return pin
+    if _upstream_serves(pin, upstreams):
+        return pin
+    warning(f"Upstream {pin} does not serve {model}; OpenRouter routing reset to any. "
+            "Use `git-tools settings openrouter-provider` to pin one.")
+    return ""
+
+
 def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
-    from .settings.settings import save_setting
+    from .settings.settings import save_settings
 
     provider = state["provider"]
+    current_pin = state.get("openrouter_provider") or None
+    pin = current_pin or ""
     if value is None:
         model_choice = _choose_provider_model(provider, state["model"])
         if model_choice is None:
             return
+        # Upstream availability is per model (provider > model > upstream), so
+        # a new OpenRouter model re-asks the pin instead of inheriting one that
+        # may not serve it. Nothing is saved until both are chosen.
+        if provider == "openrouter" and model_choice != state["model"]:
+            chosen = _prompt_openrouter_upstream(model_choice, current_pin)
+            if chosen is None:
+                return
+            pin = chosen
     else:
         model_choice = value.strip()
         if not model_choice:
@@ -1409,18 +1537,30 @@ def _edit_model(state: dict[str, Any], value: Optional[str] = None) -> None:
             )
             error(f"Unknown model for {provider}: {model_choice}. One of: {names}")
             raise typer.Exit(1)
+        if provider == "openrouter" and current_pin and model_choice != state["model"]:
+            pin = _reconcile_openrouter_upstream(model_choice, current_pin)
 
-    from .settings.settings import save_settings
-    save_settings({"GIT_TOOLS_DEFAULT_MODEL": model_choice, "GIT_TOOLS_MODEL_MAIN": model_choice})
+    # Model and routing are saved together so a failed write leaves neither
+    # half applied.
+    updates = {"GIT_TOOLS_DEFAULT_MODEL": model_choice, "GIT_TOOLS_MODEL_MAIN": model_choice}
+    routing_changed = provider == "openrouter" and pin != (current_pin or "")
+    if routing_changed:
+        updates["GIT_TOOLS_OPENROUTER_PROVIDER"] = pin
+    save_settings(updates)
     _remember_manual_model(provider, model_choice)
     state["model"] = model_choice
+    if routing_changed:
+        state["openrouter_provider"] = pin or None
     console.print()
     success(f"Model set to {model_choice}")
+    if routing_changed:
+        success(f"OpenRouter routing set to {pin or 'any (unpinned)'}")
 
 
 def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
     from .settings.settings import save_setting
 
+    _ensure_kimi_catalog(state["provider"])
     if value is None:
         effective_effort = _effective_effort(
             state["provider"],
@@ -1451,7 +1591,16 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
         effort_choice = value.strip().lower()
         if effort_choice in {"unset", "default"}:
             effort_choice = ""
-        if effort_choice and effort_choice not in REASONING_EFFORT_CHOICES:
+        # The direct setter accepts exactly what the picker offers: the model's
+        # catalog efforts when it declares them, otherwise the global ladder.
+        declared_efforts = _declared_kimi_efforts(state["provider"], state["model"])
+        if effort_choice and declared_efforts and effort_choice not in declared_efforts:
+            error(
+                f"Invalid effort for {state['model']}: {value}. "
+                f"One of: {', '.join(declared_efforts)} (or 'unset')"
+            )
+            raise typer.Exit(1)
+        if effort_choice and not declared_efforts and effort_choice not in REASONING_EFFORT_CHOICES:
             error(
                 f"Invalid effort: {value}. One of: {', '.join(REASONING_EFFORT_CHOICES)} (or 'unset')"
             )
@@ -1695,29 +1844,13 @@ def _edit_openrouter_provider(state: dict[str, Any], value: Optional[str] = None
     from .settings.settings import save_setting
 
     if value is None:
-        from .settings.mappings import fetch_openrouter_upstreams
-        from .settings.settings import load_provider_config
-        try:
-            config = load_provider_config("openrouter")
-            upstreams = fetch_openrouter_upstreams(config.base_url, config.api_key, state["model"])
-        except ValueError:
-            upstreams = []
-        manual = "__manual_upstream__"
-        value = _ask_with_back(questionary.select(
-            "OpenRouter upstream for the main model:",
-            choices=[Choice("Any (unpinned)", value="any"),
-                     *[Choice(slug, value=slug) for slug in upstreams],
-                     Choice("Enter upstream slug manually", value=manual), _back_choice()],
-            style=TYPER_STYLE, qmark="❯"))
-        if value in (None, _BACK):
+        pin = _prompt_openrouter_upstream(state["model"], state.get("openrouter_provider") or None)
+        if pin is None:
             return
-        if value == manual:
-            value = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
-            if value is None:
-                return
-    pin = value.strip().lower()
-    if pin.lower() in {"any", "default", "unpinned"}:
-        pin = ""
+    else:
+        pin = value.strip().lower()
+        if pin in {"any", "default", "unpinned"}:
+            pin = ""
     save_setting("GIT_TOOLS_OPENROUTER_PROVIDER", pin)
     state["openrouter_provider"] = pin or None
     success("OpenRouter routing saved.")
@@ -1726,6 +1859,7 @@ def _edit_openrouter_provider(state: dict[str, Any], value: Optional[str] = None
 def _edit_kimi_thinking(state: dict[str, Any], value: Optional[str] = None) -> None:
     from .settings.settings import save_setting
 
+    _ensure_kimi_catalog(state["provider"])
     if value is None:
         metadata = _find_model_config(state["provider"], state["model"]) or {}
         thinking_type = metadata.get("supports_thinking_type")

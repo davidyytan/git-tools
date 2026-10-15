@@ -21,7 +21,7 @@ console = Console(soft_wrap=True, force_terminal=True, width=_auto_width + _widt
 STYLE_BORDER = "dim"  # STYLE_OPTIONS_PANEL_BORDER
 ALIGN_PANEL = "left"
 STYLE_PRIMARY = "bold cyan"  # STYLE_OPTION, STYLE_COMMANDS_TABLE_FIRST_COLUMN
-STYLE_SUCCESS = "bold cyan"  # Same as STYLE_OPTION
+STYLE_SUCCESS = "bold green"  # agent-cli marks done/current in green
 STYLE_WARNING = "yellow"  # STYLE_USAGE
 STYLE_ERROR = "red"  # STYLE_ERRORS_PANEL_BORDER, STYLE_ABORTED
 STYLE_DIM = "dim"  # STYLE_OPTION_DEFAULT, STYLE_HELPTEXT
@@ -52,16 +52,70 @@ def print_panel(content: str, title: str = "", border_style: str = STYLE_BORDER)
     console.print(Panel(content.strip(), title=f"[bold]{title}[/bold]" if title else "", border_style=border_style, title_align=ALIGN_PANEL))
 
 
-# Style for questionary prompts (matches Typer's STYLE_OPTION = "bold cyan")
-# Note: prompt_toolkit uses "ansicyan" not "cyan", and "noreverse" prevents filled background
+# Prompt palette, after agent-cli's: bold cyan for the primary name, grey for
+# details and hints, green for what is current or done, yellow for attention.
+# Note: prompt_toolkit uses "ansicyan" not "cyan", and "noreverse" prevents a
+# filled background on the highlighted row.
 TYPER_STYLE = Style([
-    ("qmark", ""),
-    ("question", ""),
+    ("qmark", "bold ansicyan"),
+    ("question", "bold"),
     ("answer", "bold ansicyan"),
     ("pointer", "bold ansicyan"),
     ("highlighted", "bold ansicyan noreverse"),
     ("selected", "noreverse"),  # No cyan - we reorder choices instead of using questionary's default
-    ("instruction", ""),
+    ("instruction", "ansibrightblack"),
     ("text", ""),
-    ("disabled", ""),
+    ("disabled", "ansibrightblack"),
+    ("search_success", "ansigreen"),
+    ("search_none", "ansired"),
+    # Parts of a styled menu row (see ``styled``).
+    ("primary", "bold ansicyan"),
+    ("dim", "ansibrightblack"),
+    ("current", "bold ansigreen"),
+    ("ok", "ansigreen"),
+    ("warn", "ansiyellow"),
 ])
+
+# A menu row is prompt_toolkit formatted text, one (style, text) pair per
+# part, so a label, its value and a "(current)" marker can each carry their
+# own colour. questionary renders such rows verbatim but cannot search them,
+# so lists that use its type-to-filter keep plain string titles.
+StyledPart = tuple[str, str]
+StyledTitle = list[StyledPart]
+
+
+def fmt_primary(text: object) -> StyledPart:
+    """The row's main name or value: bold cyan."""
+    return ("class:primary", str(text))
+
+
+def fmt_dim(text: object) -> StyledPart:
+    """Secondary detail: grey."""
+    return ("class:dim", str(text))
+
+
+def fmt_current(text: object = " (current)") -> StyledPart:
+    """What is in force right now: bold green."""
+    return ("class:current", str(text))
+
+
+def fmt_ok(text: object) -> StyledPart:
+    """A good state, such as a configured key: green."""
+    return ("class:ok", str(text))
+
+
+def fmt_warn(text: object) -> StyledPart:
+    """Something needing attention, such as a missing key: yellow."""
+    return ("class:warn", str(text))
+
+
+def styled(*parts: StyledPart | str) -> StyledTitle:
+    """Assemble a menu row from styled parts; bare strings stay unstyled."""
+    return [part if isinstance(part, tuple) else ("class:text", str(part)) for part in parts]
+
+
+def plain_title(title: object) -> str:
+    """The text of a menu row whether it is styled or a plain string."""
+    if isinstance(title, str):
+        return title
+    return "".join(text for _, text in title)

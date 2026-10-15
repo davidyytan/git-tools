@@ -23,6 +23,13 @@ from .terminal import (
     print_panel,
     success,
     warning,
+    fmt_current,
+    fmt_dim,
+    fmt_ok,
+    fmt_primary,
+    fmt_warn,
+    plain_title,
+    styled,
 )
 from .generator import BaseGenerator
 from .openrouter import _get_openrouter_extra_body, _sanitize_openrouter_provider_config
@@ -32,6 +39,13 @@ from .tokens import count_tokens
 __all__ = [
     "ALIGN_PANEL",
     "BaseGenerator",
+    "fmt_current",
+    "fmt_dim",
+    "fmt_ok",
+    "fmt_primary",
+    "fmt_warn",
+    "plain_title",
+    "styled",
     "PROMPTS_DIR",
     "Panel",
     "STYLE_BORDER",

@@ -16,6 +16,7 @@ are saved in ``~/.git-tools/models.json`` and retained across refreshes.
 import copy
 import hashlib
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -36,6 +37,44 @@ MODEL_CATALOG_PATH = Path.home() / ".git-tools" / "model-catalog.json"
 # effort-capable and receive this per-model default.
 _LIVE_EFFORT_DEFAULT = "xhigh"
 _AUTH_STATUSES = frozenset({401, 402, 403})
+
+# OpenAI's platform ``/models`` lists everything the key can reach: chat models
+# beside audio, realtime, image, embedding and moderation ids that no chat
+# completion can use. The picker shows the chat families only: ``gpt-*``,
+# ``chatgpt-*`` and the ``o<digit>`` reasoning series, minus modality variants.
+_OPENAI_CHAT_FAMILY = re.compile(r"^(gpt-|chatgpt-|o\d)")
+_OPENAI_NON_CHAT_MARKERS = (
+    "-realtime", "-audio", "-transcribe", "-tts", "-image", "-search",
+    "-instruct", "-embedding", "-moderation",
+    # Responses-API-only families. agent-cli keeps them because its newer
+    # langchain-openai routes them there; the client pinned here speaks chat
+    # completions only, so they would fail at request time.
+    "-pro", "codex", "-deep-research",
+)
+
+# Anthropic's Models API refuses a request without a version header.
+ANTHROPIC_API_VERSION = "2023-06-01"
+
+
+def is_openai_chat_model(model_id: str) -> bool:
+    """Whether an id OpenAI's platform lists can serve ``/chat/completions``."""
+    normalized = model_id.strip().lower()
+    if not _OPENAI_CHAT_FAMILY.match(normalized):
+        return False
+    return not any(marker in normalized for marker in _OPENAI_NON_CHAT_MARKERS)
+
+
+def anthropic_catalog_headers(api_key: str) -> Dict[str, str]:
+    """Headers Anthropic's native ``GET /v1/models`` wants beside Bearer auth.
+
+    Chat goes through the OpenAI-compatible endpoint, but the catalog is the
+    native Models API, which reads the key from ``x-api-key`` and needs an
+    ``anthropic-version``.
+    """
+    headers = {"anthropic-version": ANTHROPIC_API_VERSION}
+    if api_key:
+        headers["x-api-key"] = api_key
+    return headers
 
 
 class LiveModelList(list[str]):
@@ -155,6 +194,38 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
             "gpt-5.6-sol": {"model_name": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
             "gpt-5.5": {"model_name": "gpt-5.5", "reasoning_effort": "xhigh"},
             "gpt-5.4": {"model_name": "gpt-5.4", "reasoning_effort": "xhigh"},
+        },
+    },
+    # OpenAI's own platform, spoken as chat completions like every provider
+    # here. Live /models is narrowed to chat models; the built-ins lead the
+    # picker and are the fallback when the call cannot be made.
+    "openai": {
+        "label": "OpenAI", "aliases": (), "api_key_env": "OPENAI_API_KEY",
+        "config_class": "OpenAIConfig", "default_base_url": "https://api.openai.com/v1",
+        "live_models": True, "allow_manual_model": True,
+        "live_model_filter": is_openai_chat_model,
+        "models": {
+            "gpt-6-astra": {"model_name": "gpt-6-astra", "display_name": "GPT-6 Astra"},
+            "gpt-6.1-sol": {"model_name": "gpt-6.1-sol", "display_name": "GPT-6.1 Sol"},
+        },
+    },
+    # Anthropic through its OpenAI-compatible endpoint: the Messages API host
+    # also answers /v1/chat/completions with Bearer auth. Thinking is adaptive
+    # there by default and `reasoning_effort` is ignored by that layer (see the
+    # client). Only the catalog call differs.
+    "anthropic": {
+        "label": "Anthropic", "aliases": ("claude",), "api_key_env": "ANTHROPIC_API_KEY",
+        "config_class": "AnthropicConfig", "default_base_url": "https://api.anthropic.com/v1",
+        "live_models": True, "allow_manual_model": True,
+        "live_model_headers": anthropic_catalog_headers,
+        # The Models API pages at 20 by default, newest first; ask for the
+        # whole list so older built-ins do not silently fall off the picker.
+        "live_model_query": "limit=1000",
+        "models": {
+            "claude-opus-5-5": {"model_name": "claude-opus-5-5", "display_name": "Claude Opus 5.5"},
+            "claude-sonnet-5-5": {"model_name": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5"},
+            "claude-haiku-5-5": {"model_name": "claude-haiku-5-5", "display_name": "Claude Haiku 5.5"},
+            "claude-fable-5-1": {"model_name": "claude-fable-5-1", "display_name": "Claude Fable 5.1"},
         },
     },
 }
@@ -298,25 +369,32 @@ def fetch_live_models(
     base_url: str,
     api_key: str,
     timeout: float = 4.0,
+    *,
+    headers: Dict[str, str] | None = None,
+    query: str | None = None,
 ) -> LiveModelList:
     """GET ``{base_url}/models`` and return IDs plus failure metadata.
 
     The list remains backward-compatible with callers that only need model IDs,
     while interactive settings can distinguish authentication, network, HTTP,
     and malformed-catalog failures instead of silently showing a fallback as if
-    it were the complete live catalog.
+    it were the complete live catalog. ``headers`` are sent beside the shared
+    Bearer one for catalogs that want their own auth or version headers, and
+    ``query`` is appended to the URL for catalogs that page.
     """
     if not base_url:
         return LiveModelList(
             error_kind="malformed",
             error="provider base URL is empty",
         )
-    url = base_url.rstrip("/") + "/models"
+    url = base_url.rstrip("/") + "/models" + (f"?{query}" if query else "")
     try:
         req = urllib.request.Request(url)
         req.add_header("Accept", "application/json")
         if api_key:
             req.add_header("Authorization", f"Bearer {api_key}")
+        for name, value in (headers or {}).items():
+            req.add_header(name, value)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
@@ -407,6 +485,24 @@ def restore_provider_catalog(
 def _catalog_identity(base_url: str, api_key: str) -> tuple[str, str]:
     credential = hashlib.sha256((api_key or "").encode("utf-8")).hexdigest()[:16]
     return (base_url.strip().rstrip("/"), credential)
+
+
+def _live_catalog_headers(provider: str, api_key: str) -> Dict[str, str]:
+    """Extra headers a provider's catalog endpoint wants beside Bearer auth."""
+    builder = _BUILTIN_PROVIDERS[provider].get("live_model_headers")
+    return builder(api_key) if builder else {}
+
+
+def _filter_live_models(provider: str, live: LiveModelList) -> LiveModelList:
+    """Drop listed ids that cannot serve chat completions, when a provider says so."""
+    keep = _BUILTIN_PROVIDERS[provider].get("live_model_filter")
+    if not keep or not live:
+        return live
+    kept = [model_id for model_id in live if keep(model_id)]
+    if not kept:
+        return LiveModelList(error_kind="malformed", error="provider listed no chat models")
+    details = getattr(live, "metadata", {})
+    return LiveModelList(kept, metadata={model_id: details[model_id] for model_id in kept if model_id in details})
 
 
 def _fallback_models(provider: str) -> Dict[str, Any]:
@@ -531,7 +627,14 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
     ):
         return provider not in _LIVE_REFRESH_ERRORS
 
-    live = fetch_live_models(base_url, api_key)
+    live = _filter_live_models(
+        provider,
+        fetch_live_models(
+            base_url, api_key,
+            headers=_live_catalog_headers(provider, api_key),
+            query=_BUILTIN_PROVIDERS[provider].get("live_model_query"),
+        ),
+    )
     fetch_failed = not live
     if fetch_failed:
         cached = _cached_catalog(provider, identity)
@@ -634,6 +737,7 @@ def provider_allows_manual_model(provider: str) -> bool:
 
 
 __all__ = [
+    "ANTHROPIC_API_VERSION",
     "DEFAULT_OPENROUTER_MODEL",
     "LIVE_MODEL_PROVIDERS",
     "LiveModelList",

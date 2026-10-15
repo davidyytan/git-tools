@@ -20,6 +20,7 @@ from .mappings import PROVIDER_ALIASES, PROVIDERS
 ALLOWED_CONFIG_CLASSES = {
     "OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig",
     "ACRCConfig", "CopilotConfig", "QwenConfig",
+    "OpenAIConfig", "AnthropicConfig",
 }
 
 # Providers whose API key is a fixed placeholder rather than a secret (local
@@ -551,6 +552,34 @@ class QwenConfig(BaseLLMConfig):
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("API base URL must not contain credentials, query, or fragment")
         return value
+
+    class Config:
+        env_file = _get_env_file_paths()
+        extra = "ignore"
+
+
+class OpenAIConfig(BaseLLMConfig):
+    """OpenAI's own platform, spoken as chat completions."""
+
+    api_key: str = Field(..., min_length=1, validation_alias="OPENAI_API_KEY")
+    base_url: Optional[str] = Field(
+        default="https://api.openai.com/v1",
+        validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "OPENAI_BASE_URL"),
+    )
+
+    class Config:
+        env_file = _get_env_file_paths()
+        extra = "ignore"
+
+
+class AnthropicConfig(BaseLLMConfig):
+    """Anthropic through its OpenAI-compatible chat completions endpoint."""
+
+    api_key: str = Field(..., min_length=1, validation_alias="ANTHROPIC_API_KEY")
+    base_url: Optional[str] = Field(
+        default="https://api.anthropic.com/v1",
+        validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "ANTHROPIC_BASE_URL"),
+    )
 
     class Config:
         env_file = _get_env_file_paths()

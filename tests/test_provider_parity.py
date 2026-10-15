@@ -19,8 +19,9 @@ from git_tools.settings.settings import GitToolsSettings, load_provider_config, 
 class ProviderParityTests(unittest.TestCase):
     def test_all_core_providers_and_aliases(self):
         from git_tools.settings.settings import normalize_provider_name
-        self.assertEqual(set(mappings.PROVIDERS), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen"})
+        self.assertEqual(set(mappings.PROVIDERS), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic"})
         self.assertEqual(normalize_provider_name("kimicode"), "kimicli")
+        self.assertEqual(normalize_provider_name("claude"), "anthropic")
         self.assertEqual(normalize_provider_name("dashscope"), "qwen")
 
     def test_main_over_legacy_support_unused(self):
@@ -122,6 +123,18 @@ class ProviderParityTests(unittest.TestCase):
             BaseGenerator()._create_kimicli_client("thinking-only", config, 0.6, 100)
             self.assertEqual(client.call_args.kwargs["extra_body"]["thinking"]["type"], "enabled")
 
+    def test_effort_none_keeps_kimi_thinking_off(self):
+        # Kimi has no "none" tier: a global `none` means thinking off, never an
+        # effort on the wire, whether or not the catalog declares tiers.
+        config = SimpleNamespace(api_key="test", base_url="https://test.invalid/v1")
+        tiered = {"model_name": "tiered", "supports_thinking_type": "both",
+                  "think_efforts": {"support": True, "valid_efforts": ["low", "high"]}}
+        plain = {"model_name": "plain", "supports_thinking_type": "both"}
+        for name, model in (("tiered", tiered), ("plain", plain)):
+            with self.subTest(model=name), patch.dict(mappings.PROVIDERS["kimicli"]["models"], {name: model}), patch.object(settings, "kimi_thinking", None), patch.object(settings, "default_reasoning_effort", "none"), patch("langchain_openai.ChatOpenAI") as client:
+                BaseGenerator()._create_kimicli_client(name, config, 0.6, 100)
+                self.assertEqual(client.call_args.kwargs["extra_body"]["thinking"], {"type": "disabled"})
+
     def test_generation_picker_keeps_unlisted_main_and_supports_manual_entry(self):
         from git_tools.cli import ADD_MODEL_SENTINEL
 
@@ -135,11 +148,12 @@ class ProviderParityTests(unittest.TestCase):
         from git_tools.cli import ADD_MODEL_SENTINEL
 
         models = {f"model-{i}": {"model_name": f"model-{i}"} for i in range(30)}
-        with patch.dict(mappings.PROVIDERS["kimicli"], {"models": models}), patch.object(settings, "main_model", "unlisted-main"), patch("git_tools.cli.questionary.autocomplete") as search, patch("git_tools.cli._ask_with_back", return_value="model-20"):
+        with patch.dict(mappings.PROVIDERS["kimicli"], {"models": models}), patch.object(settings, "main_model", "unlisted-main"), patch("git_tools.cli.questionary.select") as search, patch("git_tools.cli._ask_with_back", return_value="model-20"):
             selected = BaseGenerator(interactive=True)._interactive_model_selection(models, "kimicli")
         self.assertEqual(selected, "model-20")
         search.assert_called_once()
-        labels = search.call_args.kwargs["choices"]
+        self.assertTrue(search.call_args.kwargs["use_search_filter"])
+        labels = [choice.title for choice in search.call_args.kwargs["choices"]]
         self.assertTrue(any("unlisted-main" in label for label in labels))
         self.assertTrue(any("manually" in label for label in labels))
 

@@ -198,15 +198,16 @@ class ChatClientMixin:
                     body["enable_thinking"] = True
             kwargs["extra_body"] = body
         elif provider == "openai":
-            # Only the reasoning families read the native top-level field;
-            # OpenAI returns 400 for it on gpt-4.x/4o/3.5, so those never get
-            # it. "none" is absence on the wire, i.e. the server default (GPT-6
-            # rejects an explicit none). Reasoning families also accept only
-            # the server's default temperature, so it is omitted for them.
-            # Chat goes to /chat/completions; the pinned langchain-openai has
-            # no Responses API routing to turn off, so no provider-specific
-            # class is needed.
-            if is_openai_reasoning_model(model):
+            # Sent by default: every id here is OpenAI's own and new families
+            # are reasoning models. Only the known non-reasoning ones (gpt-4.x,
+            # 4o, 3.5, chatgpt-*, *-chat variants, o1-mini/preview) are
+            # withheld, since OpenAI returns 400 for the field on them. "none"
+            # is absence on the wire, i.e. the server default (GPT-6 rejects an
+            # explicit none). Reasoning models also accept only the server's
+            # default temperature, so it is omitted for them. Chat goes to
+            # /chat/completions; the pinned langchain-openai has no Responses
+            # API routing to turn off, so no provider-specific class is needed.
+            if is_openai_reasoning_model(model, platform=True):
                 if effort and effort != "none":
                     kwargs["reasoning_effort"] = effort
                 kwargs.pop("temperature", None)
@@ -225,7 +226,8 @@ class ChatClientMixin:
                 kwargs["reasoning_effort"] = effort
         elif tier and is_openai_reasoning_model(model):
             # Proxies in front of OpenAI (Copilot) and mixed endpoints (ACRC):
-            # only the reasoning families read the field; gpt-4.x would 400.
+            # only OpenAI ids read the field, and the known non-reasoning ones
+            # (gpt-4.x) would 400; an unlisted OpenAI family gets it.
             kwargs["reasoning_effort"] = tier
         return ChatOpenAI(**kwargs)
 
@@ -248,8 +250,9 @@ class ChatClientMixin:
 
         As in agent-core there is no implicit default: ``GIT_TOOLS_REASONING_EFFORT``
         (``settings.default_reasoning_effort``) is forwarded when set and the
-        model is one of OpenAI's reasoning families; ``none`` is absence on the
-        wire.
+        model is an OpenAI id not known to reject the field (the proxy fronts
+        mixed catalogs, so non-OpenAI ids never get it); ``none`` is absence on
+        the wire.
         """
         effort = (settings.default_reasoning_effort or "").strip().lower()
         if not effort or effort == "none" or not is_openai_reasoning_model(model_to_use):

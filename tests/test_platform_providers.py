@@ -225,8 +225,29 @@ class ClientTests(unittest.TestCase):
     def test_openai_reasoning_model_predicate(self) -> None:
         for model in ("gpt-6-astra", "gpt-5.5", "o3-mini", "o4-mini", "GPT-6.1-Sol"):
             self.assertTrue(mappings.is_openai_reasoning_model(model), model)
-        for model in ("gpt-4.1", "gpt-4o", "gpt-3.5-turbo", "gpt-5-chat-latest", "gpt-5.1-chat-latest", "chatgpt-4o-latest"):
+        for model in ("gpt-4.1", "gpt-4o", "gpt-3.5-turbo", "gpt-5-chat-latest", "gpt-5.1-chat-latest", "chatgpt-4o-latest", "o1-mini"):
             self.assertFalse(mappings.is_openai_reasoning_model(model), model)
+        # Denylist, not allowlist: an OpenAI-family id that is not a known
+        # non-reasoning model reads the field, so a new family works on
+        # release day; the o-series is matched by shape, not listed.
+        for model in ("gpt-7-nova", "o5-pro", "codex-max"):
+            self.assertTrue(mappings.is_openai_reasoning_model(model), model)
+        # Off the platform the family check stays, so a proxied Claude or
+        # DeepSeek id never gets the field; on the platform every id is OpenAI's.
+        for model in ("claude-sonnet-4.6", "deepseek-v4.1-flash", "custom-openai-model"):
+            self.assertFalse(mappings.is_openai_reasoning_model(model), model)
+            self.assertTrue(mappings.is_openai_reasoning_model(model, platform=True), model)
+        self.assertFalse(mappings.is_openai_reasoning_model("gpt-4.1", platform=True))
+        self.assertFalse(mappings.is_openai_reasoning_model("", platform=True))
+
+    def test_openai_unlisted_model_defaults_to_reasoning(self) -> None:
+        # A family this code has never heard of gets the tier and the server's
+        # default temperature on release day instead of silently losing them.
+        for model in ("gpt-7-nova", "o5-pro", "custom-openai-model"):
+            with self.subTest(model=model):
+                kwargs = self._client_kwargs("openai", model, "high")
+                self.assertEqual(kwargs["reasoning_effort"], "high")
+                self.assertNotIn("temperature", kwargs)
 
     def test_openai_none_is_absence_on_the_wire(self) -> None:
         kwargs = self._client_kwargs("openai", "gpt-6-astra", "none")

@@ -96,13 +96,20 @@ class ProviderConfigTests(unittest.TestCase):
         print_mock.assert_not_called()
 
     def test_create_kimicli_client_sets_headers_and_extra_body(self) -> None:
+        from git_tools.settings import settings as settings_module
+
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = KimiCLIConfig(
             KIMICODE_API_KEY="sk-kimi-test",
             GIT_TOOLS_API_BASE="https://api.kimi.com/coding/v1",
         )
 
-        with patch("langchain_openai.ChatOpenAI") as chat_openai:
+        # The settings singleton reads ~/.git-tools/settings.env at import, so
+        # a saved tier or thinking choice must be patched out for "nothing
+        # configured" to hold on every machine.
+        with (patch("langchain_openai.ChatOpenAI") as chat_openai,
+              patch.object(settings_module.settings, "default_reasoning_effort", None),
+              patch.object(settings_module.settings, "kimi_thinking", None)):
             generator._create_kimicli_client(
                 "kimi-k2.5",
                 provider_config,

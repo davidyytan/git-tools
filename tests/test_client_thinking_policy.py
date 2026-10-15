@@ -105,7 +105,7 @@ class CompatibleProviderEffortTests(unittest.TestCase):
                 self.assertEqual(self._kwargs("qwen", model, "high")["extra_body"],
                                  {"preserve_thinking": True, "enable_thinking": True})
 
-    def test_proxied_openai_models_get_the_tier_only_in_reasoning_families(self) -> None:
+    def test_proxied_openai_models_get_the_tier_unless_known_to_reject_it(self) -> None:
         for provider in ("copilot", "acrc"):
             with self.subTest(provider=provider):
                 self.assertNotIn("reasoning_effort", self._kwargs(provider, "gpt-4.1", "high"))
@@ -113,6 +113,8 @@ class CompatibleProviderEffortTests(unittest.TestCase):
                 self.assertNotIn("reasoning_effort", self._kwargs(provider, "gpt-6-astra", "none"))
                 self.assertEqual(self._kwargs(provider, "gpt-6-astra", "high")["reasoning_effort"], "high")
                 self.assertEqual(self._kwargs(provider, "o4-mini", "low")["reasoning_effort"], "low")
+                # Denylist: an unlisted OpenAI family gets the tier on release day.
+                self.assertEqual(self._kwargs(provider, "gpt-7-nova", "high")["reasoning_effort"], "high")
 
 
 class CLIProxyClientTests(unittest.TestCase):
@@ -144,6 +146,8 @@ class CLIProxyClientTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", self._kwargs("gpt-6-astra", "none"))
         self.assertEqual(self._kwargs("gpt-6-astra", "xhigh")["reasoning_effort"], "xhigh")
         self.assertEqual(self._kwargs("gpt-5.6-sol", "Low")["reasoning_effort"], "low")
+        # Denylist: an unlisted OpenAI family gets the tier on release day.
+        self.assertEqual(self._kwargs("o5-pro", "high")["reasoning_effort"], "high")
 
 
 if __name__ == "__main__":

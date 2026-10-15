@@ -421,10 +421,11 @@ def _build_settings_choices(
         state.get("model"),
         state.get("reasoning_effort"),
     )
-    # OpenAI only honours a tier on its reasoning families; the row would be a
-    # dead setting for gpt-4.x/4o, so it is shown for reasoning models only.
+    # OpenAI rejects a tier on its known non-reasoning models (gpt-4.x/4o); the
+    # row would be a dead setting there, so it is hidden for those only. Any
+    # other id on the platform defaults to reasoning, as in agent-core.
     effort_capable = (
-        is_openai_reasoning_model(state.get("model") or "")
+        is_openai_reasoning_model(state.get("model") or "", platform=provider == "openai")
         if provider in {"openai", "cliproxyapi"}
         else provider in {"openrouter", "qwen", "acrc", "copilot", "anthropic"}
     )
@@ -1225,11 +1226,11 @@ def _prompt_provider_options(
         updates["GIT_TOOLS_REASONING_EFFORT"] = effort or ""
         return updates
     if provider in {"openai", "cliproxyapi"}:
-        effort_capable = is_openai_reasoning_model(model)
+        effort_capable = is_openai_reasoning_model(model, platform=provider == "openai")
     else:
         effort_capable = (provider in {"openrouter", "qwen", "anthropic"}
                           or bool(_model_effort(provider, model))
-                          or model.lower().startswith(("gpt-", "o1", "o3", "o4", "codex-")))
+                          or is_openai_reasoning_model(model))
     if effort_capable:
         effort = _ask_with_back(questionary.select(
             "Reasoning effort:", choices=[*_build_effort_choices(provider, model, updates["GIT_TOOLS_REASONING_EFFORT"]), _back_choice()],

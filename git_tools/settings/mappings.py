@@ -47,14 +47,24 @@ DEFAULT_OPENROUTER_MODEL = openrouter.DEFAULT_MODEL
 # `rm -rf ~/.git-tools`.
 MODEL_CATALOG_PATH = Path.home() / ".git-tools" / MODEL_CATALOG_FILENAME
 
-# OpenAI's reasoning families read the native ``reasoning_effort`` field and
-# accept only the server's default temperature. The platform's other chat
-# models (gpt-4.x, gpt-4o, gpt-3.5 and the ``*-chat-latest`` variants) reject
-# the field outright and take a temperature instead. This is git-tools' wire
-# policy; agent-core reaches the same outcome by sending OpenAI's default
-# temperature of 1.
-_OPENAI_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4", "codex")
+# OpenAI models known to reject the native ``reasoning_effort`` field with
+# HTTP 400: the pre-reasoning chat lines and the ``*-chat`` variants
+# (gpt-5-chat-latest). They take a temperature, where the reasoning models
+# accept only the server's default. This is a denylist on purpose, as in
+# agent-core: a new family defaults to reasoning, so the tier works on release
+# day, and a wrong guess costs one 400 that one more entry here fixes. agent-core
+# reaches the same temperature outcome by sending OpenAI's default of 1.
+_OPENAI_NON_REASONING_PREFIXES = (
+    "gpt-3",
+    "gpt-4",
+    "chatgpt-",
+    "o1-mini",
+    "o1-preview",
+)
 _OPENAI_NON_REASONING_MARKERS = ("-chat",)
+# Ids that look like OpenAI's own. The o-series is numbered (o1, o3, o4, ...)
+# and matched by shape, so a new number is in the family on release day.
+_OPENAI_FAMILY_PREFIXES = ("gpt-", "chatgpt-", "codex-", "computer-use-")
 
 # Kept as names for callers and tests; the catalog itself is resolved by the
 # provider modules (see ``resolve_provider_catalog``).
@@ -63,12 +73,38 @@ ANTHROPIC_API_VERSION = anthropic.API_VERSION
 anthropic_catalog_headers = anthropic.catalog_headers
 
 
-def is_openai_reasoning_model(model_id: str) -> bool:
-    """Whether an OpenAI model reads ``reasoning_effort`` (and refuses a temperature)."""
+def is_openai_family_model(model_id: str) -> bool:
+    """Whether an id looks like one of OpenAI's own models."""
     normalized = model_id.strip().lower()
-    if not normalized.startswith(_OPENAI_REASONING_PREFIXES):
+    if normalized.startswith(_OPENAI_FAMILY_PREFIXES):
+        return True
+    return len(normalized) >= 2 and normalized[0] == "o" and normalized[1].isdigit()
+
+
+def is_known_non_reasoning_openai_model(model_id: str) -> bool:
+    """Whether an OpenAI id is on the list that rejects ``reasoning_effort``."""
+    normalized = model_id.strip().lower()
+    if normalized.startswith(_OPENAI_NON_REASONING_PREFIXES):
+        return True
+    return any(marker in normalized for marker in _OPENAI_NON_REASONING_MARKERS)
+
+
+def is_openai_reasoning_model(model_id: str, *, platform: bool = False) -> bool:
+    """Whether a model reads ``reasoning_effort`` (and refuses a temperature).
+
+    Denylist, not allowlist: within OpenAI's family every model reads the
+    field except the known non-reasoning ones, so an unlisted new family
+    defaults to sending. On OpenAI's own platform (``platform=True``) every id
+    is OpenAI's, so the family check is skipped and any id not on the denylist
+    counts. Proxies fronting mixed catalogs (CLIProxyAPI, Copilot, ACRC) keep
+    the family check so a Claude or DeepSeek id never gets the field.
+    """
+    normalized = model_id.strip().lower()
+    if not normalized:
         return False
-    return not any(marker in normalized for marker in _OPENAI_NON_REASONING_MARKERS)
+    if not platform and not is_openai_family_model(normalized):
+        return False
+    return not is_known_non_reasoning_openai_model(normalized)
 
 
 @dataclass(frozen=True)

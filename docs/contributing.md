@@ -25,7 +25,7 @@ uv run git-tools settings
 
 Use `uv run git-tools` to exercise the working checkout. To install the CLI as an editable tool, use `uv tool install -e .`.
 
-For provider configuration, environment files, and interactive settings, see [Configuration](configuration.md). Provider metadata and static fallback models live in `git_tools/settings/mappings.py`; there is no `mappings.json` to copy.
+For provider configuration, environment files, and interactive settings, see [Configuration](configuration.md). Provider modules live in `git_tools/providers/` (one per provider, copied from agent-cli) and are wired into the registry in `git_tools/settings/mappings.py`; there is no `mappings.json` to copy.
 
 ## Branch and PR Flow
 
@@ -83,7 +83,7 @@ When you change one of these areas, update the others in the same PR when needed
 
 - generator packages in `git_tools/generators/<name>/`; keep each package's `__init__.py` re-exports stable, because `cli.py`, the CI adapters, and tests import `git_tools.generators.<name>` by that path (see [code layout](architecture.md))
 - provider settings in `git_tools/settings/`
-- provider and model definitions in `git_tools/settings/mappings.py`
+- provider modules in `git_tools/providers/` (keep them identical to agent-cli's; put git-tools-specific wiring in `git_tools/settings/mappings.py`)
 - user-facing env examples in `git-tools.env.example`
 - prompt files in `git_tools/prompts/`
 - workflow examples in `.github/workflows/` and `.azure/workflows/`

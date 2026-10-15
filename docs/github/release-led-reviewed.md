@@ -190,7 +190,8 @@ git fetch origin develop
 git merge origin/develop -m "chore: merge develop for backmerge"
 # resolve conflicts — keep the intended target version consistent in version files
 git push origin hotfix/<name>
-git-tools pr --backmerge-hotfix-pr
+# Replace 1.6.1 with the hotfix version already promoted to master.
+git-tools pr --backmerge-hotfix-pr --workflow-version 1.6.1
 ```
 
 ## Feature and Bugfix Policy

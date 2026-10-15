@@ -10,7 +10,9 @@ This guide maps the source tree so changes land in the module that owns them. It
 | --- | --- |
 | `git_tools/cli.py` | Typer application: the `commit`, `issue`, `pr`, `bump`, `init`, and `settings` commands, the interactive menu, and the settings editors |
 | `git_tools/settings/settings.py` | Pydantic settings, provider configuration classes, credential checks, and `~/.git-tools/settings.env` persistence |
-| `git_tools/settings/mappings.py` | Provider registry, static fallback models, live `/models` discovery, and the on-disk model catalog |
+| `git_tools/providers/` | One module per provider, copied from agent-cli: endpoint, default model, aliases, curated models, and catalog codecs (`catalog.py` is the shared `/models` transport and cache; `copilot.py` is the one git-tools-only module) |
+| `git_tools/settings/mappings.py` | Provider registry wrapping `git_tools/providers/` with git-tools' wiring (credential env vars, config classes, picker flags, per-model knobs), and the catalog resolution that calls the modules the way agent-cli's provider flow does |
+| `git_tools/utils/io.py` | Atomic JSON helpers the provider package depends on, copied from agent-cli |
 | `git_tools/prompts/` | System and user prompt text files, loaded by name |
 | `git_tools/templates/` | Commit, issue, and PR output templates with their loader |
 | `git_tools/generators/` | One package per command plus the shared `base` package, described below |
@@ -100,7 +102,7 @@ Imports flow one way: `errors` → `version` → `conventions` → `targets` →
 
 | Change | Edit |
 | --- | --- |
-| Add or adjust a provider | `settings/mappings.py`, `settings/settings.py`, `base/clients.py`, and the `settings` command in `cli.py` |
+| Add or adjust a provider | `providers/<name>.py` (copy agent-cli's module when one exists), its wiring in `settings/mappings.py`, `settings/settings.py`, `base/clients.py`, and the `settings` command in `cli.py` |
 | Model picker or default resolution | `base/models.py`; shared picker helpers live in `cli.py` |
 | Diff budgeting or truncation | `base/diffs.py`; its panel in `base/display.py` |
 | Commit prompt or message parsing | `commitgen/messages.py` and `prompts/commitgen_*.txt` |

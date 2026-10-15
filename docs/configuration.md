@@ -8,7 +8,7 @@
 git-tools settings
 ```
 
-Choose **Provider** for a continuous setup: provider → credentials/endpoint → main model → support model → OpenRouter upstream or Kimi thinking → applicable reasoning effort. Support is still reserved/unused. A blank key keeps an existing/default key. The choices are saved together only after completing the flow; canceling does not partially update saved settings.
+Choose **Provider** for a continuous setup: provider → credentials/endpoint → main model → support model → OpenRouter upstream (each with price, context, quantization, caching and uptime, cheapest first) or Kimi thinking (off, on or a declared tier, in one list with the model's default preselected) → reasoning effort for the other providers. Support is still reserved/unused. A blank key keeps an existing/default key. The choices are saved together only after completing the flow; canceling does not partially update saved settings.
 
 ```bash
 git-tools settings provider                     # Interactive provider selector and setup
@@ -17,22 +17,22 @@ git-tools settings provider openrouter --interactive
 git-tools settings provider openrouter --non-interactive  # Save provider/defaults without prompts
 ```
 
-Named-provider commands automatically use the wizard in a terminal and retain non-interactive behavior without a terminal. Explicit flags override that choice. **API Key** and **Main Model** can also be edited separately afterward. The source uses provider presets too (`agent-cli`'s `_PROVIDER_PRESETS`, `agent-core`'s `PROVIDER_CONFIGS`); these describe services, not allowed-model whitelists. OpenRouter's existing git-tools default remains Claude for compatibility, unlike agent-cli's DeepSeek default.
+Named-provider commands automatically use the wizard in a terminal and retain non-interactive behavior without a terminal. Explicit flags override that choice. **API Key** and **Main Model** can also be edited separately afterward. Endpoints, default models and curated lists are agent-cli's provider modules, copied into `git_tools/providers/`; they describe services, not allowed-model whitelists.
 Use Esc or **← Back** to return a level; use **Done** to finish.
 Prefer the masked credential prompt over secret command arguments.
 
 | Provider | Credential variable | Default endpoint | Default model |
 | --- | --- | --- | --- |
-| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | `anthropic/claude-sonnet-4.6` |
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | `deepseek/deepseek-v4-flash-0731` |
 | `kimicode` (`kimicli`) | `KIMICODE_API_KEY` | `https://api.kimi.com/coding/v1` | `kimi-for-coding` |
-| `cliproxyapi` | `CLIPROXYAPI_API_KEY` | `http://localhost:8317/v1` | `gpt-6-astra` |
+| `cliproxyapi` | `CLIPROXYAPI_API_KEY` | `http://127.0.0.1:8317/v1` | `gpt-6-astra` |
 | `acrc` | `ACRC_API_KEY` | `https://fmodel.ai.acrc.a-star.edu.sg/v1` | `deepseek-v4.1-flash` |
-| `copilot` | `COPILOT_API_KEY` | `http://localhost:4141/v1` | `gpt-4.1` fallback; select a served model |
+| `copilot` | `COPILOT_API_KEY` | `http://127.0.0.1:4141/v1` | `gpt-4.1` fallback; select a served model |
 | `qwen` | `DASHSCOPE_API_KEY` | **Required explicit plan/region endpoint** | `qwen3.8-max` |
 | `openai` | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-6-astra` |
 | `anthropic` (`claude`) | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | `claude-opus-5-5` |
 
-`kimi` and `kimicode` are aliases for the retained `kimicli` storage key; `router`, `proxy`, `claude`, and `dashscope`/`alibaba` are also accepted. OpenAI and Anthropic are both spoken as OpenAI-compatible chat completions (Anthropic's Messages API host also answers `/v1/chat/completions`). On OpenAI the reasoning effort applies to every model, `none` means off, and reasoning families use the server's default temperature. On Anthropic no temperature is ever sent (Claude 4.7 and later reject values below 1), thinking is adaptive by default, `none` turns it off, and the other tiers are forwarded but currently ignored by Anthropic's compatibility layer. ACRC VPN access and Copilot proxy authentication are managed externally. Host-local proxies default to localhost rather than agent-core's container host alias. CLIProxyAPI requires a separately
+`kimi` and `kimicode` are aliases for the retained `kimicli` storage key; `router`, `proxy`, `claude`, and `dashscope`/`alibaba` are also accepted. OpenAI and Anthropic are both spoken as OpenAI-compatible chat completions (Anthropic's Messages API host also answers `/v1/chat/completions`). On OpenAI the reasoning effort is sent only to the reasoning families (GPT-5, GPT-6, o-series); other chat models such as gpt-4.1 reject the field, never receive it, and do not show the effort setting. `none` sends nothing, so the model uses its server default; the same holds on CLIProxyAPI, Copilot, ACRC, Qwen and Kimi, where only a real tier is forwarded (OpenRouter sends `none` as its own tier and Anthropic turns thinking off). Reasoning families use the server's default temperature. Every other provider, CLIProxyAPI included (its Codex backend accepts it), receives the configured temperature, 0.6 by default; through CLIProxyAPI the tier is sent only when `GIT_TOOLS_REASONING_EFFORT` is set (no implicit default, as in agent-core). On Anthropic no temperature is ever sent (Claude 4.7 and later reject values below 1), thinking is adaptive by default, `none` turns it off, and the other tiers are forwarded but currently ignored by Anthropic's compatibility layer. ACRC VPN access and Copilot proxy authentication are managed externally. Host-local proxies default to the loopback address rather than agent-core's container host alias. Every provider keeps its own profile, as agent-cli does: its model, support model, effort, Kimi thinking, OpenRouter pin and custom endpoint are mirrored under provider-scoped keys (`GIT_TOOLS_OPENAI_MODEL_MAIN`, `GIT_TOOLS_KIMICLI_KIMI_THINKING`, `OPENAI_BASE_URL`, …) whenever they are saved, and switching back to that provider restores them into the plain keys, which always hold the current provider's values. The default endpoint is not remembered, and setting it again forgets a remembered custom one. API keys are per provider already. CLIProxyAPI requires a separately
 running/authenticated proxy; its client key defaults to the placeholder
 `cliproxyapi`. Set a different key only if your proxy requires it. Its default
 reasoning effort is `xhigh` for effort-capable models.
@@ -58,8 +58,7 @@ provider; bump, init, and versioning CI do not require an LLM API key.
 | Location | Purpose |
 | --- | --- |
 | `~/.git-tools/settings.env` | Saved user-level settings and credentials |
-| `~/.git-tools/models.json` | Manually saved model IDs, grouped by provider |
-| `~/.git-tools/model-catalog.json` | Last-known-good discovered models, scoped to endpoint and credential fingerprint |
+| `~/.git-tools/model-catalog.json` | Kimi Code's last-known-good catalog, in agent-cli's format, scoped to endpoint and credential fingerprint |
 | `./git-tools.env` | Optional settings in the command's current working directory |
 
 For normal settings loading, exported environment variables override env files;
@@ -83,7 +82,7 @@ again. Back up credentials before resetting.
 
 ## Models and Reasoning
 
-OpenRouter, Kimi Code, CLIProxyAPI, Copilot, ACRC, OpenAI, and Anthropic attempt live `/models` discovery using the selected endpoint and credentials. OpenAI's platform list is narrowed to its chat models (audio, image, embedding, and similar ids are hidden, as are the Responses-API-only pro and codex families the pinned client cannot drive); Anthropic's list comes from its native Models API with its own headers. Both fall back to their built-in lists when the call cannot be made. Served IDs drive the picker; old fallback IDs not served by a successful catalog are dropped, while explicit saved/manual IDs remain available. Large catalogs are searchable. Display labels and Kimi thinking/effort capabilities are retained when supplied.
+Model catalogs are resolved exactly as agent-cli's provider flow resolves them, by the copied provider modules. ACRC, OpenAI, and Anthropic show the endpoint's own list with the default first and the modules' display names overlaid, and fall back to the module's built-in list when the call cannot be made (OpenAI's list is narrowed to its chat models; Anthropic's comes from its native Models API with its own headers). OpenRouter, CLIProxyAPI, and Copilot show exactly what the endpoint serves, with no built-in list. Kimi Code keeps a last-known-good copy per endpoint and credential and shows it, clearly warned, when a refresh fails. Qwen is curated. The saved main model is pinned first even when the endpoint does not list it, any id can be typed manually, and nothing beyond the saved main model is remembered. Large catalogs are searchable. Kimi thinking/effort capabilities come from its catalog entries.
 
 ACRC lists what its endpoint currently serves; its three built-in models lead the picker and are the fallback when the VPN or endpoint is unreachable, with the failure reported. Qwen uses curated choices plus manual entry rather than probing `/models`, because its catalog varies by plan and region; it must be given the actual endpoint, and no runtime endpoint is guessed.
 Select **Model → Enter a model ID manually…** to save an exact ID under that provider.
@@ -94,7 +93,7 @@ than silently selecting another model. Generation also reports catalog failures
 and stale/fallback status.
 
 ```bash
-git-tools settings model anthropic/claude-sonnet-4.6
+git-tools settings model deepseek/deepseek-v4-flash-0731
 git-tools settings temperature 0.6
 git-tools settings effort xhigh
 ```
@@ -110,11 +109,12 @@ git-tools settings sub-model vendor/smaller-model
 
 Main and support share the selected provider/account, as in the agent projects. **Only main is used today** for commit/issue/PR generation; configuring support never causes a second request. Support defaults to `follow-main`. `model` remains an alias for editing main. Resolution is explicit `--model` → `GIT_TOOLS_MODEL_MAIN` → legacy `GIT_TOOLS_DEFAULT_MODEL` → provider fallback; interactive commands can choose a model for that invocation.
 
-Catalogs depend on endpoint and credentials. Discovery failures may use a clearly warned last-known-good cache for that exact identity; changed credentials/endpoints do not reuse another account's cache. Without a suitable cache, saved/manual and fallback choices remain. An ordinary HTTP error does not use the disk cache. Listing or saving an ID does not guarantee your account
+Catalogs depend on endpoint and credentials. A failed Kimi Code refresh may use a clearly warned last-known-good cache for that exact identity; changed credentials/endpoints do not reuse another account's cache. Without a suitable cache, saved/manual and fallback choices remain. An ordinary HTTP error does not use the disk cache. Listing or saving an ID does not guarantee your account
 can access it.
 
-Provider metadata and static catalogs live in `git_tools/settings/mappings.py`;
-there is no `mappings.json` to maintain.
+Provider modules live in `git_tools/providers/` (copied from agent-cli) and are
+wired into the registry in `git_tools/settings/mappings.py`; there is no
+`mappings.json` to maintain.
 
 ### Endpoint, Routing, and Thinking
 
@@ -123,10 +123,10 @@ git-tools settings api-base https://your-endpoint.example/v1
 git-tools settings openrouter-provider any  # Unpinned routing
 # Interactive upstream discovery for the selected main model:
 git-tools settings openrouter-provider
-git-tools settings kimi-thinking enabled
+git-tools settings kimi-thinking enabled   # or disabled, or a tier such as high
 ```
 
-OpenRouter upstream choices come from `/models/<model>/endpoints`; manual slugs are also accepted. A pin uses `provider.only` and disables fallbacks. `effort none` is a real wire value, not clearing the override; use `effort unset` to clear. Kimi thinking/effort choices respect catalog capabilities where declared. Qwen uses its native thinking parameters.
+OpenRouter upstream choices come from `/models/<model>/endpoints`; manual slugs are also accepted. A pin uses `provider.only` and disables fallbacks. Upstream availability is per model, so changing the main model interactively re-asks the pin for the new model; the non-interactive `settings main-model <id>` keeps a pin the new model's upstream list still contains, clears one it verifiably does not (with a warning), and keeps an unverifiable one with a warning. `effort none` is a real wire value, not clearing the override; use `effort unset` to clear. Kimi thinking/effort choices respect catalog capabilities where declared, and a direct `settings effort <value>` is checked against the same Kimi catalog tiers before it is saved. An explicit `kimi-thinking disabled` wins over a saved tier, as in agent-core: nothing thinking-related is sent, the tier is not validated, and saving `disabled` clears the effort override. The catalog's own `only`/`no` mode wins over both. With neither a thinking choice nor a tier configured, nothing thinking-related is sent and Kimi applies the model's own default, as in agent-core; on Kimi `effort none` likewise sends nothing, since it has no `none` tier. Qwen uses its native thinking parameters.
 
 Provider switching resets the saved endpoint to the selected provider's default (empty for Qwen), support to `follow-main`, and routing/thinking/effort overrides. Exported variables still win over saved settings; unset stale exports when switching providers. Re-selecting the same provider keeps its configured endpoint.
 
@@ -138,7 +138,9 @@ which request parameters are used. Empty settings values are generally treated a
 | Variable | Default / purpose |
 | --- | --- |
 | `GIT_TOOLS_PROVIDER` | `openrouter`; selects provider |
-| `GIT_TOOLS_API_BASE` | Provider endpoint override |
+| `GIT_TOOLS_API_BASE` | The current provider's endpoint |
+| `<PROVIDER>_BASE_URL` (e.g. `OPENAI_BASE_URL`) | A custom endpoint remembered per provider, restored when you switch back |
+| `GIT_TOOLS_<PROVIDER>_MODEL_MAIN`, `…_MODEL_SUPPORT`, `…_REASONING_EFFORT`, `…_KIMI_THINKING`, `…_OPENROUTER_PROVIDER` | The provider's remembered profile, written automatically and restored on a switch |
 | `GIT_TOOLS_MODEL_MAIN` | Main model; preferred over legacy model default |
 | `GIT_TOOLS_MODEL_SUPPORT` | Reserved support model; `follow-main` by default (`GIT_TOOLS_MODEL_SUB` alias) |
 | `GIT_TOOLS_DEFAULT_MODEL` | Legacy main-model fallback |

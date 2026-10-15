@@ -32,12 +32,73 @@ produce warnings and are skipped. They do **not** block the authoritative bump,
 commit, or tagging. Missing optional automatic files do not need to be created.
 Stale auxiliary versions can be brought into line with the newly computed version.
 
+Explicit custom targets resolving outside the physical repository root are configuration
+errors, not skippable auxiliary warnings (see [extra targets](#explicit-extra-targets)).
 Core `.cz.toml` errors, invalid core history/configuration, and failed Git operations
 still stop the operation. `--check-consistency` applies to the authoritative field;
 it does not turn auxiliary mismatches into hard requirements.
 
 Use `--dry-run` or `--get-next` to compute without writes, commits, or tags.
 Previews return before write-time target validation and are not a complete sync audit.
+
+## Disabling Auxiliary Sync (Local and CI)
+
+Bumping typically runs in CI: configure auxiliary sync directly in the workflow
+YAML as shown below. For local runs (including `uv`), auxiliary sync defaults to
+enabled; to bump only the authoritative `.cz.toml`, set the repository default:
+
+```toml
+[tool.commitizen]
+version = "1.2.3"
+sync_auxiliary = false
+```
+
+Or optionally override it for one local `uv` execution:
+
+```sh
+GIT_TOOLS_BUMP_SYNC_AUXILIARY=false uv run git-tools bump --yes
+```
+
+Precedence is **environment variable > `.cz.toml` `sync_auxiliary` > `true`**.
+The TOML setting must be a boolean, not a quoted string; invalid TOML setting
+types fail even when an environment override is present. Environment values are
+case-insensitive and trimmed: `true`/`false`, `1`/`0`, `yes`/`no`, or `on`/`off`.
+An empty or unrecognized environment value raises `ConfigError` rather than
+silently enabling or disabling sync.
+
+Disabled means **all auxiliary targets**: `pyproject.toml`, `uv.lock`, npm JSON
+files, root and `src-tauri/` Cargo files, and every custom `version_files` entry.
+These files and selectors are not inspected, validated, or registered for sync;
+even unsafe custom selectors are inactive while sync is disabled. `.cz.toml`
+remains the source of truth and is still bumped. Version calculation, branch/history
+rules, commits, tagging, and publication are not disabled by this switch.
+
+### CI deployment configuration
+
+All shipped workflows under `.github/workflows/` and `.azure/workflows/` define
+`GIT_TOOLS_BUMP_SYNC_AUXILIARY` directly in YAML, defaulting to `'true'`. **Edit the
+workflow YAML** to disable sync in CI; no GitHub repository variable or local
+`.env` setup is required. The workflow passes this setting through the process
+environment, so it overrides `.cz.toml` `sync_auxiliary`, including a TOML `false`.
+
+For GitHub Actions, change the workflow-level setting to `'false'` for both push
+and manual runs (the shipped default is `'true'`):
+
+```yaml
+env:
+  GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'false'
+```
+
+For Azure Pipelines, edit the template's deployment variable:
+
+```yaml
+variables:
+  GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'false'
+```
+
+The Azure templates explicitly map this variable into the strategy and bump step
+environments. GitHub uses a workflow-wide environment. Embedded Python and its
+bump subprocess inherit the same setting; no package-manager invocation is added.
 
 ## Automatic Targets
 
@@ -111,12 +172,37 @@ version_files = [
 ]
 ```
 
+With auxiliary sync enabled, every explicit path/glob and each match must resolve
+inside the resolved repository root. Absolute internal paths, internal symlinks,
+and aliases are allowed and share physical file identity. Parent traversal,
+absolute external paths, and symlinks/glob matches escaping the repository raise a
+clear `ConfigError` before any updates are written; this is not downgraded to an
+auxiliary warning. Physical root identity also handles macOS `/var` versus
+`/private/var` aliases.
+
 Entries support a path/glob and an optional colon-separated regular expression.
-The matcher works **line by line**, not as a JSON/TOML parser: use narrowly selected
-lines and inspect the diff. Without a pattern, it searches for the current version.
-Invalid patterns, unmatched paths, unreadable files, and ambiguous matching content
-warn and skip. Automatic npm/Cargo targets always use their ecosystem-aware handling, not a
-configured replacement pattern. Explicit regex entries cannot override their safe field selection. `.cz.toml` remains the authoritative target.
+The matcher works **line by line**, not as a JSON/TOML parser: a regex selects
+whole lines, not a capture group or field. Without a pattern, the current version
+text selects the lines; stale-only lines therefore need an explicit regex.
+
+A selected version-bearing line must contain exactly **one complete supported
+version token**, and all selected version-bearing lines must carry the same source
+version. Multiple values on one line are rejected even when identical; differing
+versions across selected lines are also rejected. Repeated single versions on
+separate lines are allowed. Only the token span is replaced, never substrings of
+longer versions. Stable versions and the supported `alpha`/`beta`/`rc` formats
+(including the short `a`/`b`/`rc` scheme) are recognized; unsupported suffixes and
+build metadata warn and skip rather than receiving a partial replacement.
+Selected lines with no version token are left alone; a target with no version
+tokens is skipped. An unambiguous stale source version may sync to the new version.
+
+Invalid patterns, unmatched paths, unreadable files, unsupported version tokens,
+and ambiguous content warn and skip that custom target without blocking the core
+bump or other safe targets. Use narrowly selected lines and inspect the diff:
+line selection cannot establish the semantic meaning of a version field.
+Automatic npm/Cargo targets always use their ecosystem-aware handling, not a
+configured replacement pattern. Explicit regex entries cannot override their safe
+field selection. `.cz.toml` remains the authoritative target.
 
 ## Safety and Recovery
 

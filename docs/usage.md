@@ -97,7 +97,7 @@ Ordinary generation needs commits to describe. Fixed workflow modes can use vali
 | `--hotfix-pr` / `--no-hotfix-pr` | Fixed `Hotfix X.Y.Z` guidance for hotfix promotion |
 | `--backmerge-release-pr` / `--no-backmerge-release-pr` | Fixed `Backmerge Release X.Y.Z` guidance into `develop` |
 | `--backmerge-hotfix-pr` / `--no-backmerge-hotfix-pr` | Fixed `Backmerge Hotfix X.Y.Z` guidance into `develop` |
-| `--workflow-version X.Y.Z` | Explicit release tuple for Start/backmerge modes when inference is unsuitable or unavailable |
+| `--workflow-version X.Y.Z` | Explicit release tuple for Start/backmerge modes; required for noninteractive hotfix backmerge, using the already-promoted version |
 | `--pr-limit` / `--no-pr-limit` | Apply/disable the configured PR-description limit for this run, on any host; aliases: `--azure-limit` / `--no-azure-limit` |
 
 Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override.
@@ -109,6 +109,11 @@ git-tools pr --base master --hotfix-pr
 git-tools pr --base develop --backmerge-release-pr --workflow-version 1.6.0
 git-tools pr --base develop --backmerge-hotfix-pr --workflow-version 1.6.1
 ```
+
+Hotfix backmerge uses the **already-promoted** hotfix version, not the next patch.
+Supply it with `--workflow-version`; interactive mode asks for it without a guessed
+default. Neither latest master nor a source version synchronized with develop
+reliably identifies that earlier promotion, so this mode does not infer a version.
 
 Review generated titles and the final merge/squash subject: those subjects drive CI strategy decisions. These flags generate guidance, not hosting actions or branch transitions. See [GitHub flows](github/README.md) or [Azure DevOps flows](azure-devops/README.md) for completion policy.
 

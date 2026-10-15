@@ -1354,6 +1354,25 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             generator.generate_issue_pullrequest()
         return mocks
 
+    def test_generation_omits_raw_response_panel_for_all_output_types(self) -> None:
+        for generation_type, title in (
+            ("issue", "Issue Description"),
+            ("pr", "PR Description"),
+            ("both", "Combined Output"),
+        ):
+            with self.subTest(generation_type=generation_type):
+                generator = self._make_generator(generation_type=generation_type)
+                response = {"content": "```\n## Title: fix: avoid duplicate output\n\nBody\n```"}
+                with patch("git_tools.generators.issueprgen.generator.console") as console:
+                    self._run_flow(generator, [response], apply_limit=False)
+
+                titles = [
+                    call.args[0].title
+                    for call in console.print.call_args_list
+                    if call.args and hasattr(call.args[0], "title")
+                ]
+                self.assertEqual(titles, [f"[bold]{title}[/bold]"])
+
     def test_enabled_limit_adds_instruction_to_system_message(self) -> None:
         generator = self._make_generator()
         response = {"content": "\n## Title: feat: small\n\nbody\n"}

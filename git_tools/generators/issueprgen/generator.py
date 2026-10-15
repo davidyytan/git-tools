@@ -222,7 +222,6 @@ class IssuePullRequestGenerator(
             return
 
         self.display_reasoning(response)
-        console.print(Panel(escape(response["content"].strip()), title="[bold]Raw Response[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL))
 
         parsed = self._normalize_pr_output(self.parse_generated_content(response["content"]))
         if apply_azure_limit and parsed:

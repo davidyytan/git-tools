@@ -7,6 +7,21 @@ from git_tools.generators.commitgen import CommitGenerator, SensitiveFileMatch
 
 
 class CommitGeneratorTests(unittest.TestCase):
+    def test_display_response_omits_raw_response_panel(self) -> None:
+        for interactive in (False, True):
+            with self.subTest(interactive=interactive):
+                generator = CommitGenerator(interactive=interactive)
+                response = {"content": "```\nfix: avoid duplicate output\n```"}
+                with (
+                    patch.object(generator, "display_reasoning"),
+                    patch("git_tools.generators.commitgen.generator.console") as console,
+                ):
+                    generator._display_response(response)
+
+                panels = [call.args[0] for call in console.print.call_args_list]
+                self.assertEqual([panel.title for panel in panels], ["[bold]Commit Message[/bold]"])
+                self.assertEqual(panels[0].renderable, "fix: avoid duplicate output")
+
     def test_system_message_lists_supported_types_and_commit_guidance(self) -> None:
         generator = CommitGenerator(interactive=False)
 

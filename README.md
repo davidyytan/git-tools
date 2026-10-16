@@ -14,7 +14,15 @@ Requires **Python 3.12**, Git, and [uv](https://docs.astral.sh/uv/getting-starte
 
 Installation is editable and enables shell completion. Restart your shell afterward. If the command is not on PATH, run `uv tool update-shell` and restart your shell. Source changes are picked up without reinstalling; dependency changes may require `--reinstall`.
 
-## Quick Start
+## Start a repository and ship a release
+
+Follow a **[full workflow walkthrough](docs/walkthroughs.md)** for your platform and mode. Each numbered guide takes a fresh repository from the initial **`Release 0.1.0`** commit through features, alpha/RC versions, stable release, backmerge, hotfix, and the next development cycle—with exact PR titles and CI checkpoints.
+
+Choose [GitHub](docs/github/README.md#full-walkthroughs) or [Azure DevOps](docs/azure-devops/README.md#full-walkthroughs). The walkthrough includes setup; `git-tools init` alone does not install automation. Existing release histories need a migration plan, not another bootstrap.
+
+## Quick Start — individual commands
+
+For an already configured repository, or local text generation without release automation:
 
 Run commands from the repository you want to work on:
 

@@ -12,6 +12,10 @@ Use this workflow example and activate it as `.azure/workflows/version-bump-git-
 
 This is the direct-push variant: commits land directly on `release/*` and `hotfix/*`. If you want the same release-led model but with every change reviewed through inner PRs and squash merges, use [Variant — Reviewed](release-led-reviewed.md) instead.
 
+## Full Walkthrough
+
+Follow **[Release-led: start to finish](release-led-walkthrough.md)** for a numbered journey from Azure setup and `Release 0.1.0` through release, backmerge, hotfix, and the next cycle. This page remains the policy and recipe reference.
+
 ## Subjects and Commands
 
 Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and [platform setup](setup.md) before following these recipes. Replace placeholders with actual paths and versions; these are separate steps, not a single script. Direct `git-tools commit` commits by default; use `--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR. Review staged files before committing. Wait for CI, pull bot commits, and fetch tags before dependent operations. Keep promotion branches until backmerge completes.

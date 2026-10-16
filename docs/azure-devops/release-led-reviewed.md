@@ -11,6 +11,10 @@ This is [Variant — Release-led](release-led.md) plus an inner PR layer, merged
 
 `develop`, promotion, and backmerge PRs are unchanged from the release-led variant. Pick this flow when the release manager owns the version line **and** compliance or org policy requires a review trail for human changes. Otherwise use [Variant — Release-led](release-led.md) — the inner PR layer adds friction.
 
+## Full Walkthrough
+
+Follow **[Release-led — Reviewed: start to finish](release-led-reviewed-walkthrough.md)** for a numbered journey from Azure setup and `Release 0.1.0` through release, reviewed synchronization, backmerge, hotfix, and the next cycle. This page remains the policy and recipe reference.
+
 ## Subjects and Commands
 
 Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and [platform setup](setup.md) before following these recipes. Replace placeholders with actual paths and versions; these are separate steps, not a single script. Direct `git-tools commit` commits by default; use `--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR. Review staged files before committing. Wait for CI, pull bot commits, and fetch tags before dependent operations. Keep promotion branches until backmerge completes.

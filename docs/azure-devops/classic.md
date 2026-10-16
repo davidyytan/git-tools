@@ -10,6 +10,10 @@ Use this workflow example and activate it as `.azure/workflows/version-bump-git-
 .azure/workflows/version-bump-git-flow-classic.yml.example
 ```
 
+## Full Walkthrough
+
+Follow **[Classic: start to finish](classic-walkthrough.md)** for a numbered journey from Azure setup and `Release 0.1.0` through release, backmerge, hotfix, and the next cycle. This page remains the policy and recipe reference.
+
 ## Subjects and Commands
 
 Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and [platform setup](setup.md) before following these recipes. Replace placeholders with actual paths and versions; these are separate steps, not a single script. Direct `git-tools commit` commits by default; use `--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR. Review staged files before committing. Wait for CI, pull bot commits, and fetch tags before dependent operations. Keep promotion branches until backmerge completes.

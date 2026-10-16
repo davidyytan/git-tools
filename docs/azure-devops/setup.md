@@ -103,8 +103,17 @@ The empty passphrase allows the pipeline agent to sign non-interactively. Adjust
 Confirm that the private key exists:
 
 ```bash
-gpg --list-secret-keys "myproject-versioning@automation.invalid"
+gpg --list-secret-keys --keyid-format=long
 ```
+
+Select the dedicated bot key by its identity/email and copy its **full fingerprint** from the listing. Use `YOUR_GPG_KEY_FINGERPRINT` as the placeholder, not a real person's example key ID. The equivalent explicit export syntax is:
+
+```bash
+# Replace before running; this must identify the bot's key.
+GPG_KEY_FINGERPRINT='YOUR_GPG_KEY_FINGERPRINT'
+```
+
+For this Azure runbook, the export filename remains `myproject-versioning-gpg-private.asc` so it matches `GPG_SECURE_FILE` in the example pipeline. Replace the `myproject` prefix consistently if you rename it. Its contents are the same armored private-key text that could be saved as `privatekey.pgp`; the extension does not change the key format. Never paste this private key into chat, logs, or source control.
 
 From the target repository root, ignore private-key exports before creating the file:
 
@@ -115,10 +124,8 @@ printf '\n*-gpg-private.asc\n' >> .gitignore
 Export the key into the repository directory:
 
 ```bash
-gpg --armor \
-  --export-secret-keys \
-  "myproject-versioning@automation.invalid" \
-  > myproject-versioning-gpg-private.asc
+umask 077
+gpg --output myproject-versioning-gpg-private.asc --armor --export-secret-keys "$GPG_KEY_FINGERPRINT"
 ```
 
 Confirm that Git ignores the private key:
@@ -128,6 +135,19 @@ git check-ignore myproject-versioning-gpg-private.asc
 ```
 
 The command should print `myproject-versioning-gpg-private.asc`. Do not continue to `git add -A` unless the file is ignored. You will upload it to Azure DevOps after creating the pipeline.
+
+### Exact Azure setting names and destinations
+
+| Exact name | Set it here | Value |
+| --- | --- | --- |
+| `GPG_SECURE_FILE` | Copied pipeline YAML `variables:` | Uploaded Secure File name, e.g. `myproject-versioning-gpg-private.asc` |
+| `GIT_BOT_NAME` | Pipeline YAML `variables:` | `YOUR_BOT_NAME`: automation Git author name |
+| `GIT_BOT_EMAIL` | Pipeline YAML `variables:` | `YOUR_BOT_EMAIL`: email matching the selected GPG identity |
+| `GIT_TOOLS_REPO` | Pipeline YAML `variables:` | git-tools engine clone URL |
+| `GIT_TOOLS_REF` | Pipeline YAML `variables:` | `YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG`: actual supported engine branch/tag, not a bare SHA |
+| `GIT_TOOLS_BUMP_SYNC_AUXILIARY` | Pipeline YAML `variables:` | `'true'` to sync auxiliary versions, or `'false'` for `.cz.toml` only |
+
+Upload the **file itself** under **Pipelines → Library → Secure files**, then authorize the pipeline as described below. `GPG_SECURE_FILE` holds its name, **not** the private-key text. The adapter obtains checkout/push authentication through Azure's pipeline identity; it does **not** consume `BOT_SSH_SECRETKEY` or `BOT_GPG_SECRETKEY`. Those are [GitHub Actions secrets](../github/setup.md#prepare-keys-and-set-the-exact-secrets), not Azure settings. No LLM/API key is needed for versioning CI.
 
 ## Local CLI and PR Descriptions
 

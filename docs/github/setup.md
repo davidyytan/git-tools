@@ -33,10 +33,107 @@ Set `GIT_BOT_NAME` and `GIT_BOT_EMAIL` to your automation identity. Copy the cho
 - [Classic workflow example](../../.github/workflows/version-bump-git-flow-classic.yml.example)
 - [Release-led workflow example](../../.github/workflows/version-bump-git-flow-variant-release-led.yml.example)
 
-### Required secrets
+### Prepare keys and set the exact secrets
 
-- `BOT_SSH_SECRETKEY`
-- `BOT_GPG_SECRETKEY`
+Use a dedicated automation identity, not your personal signing/private key. The commands below are instructions for **your local terminal**, not workflow steps. Never paste private keys into issues, chat, logs, or source files.
+
+#### 1. Choose your values
+
+Replace these descriptive placeholders before running commands; do not use the example text literally:
+
+| Placeholder | Replace with |
+| --- | --- |
+| `YOUR_GPG_KEY_FINGERPRINT` | Full fingerprint of the bot's secret signing key from the listing below (preferred over a short key ID) |
+| `YOUR_SSH_PRIVATE_KEY_PATH` | Path to the bot's existing private SSH key, e.g. `$HOME/.ssh/git_tools_bot_ed25519`; **not** its `.pub` file |
+| `YOUR_BOT_NAME` | Git author name for generated commits |
+| `YOUR_BOT_EMAIL` | Bot email matching the GPG identity; use a verified email on the bot's GitHub account for verification |
+| `YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG` | An actual git-tools branch/tag containing the required strategy; not your application branch and not a bare SHA |
+
+#### 2. Find and export the GPG private key
+
+```bash
+gpg --list-secret-keys --keyid-format=long
+```
+
+Select the bot's signing key by its identity/email. The `sec` line contains its long key ID; the fingerprint line below it identifies the full key. Do not copy the example ID from someone else's instructions. If you have no automation key, create a dedicated signing key with `gpg --full-generate-key`, then list it again. The supplied adapter has no passphrase input: use an approved unattended automation key or adapt the workflow securely for passphrase handling.
+
+Export outside the checkout into a private directory:
+
+```bash
+GPG_KEY_FINGERPRINT='YOUR_GPG_KEY_FINGERPRINT'
+KEY_EXPORT_DIR="$HOME/.git-tools-key-exports"
+mkdir -p "$KEY_EXPORT_DIR"
+chmod 700 "$KEY_EXPORT_DIR"
+# Keep restrictive permissions for exports in this shell.
+umask 077
+gpg --output "$KEY_EXPORT_DIR/privatekey.pgp" --armor --export-secret-keys "$GPG_KEY_FINGERPRINT"
+cat "$KEY_EXPORT_DIR/privatekey.pgp"
+```
+
+Copy the **entire** output, including `-----BEGIN PGP PRIVATE KEY BLOCK-----` and its matching end marker. In the target repository open **Settings → Secrets and variables → Actions → Secrets → New repository secret**:
+
+- **Name:** `BOT_GPG_SECRETKEY`
+- **Secret:** the complete armored private-key contents, **not** the filename, fingerprint, or public key.
+
+`privatekey.pgp` is just an export filename; `--armor` makes its contents text regardless of extension. If it already exists, inspect it before choosing a new export filename; do not overwrite a key blindly. Remove the temporary export after securely storing the secret and any approved backup; this does not delete the key from your GPG keyring.
+
+Export the matching **public** key separately:
+
+```bash
+gpg --armor --export "$GPG_KEY_FINGERPRINT"
+```
+
+Register that public block on the bot account under **Settings → SSH and GPG keys → New GPG key**. Never upload the private block there.
+
+#### 3. Read the SSH private key and register its public key
+
+Use your existing dedicated automation SSH key. If one is needed, create it with `ssh-keygen -t ed25519 -C 'YOUR_BOT_EMAIL' -f "$HOME/.ssh/git_tools_bot_ed25519"`; do not overwrite an existing key. The supplied checkout step has no SSH passphrase input, so plan unattended authentication accordingly.
+
+```bash
+# Replace the filename with YOUR_SSH_PRIVATE_KEY_PATH; keep $HOME expandable.
+SSH_PRIVATE_KEY_PATH="$HOME/.ssh/git_tools_bot_ed25519"
+cat "$SSH_PRIVATE_KEY_PATH"
+```
+
+This is the explicit-path form of `cat ~/.ssh/key`. Copy the **whole private key**, including its BEGIN/END markers. Create another repository Actions **secret**:
+
+- **Name:** `BOT_SSH_SECRETKEY`
+- **Secret:** the complete SSH private-key contents, **not** its path and **not** the `.pub` contents.
+
+Now read the **public** key:
+
+```bash
+cat "${SSH_PRIVATE_KEY_PATH}.pub"
+```
+
+Register the public key either as a repository **Settings → Deploy keys → Add deploy key**, with **Allow write access**, or on a dedicated bot account with repository write access. Choose one identity model and ensure its permissions/ruleset exceptions permit the required pushes. Public keys go in key-registration screens; private keys go only in the Actions secrets above.
+
+#### 4. Set workflow variables (not secrets)
+
+Edit the top-level `env:` block in the copied workflow:
+
+```yaml
+env:
+  GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
+  GIT_TOOLS_REF: YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG
+  GIT_BOT_NAME: 'YOUR_BOT_NAME'
+  GIT_BOT_EMAIL: 'YOUR_BOT_EMAIL'
+  GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'true'
+```
+
+| Exact name | Location | Value |
+| --- | --- | --- |
+| `BOT_GPG_SECRETKEY` | Repository Actions **secret** | Armored GPG **private** key text |
+| `BOT_SSH_SECRETKEY` | Repository Actions **secret** | SSH **private** key text |
+| `GIT_TOOLS_REPO` | Workflow `env:` | Clone URL of the git-tools engine |
+| `GIT_TOOLS_REF` | Workflow `env:` | Supported engine branch/tag |
+| `GIT_BOT_NAME` | Workflow `env:` | Bot Git author name |
+| `GIT_BOT_EMAIL` | Workflow `env:` | Bot Git author email matching its signing identity |
+| `GIT_TOOLS_BUMP_SYNC_AUXILIARY` | Workflow `env:` | `'true'` to sync supported auxiliary version files; `'false'` for `.cz.toml` only |
+
+**Keep these exact names.** The supplied workflow reads `${{ secrets.BOT_SSH_SECRETKEY }}` and `${{ secrets.BOT_GPG_SECRETKEY }}`. It reads the other settings from YAML `env:`; merely creating same-named values in GitHub's **Variables** tab does not override them. To use repository Variables instead, explicitly wire them with `${{ vars.NAME }}` in the workflow. No LLM/API key is required for versioning CI.
+
+### Credential permissions and signing limitations
 
 `BOT_SSH_SECRETKEY` is the private SSH key for an identity allowed to write to the target repository (for example, a write-enabled deploy key or bot account). `BOT_GPG_SECRETKEY` is the private signing key used for version commits and tags. Register the matching public keys as appropriate, store private keys only in Actions secrets, and do not commit them to the repository.
 

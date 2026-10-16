@@ -1,5 +1,9 @@
 # Git Flow Guide
 
+## Start with a Full Walkthrough
+
+For a fresh repository, use the **[numbered end-to-end walkthroughs](walkthroughs.md)**. They cover setup and `Release 0.1.0`, feature work, release stabilization/promotion, backmerges, hotfixes, and the next cycle with concrete versions and CI checkpoints. This page is the shared policy/reference, not the complete procedural guide.
+
 ## Choose Your Platform First
 
 1. Open [GitHub guides](github/README.md) or [Azure DevOps guides](azure-devops/README.md).

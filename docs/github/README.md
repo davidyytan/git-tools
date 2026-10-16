@@ -2,6 +2,17 @@
 
 [Documentation index](../README.md) · [All platforms and modes](../git-flow-guide.md) · [Azure DevOps](../azure-devops/README.md)
 
+## Full Walkthroughs
+
+For a fresh repository, follow one complete numbered journey:
+
+- **[Classic: start to finish](classic-walkthrough.md)**
+- **[Classic — Reviewed: start to finish](classic-reviewed-walkthrough.md)**
+- **[Release-led: start to finish](release-led-walkthrough.md)**
+- **[Release-led — Reviewed: start to finish](release-led-reviewed-walkthrough.md)**
+
+Each includes setup, the initial `Release 0.1.0`, features, release/RC, stable promotion, backmerge, hotfix, and the next cycle. Exact PR actions, CI results, and local sync commands accompany each transition. Use the mode references below for policy and isolated recipes, not as a substitute for the walkthrough.
+
 ## Choose a Flow
 
 | Mode | Release line selected by | Stabilization changes | Merge style |

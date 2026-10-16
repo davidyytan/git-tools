@@ -7,7 +7,11 @@
 1. Install using the [root README](../README.md#install).
 2. Configure an LLM provider using [configuration](configuration.md) if you want AI generation.
 3. Use [CLI usage](usage.md) for local commands and interactive prompts.
-4. For automated releases, choose a [workflow mode](git-flow-guide.md) and follow the matching platform setup.
+4. For automated releases, follow a **[full start-to-finish walkthrough](walkthroughs.md)**. Choose one platform and mode; the numbered journey includes setup, the initial `Release 0.1.0`, features, release, backmerge, hotfix, and the next cycle.
+
+## Full Workflow Walkthroughs
+
+[Choose your complete walkthrough](walkthroughs.md). These are the guided learning path. The core and hosted flow references below explain individual commands and policies once you know the lifecycle.
 
 ## Core References
 

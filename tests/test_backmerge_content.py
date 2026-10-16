@@ -103,6 +103,8 @@ class BackmergeContentTests(unittest.TestCase):
                      {"package-lock.json": before.replace("sha512-test", "sha512-new")}, True)
 
     def test_cargo_manifest_version_only_root_and_tauri(self) -> None:
+        (self.root / "src-tauri").mkdir()
+        self.write(".cz.toml", '[tool.commitizen]\nversion = "1.2.3"\nauxiliary_directories = [".", "src-tauri"]\n')
         for prefix in ("", "src-tauri/"):
             with self.subTest(prefix=prefix):
                 path = prefix + "Cargo.toml"
@@ -116,6 +118,8 @@ class BackmergeContentTests(unittest.TestCase):
                     self.compare({path: self.cargo()}, {path: self.cargo("1.2.4", **kwargs)}, True)
 
     def test_cargo_lock_local_package_only_root_and_tauri(self) -> None:
+        (self.root / "src-tauri").mkdir()
+        self.write(".cz.toml", '[tool.commitizen]\nversion = "1.2.3"\nauxiliary_directories = [".", "src-tauri"]\n')
         for prefix in ("", "src-tauri/"):
             with self.subTest(prefix=prefix):
                 self.compare({prefix + "Cargo.toml": self.cargo(),

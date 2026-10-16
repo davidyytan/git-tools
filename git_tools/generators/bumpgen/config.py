@@ -41,8 +41,6 @@ def load_bump_config(root: Path) -> BumpConfig:
     # Use physical identity consistently (notably /var versus /private/var on macOS).
     root = root.resolve()
     cz_config_path, cz_settings = _load_commitizen_settings(root)
-    pyproject_path = root / "pyproject.toml"
-
     commitizen_version = _read_nested_string(cz_settings, ("version",))
     commitizen_version_provider = _read_nested_string(cz_settings, ("version_provider",))
     commitizen_version_scheme = _read_nested_string(cz_settings, ("version_scheme",))
@@ -77,104 +75,83 @@ def load_bump_config(root: Path) -> BumpConfig:
             ),),
         )
 
-    try:
-        pyproject_data = _read_toml(pyproject_path)
-    except Exception as exc:
-        _warn_auxiliary(pyproject_path, exc)
-        pyproject_data = {}
-    pyproject_version = _read_nested_string(pyproject_data, ("project", "version"))
-    project_name = _read_nested_string(pyproject_data, ("project", "name"))
+    directories = _auxiliary_directories(root, cz_settings)
+    # project_name remains the root project's metadata, never a child's name.
+    pyprojects: dict[Path, dict] = {}
+    for directory in dict.fromkeys((root, *directories)):
+        path = directory / "pyproject.toml"
+        try:
+            readable_candidate = not path.is_symlink() and (
+                _is_auxiliary_file(path) or not path.exists()
+            )
+            pyprojects[directory] = _read_toml(path) if readable_candidate else {}
+        except Exception as exc:
+            _warn_auxiliary(path, exc)
+            pyprojects[directory] = {}
+    project_name = _read_nested_string(pyprojects[root], ("project", "name"))
 
     tag_format = _read_nested_string(cz_settings, ("tag_format",)) or DEFAULT_TAG_FORMAT
     major_version_zero = bool(cz_settings.get("major_version_zero", False))
 
-    targets: list[VersionTarget] = []
-    auto_managed_paths: set[Path] = set()
-    if cz_config_path is not None and commitizen_version is not None:
-        targets.append(
-            SectionVersionTarget(
-                path=cz_config_path,
-                label="Commitizen version",
-                section_header="[tool.commitizen]",
-                strict_consistency=True,
+    targets: list[VersionTarget] = [SectionVersionTarget(
+        path=cz_config_path,
+        label="Commitizen version",
+        section_header="[tool.commitizen]",
+        strict_consistency=True,
+    )]
+    auto_managed_paths: set[Path] = {cz_config_path}
+    locations: dict[str, list[Path]] = {"Python": [], "npm": [], "Cargo": []}
+    filenames = {
+        "Python": ("pyproject.toml", "uv.lock"),
+        "npm": ("package.json", "package-lock.json", "npm-shrinkwrap.json"),
+        "Cargo": ("Cargo.toml", "Cargo.lock"),
+    }
+    for directory in directories:
+        for ecosystem, names in filenames.items():
+            # Reserve even absent, invalid, or ambiguous ecosystem paths so a
+            # broad version_files regex cannot bypass structured handling.
+            auto_managed_paths.update(directory / name for name in names)
+            if any(_is_auxiliary_file(directory / name) for name in names):
+                locations[ecosystem].append(directory)
+
+    explicit = "auxiliary_directories" in cz_settings
+    for ecosystem, found in locations.items():
+        if not explicit and len(found) > 1:
+            names = ", ".join(str(path.relative_to(root)) for path in found)
+            _warn_auxiliary(
+                ecosystem,
+                f"multiple auxiliary locations ({names}); skipping {ecosystem} sync. "
+                "Set [tool.commitizen].auxiliary_directories to select directories "
+                "that share this release",
             )
-        )
-        auto_managed_paths.add(cz_config_path)
-
-    if pyproject_version is not None:
-        targets.append(
-            SectionVersionTarget(
-                path=pyproject_path,
-                label="PEP 621 project version",
-                section_header="[project]",
-                strict_consistency=False,
-            )
-        )
-        auto_managed_paths.add(pyproject_path)
-
-    uv_lock_path = root / "uv.lock"
-    try:
-        if uv_lock_path.exists() and project_name:
-            targets.append(
-                UvLockVersionTarget(
-                    path=uv_lock_path,
-                    label="uv lock package version",
-                    package_name=canonicalize_package_name(project_name),
-                    strict_consistency=False,
-                )
-            )
-            auto_managed_paths.add(uv_lock_path)
-    except Exception as exc:
-        _warn_auxiliary(uv_lock_path, exc)
-
-    for filename in ("package.json", "package-lock.json", "npm-shrinkwrap.json"):
-        path = root / filename
-        # Register absent paths too, so configured regex entries cannot override
-        # JSON-aware selection. Only existing root files are automatic targets.
-        auto_managed_paths.add(path)
-        try:
-            if path.exists():
-                targets.append(
-                    JsonVersionTarget(
-                        path=path,
-                        label="npm app version",
-                        lockfile=filename != "package.json",
-                    )
-                )
-        except Exception as exc:
-            _warn_auxiliary(path, exc)
-
-    # Explicit conventional app locations only; never walk workspace members.
-    for directory in (root, root / "src-tauri"):
-        manifest = directory / "Cargo.toml"
-        lockfile = directory / "Cargo.lock"
-        auto_managed_paths.update((manifest, lockfile))
-        try:
-            if not manifest.exists():
-                if lockfile.exists():
-                    _warn_auxiliary(lockfile, "no sibling Cargo.toml to identify the local crate")
-                continue
-            cargo_data = _read_toml(manifest)
-            package = cargo_data.get("package")
-            if not isinstance(package, dict):
-                _warn_auxiliary(manifest, "no standalone [package]; workspace versions are not auto-synced")
-                continue
-            cargo_version = _read_nested_string(cargo_data, ("package", "version"))
-            if not cargo_version or not cargo_version.strip():
-                _warn_auxiliary(manifest, "missing literal [package].version; workspace inheritance is not auto-synced")
-                continue
-            targets.append(CargoManifestVersionTarget(path=manifest, label="Cargo package version"))
-            cargo_name = _read_nested_string(cargo_data, ("package", "name"))
-            if lockfile.exists():
-                if cargo_name and cargo_name.strip():
-                    targets.append(CargoLockVersionTarget(
-                        path=lockfile, label="Cargo local package lock version",
-                        package_name=cargo_name, package_version=cargo_version,
+            continue
+        for directory in found:
+            if ecosystem == "Python":
+                data = pyprojects[directory]
+                pyproject_path = directory / "pyproject.toml"
+                if _read_nested_string(data, ("project", "version")) is not None:
+                    targets.append(SectionVersionTarget(
+                        path=pyproject_path, label="PEP 621 project version",
+                        section_header="[project]", strict_consistency=False,
                     ))
-                else:
-                    _warn_auxiliary(lockfile, "missing [package].name in sibling Cargo.toml")
-        except Exception as exc:
-            _warn_auxiliary(manifest, exc)
+                name = _read_nested_string(data, ("project", "name"))
+                lockfile = directory / "uv.lock"
+                if name and _is_auxiliary_file(lockfile):
+                    targets.append(UvLockVersionTarget(
+                        path=lockfile, label="uv lock package version",
+                        package_name=canonicalize_package_name(name),
+                        strict_consistency=False,
+                    ))
+            elif ecosystem == "npm":
+                for filename in filenames["npm"]:
+                    path = directory / filename
+                    if _is_auxiliary_file(path):
+                        targets.append(JsonVersionTarget(
+                            path=path, label="npm app version",
+                            lockfile=filename != "package.json",
+                        ))
+            else:
+                _add_cargo_targets(directory, targets)
 
     raw_version_files = cz_settings.get("version_files")
     if isinstance(raw_version_files, list):
@@ -215,6 +192,118 @@ def load_bump_config(root: Path) -> BumpConfig:
         major_version_zero=major_version_zero,
         version_targets=tuple(targets),
     )
+
+
+_AUXILIARY_EXCLUDED_DIRECTORIES = frozenset({
+    "node_modules", "target", "build", "dist", "vendor", "venv", "__pycache__",
+})
+
+
+def _auxiliary_directories(root: Path, settings: dict) -> list[Path]:
+    """Select release-sharing roots without traversing grandchildren.
+
+    ``[tool.commitizen].auxiliary_directories = [".", "app", "src-tauri"]``
+    explicitly opts those directories into the same release across all supported
+    ecosystems. An empty list disables automatic auxiliaries. When omitted,
+    root and immediate non-hidden, non-tool children are candidates; ambiguity
+    is handled independently per ecosystem by the caller. Validation is only
+    reached when auxiliary synchronization is enabled.
+    """
+    if "auxiliary_directories" in settings:
+        raw = settings["auxiliary_directories"]
+        if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+            raise ConfigError(
+                "[tool.commitizen].auxiliary_directories must be a list of strings."
+            )
+        directories: list[Path] = []
+        for item in raw:
+            relative = Path(item)
+            if (
+                not item
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or len(relative.parts) > 1
+                or (relative != Path(".") and (
+                    relative.name.startswith(".")
+                    or relative.name in _AUXILIARY_EXCLUDED_DIRECTORIES
+                ))
+            ):
+                raise ConfigError(
+                    f"auxiliary_directories entry {item!r} must be '.' or an immediate "
+                    "non-hidden, non-tool child directory of the repository root."
+                )
+            path = root / relative
+            try:
+                if path.is_symlink() or not path.resolve().is_relative_to(root):
+                    raise ConfigError(
+                        f"auxiliary_directories entry {item!r} must not be a symlink "
+                        "or escape the repository root."
+                    )
+                if not path.is_dir():
+                    raise ConfigError(
+                        f"auxiliary_directories entry {item!r} is not an existing directory."
+                    )
+            except OSError as exc:
+                raise ConfigError(f"Cannot inspect auxiliary_directories entry {item!r}: {exc}") from exc
+            if path not in directories:
+                directories.append(path)
+        return directories
+
+    directories = [root]
+    try:
+        children = sorted(root.iterdir())
+    except OSError as exc:
+        _warn_auxiliary(root, exc)
+        return directories
+    for child in children:
+        if child.name.startswith(".") or child.name in _AUXILIARY_EXCLUDED_DIRECTORIES:
+            continue
+        try:
+            if not child.is_symlink() and child.is_dir():
+                directories.append(child)
+        except OSError as exc:
+            _warn_auxiliary(child, exc)
+    return directories
+
+
+def _is_auxiliary_file(path: Path) -> bool:
+    """Optional ecosystem inputs must be regular files, never symlinks."""
+    try:
+        return not path.is_symlink() and path.is_file()
+    except OSError as exc:
+        _warn_auxiliary(path, exc)
+        return False
+
+
+def _add_cargo_targets(directory: Path, targets: list[VersionTarget]) -> None:
+    manifest = directory / "Cargo.toml"
+    lockfile = directory / "Cargo.lock"
+    try:
+        if not _is_auxiliary_file(manifest):
+            if _is_auxiliary_file(lockfile):
+                _warn_auxiliary(lockfile, "no sibling Cargo.toml to identify the local crate")
+            return
+        cargo_data = _read_toml(manifest)
+        package = cargo_data.get("package")
+        if not isinstance(package, dict):
+            _warn_auxiliary(manifest, "no standalone [package]; workspace versions are not auto-synced")
+            return
+        cargo_version = _read_nested_string(cargo_data, ("package", "version"))
+        if not cargo_version or not cargo_version.strip():
+            _warn_auxiliary(manifest, "missing literal [package].version; workspace inheritance is not auto-synced")
+            return
+        targets.append(CargoManifestVersionTarget(path=manifest, label="Cargo package version"))
+        cargo_name = _read_nested_string(cargo_data, ("package", "name"))
+        if _is_auxiliary_file(lockfile):
+            if cargo_name and cargo_name.strip():
+                targets.append(CargoLockVersionTarget(
+                    path=lockfile, label="Cargo local package lock version",
+                    package_name=cargo_name, package_version=cargo_version,
+                ))
+            else:
+                _warn_auxiliary(lockfile, "missing [package].name in sibling Cargo.toml")
+    except Exception as exc:
+        _warn_auxiliary(manifest, exc)
 
 
 # Commitizen names SemVer v1 as semver and SemVer v2 as semver2.

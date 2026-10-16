@@ -36,6 +36,9 @@ class CargoSyncTests(unittest.TestCase):
         return plan_version_file_updates(load_bump_config(self.root), Version.parse(version), check_consistency=True)
 
     def test_root_and_tauri_versions_only(self):
+        (self.root / "src-tauri").mkdir()
+        cz = self.root / ".cz.toml"
+        cz.write_text(cz.read_text() + 'auxiliary_directories = [".", "src-tauri"]\n')
         for directory in (self.root, self.root / "src-tauri"):
             manifest = self.manifest(directory)
             lock = self.lock(directory)

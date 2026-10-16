@@ -49,7 +49,7 @@ Start with the **[documentation index](docs/README.md)**.
 | CI publication and recovery | [Publication](docs/publication.md) |
 | Optional data and experiment workflow | [DVC](docs/dvc.md) |
 
-`.cz.toml` is the **sole version and Git-tag authority**. During bump, other version files are best-effort sync targets: failures warn and skip rather than block the core bump. Root npm manifests/lockfiles and standalone Cargo app versions (including the conventional `src-tauri/` pair) are supported without bumping dependencies. See [versioning](docs/versioning.md) for exact targets and limitations.
+`.cz.toml` is the **sole version and Git-tag authority**. During bump, other version files are best-effort sync targets: failures warn and skip rather than block the core bump. Python/uv, npm, and standalone Cargo app versions are discovered at the root and one directory level down, without recursive scanning or bumping dependencies. Multiple locations for the same ecosystem require an explicit `auxiliary_directories` selection. See [versioning](docs/versioning.md) for exact targets and limitations.
 
 Workflow adapters are examples to copy and configure in the target repository; `init` does not install CI automation. Activate one adapter for your selected mode.
 

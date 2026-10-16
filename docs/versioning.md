@@ -71,7 +71,27 @@ The Azure templates explicitly map this variable into the strategy and bump step
 
 ## Automatic Targets
 
-Automatic targets are at the repository root, plus the conventional `src-tauri/` Cargo pair. No workspace/package-tree scan is performed.
+Automatic discovery checks the repository root and its immediate child directories only, consistently for Python/uv, npm, and Cargo. It never descends into grandchildren or recursively walks workspace members. Hidden directories and `node_modules`, `target`, `build`, `dist`, `vendor`, `venv`, and `__pycache__` are excluded. Symlink directories and symlink target files are skipped.
+
+Selection is independent per ecosystem. If only one candidate directory contains that ecosystem's supported files, it is selected automatically. If multiple candidate directories contain them, that ecosystem warns and skips synchronization rather than assuming the projects share a release version. Other unambiguous ecosystems can still sync. Each Python or Cargo lockfile is paired only with the manifest in the same directory; a manifest can be synced without a lockfile.
+
+### Explicit release-sharing directories
+
+When multiple projects intentionally share `.cz.toml`'s release version, select their directories explicitly:
+
+```toml
+[tool.commitizen]
+version = "1.2.3"
+auxiliary_directories = [".", "backend", "frontend", "src-tauri"]
+```
+
+This is an allowlist across all supported ecosystems: only the listed directories participate in automatic synchronization, and every selected project's own version is synced to the computed release version. `"."` means the repository root. Each other entry must name an existing, non-hidden immediate child directory that is not a symlink or an excluded tool directory. Absolute paths, parent traversal, deeper paths such as `services/api`, and invalid selector types raise `ConfigError` before updates. Explicit selection does not enable recursion or Cargo workspace inheritance.
+
+Use `auxiliary_directories = []` to disable automatic targets while keeping explicit `version_files` targets active. By contrast, `sync_auxiliary = false` disables both automatic and custom auxiliary targets and bypasses directory-selector validation. Omit `auxiliary_directories` to use the bounded discovery and ambiguity rules above.
+
+### Supported files in each selected directory
+
+The following filenames are checked at each selected location; no package-manager command or dependency-tree traversal is added.
 
 | File | Fields attempted |
 | --- | --- |
@@ -80,8 +100,8 @@ Automatic targets are at the repository root, plus the conventional `src-tauri/`
 | `package.json` | Top-level `version` |
 | `package-lock.json` | Top-level `version` and `packages[""].version`, independently where valid |
 | `npm-shrinkwrap.json` | Top-level `version` and `packages[""].version`, independently where valid |
-| `Cargo.toml`, `src-tauri/Cargo.toml` | Literal `[package].version` |
-| `Cargo.lock`, `src-tauri/Cargo.lock` | Unique local crate entry selected by the sibling manifest's exact package name and old version; no `source` field |
+| `Cargo.toml` | Literal `[package].version` |
+| `Cargo.lock` | Unique local crate entry selected by the sibling manifest's exact package name and old version; no `source` field |
 
 Python lock prereleases use the package form: for example `.cz.toml` version `0.2.0-alpha.16` becomes `0.2.0a16` in `uv.lock`. Dependency versions are not bumped; no `uv lock`, `npm install`, `cargo update`, or other package-manager command is run.
 
@@ -95,15 +115,15 @@ Cargo sync is another **best-effort try during the normal bump**, not a separate
 
 Registry/git package versions, dependency requirements, lockfile format versions, and unrelated workspace crates are untouched. A stale, ambiguous, malformed, or unsupported lockfile warns and skips independently of its manifest. Version-qualified lockfile dependency references are not rewritten; that lockfile is skipped with a warning so it can be regenerated with Cargo. A skipped lockfile may need repair before `cargo build --locked` or packaging.
 
-Virtual workspaces, `[workspace.package].version`, and `version.workspace = true` are **not** automatically rewritten: changing a shared version can affect many crates. They warn and skip rather than guessing. Other crate locations require explicit extra targets; there is no automatic workspace recursion.
+Virtual workspaces, `[workspace.package].version`, and `version.workspace = true` are **not** automatically rewritten: changing a shared version can affect many crates. They warn and skip rather than guessing. Immediate child crate directories use the same bounded discovery rules as root crates. Deeper crate locations require explicit extra targets; there is no automatic workspace recursion.
 
 ### Tauri
 
-If Tauri's version already references `package.json`, **leave that reference intact**. The bump attempts to update `package.json`, not replace the reference with a literal version. The conventional `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` are also attempted using the Cargo rules above. Tauri configuration itself is not rewritten. Custom Rust backend paths require explicit extra targets.
+If Tauri's version already references `package.json`, **leave that reference intact**. The bump attempts to update `package.json`, not replace the reference with a literal version. The conventional `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` are within the one-level discovery boundary and use the Cargo rules above. If another Cargo location also exists, select the release-sharing directories with `auxiliary_directories`. Tauri configuration itself is not rewritten. Other immediate child backend directories work the same way; deeper paths require explicit extra targets.
 
 ### Monorepos and Other Lockfiles
 
-There is no automatic recursion into workspaces: independent packages must not all receive the root app's version accidentally. Select additional files explicitly when they genuinely share a release version. Yarn and pnpm lockfiles are not automatically rewritten or regenerated.
+There is no automatic recursion into workspaces: independent packages must not all receive the root app's version accidentally. Multiple immediate project locations require an explicit `auxiliary_directories` selection per the rules above. Use `version_files` for deeper files only when they genuinely share a release version. Yarn and pnpm lockfiles are not automatically rewritten or regenerated.
 
 ## Explicit Extra Targets
 

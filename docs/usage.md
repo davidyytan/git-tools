@@ -205,7 +205,9 @@ Use **Up/Down** and **Enter** for selections, and type into text prompts/searcha
 | **issue** / **pr** | Check out the source and refresh target refs first. Select the PR mode when applicable; confirm base/version and inspect the branch summary. Choose diffs/commits/both, input budget, and additional context when prompted. Inspect/copy the result for your hosting UI. |
 | **bump** | Inspect repository context; select increment, release channel, prerelease mode when shown, initial-history permission, and tag signing. Choose preview first, then repeat with write options on a clean index. |
 
-For ordinary content generation, keep **Generate … using external providers?** enabled to use the configured LLM, then follow model/parameter prompts. Decline to prepare a prompt for another tool. Clipboard prompts depend on the path taken and clipboard availability.
+For ordinary content generation, answer **Yes** to **Generate … using external providers?** to use the provider, main model, and options already configured in `git-tools settings`. Model, temperature, and maximum output tokens are not asked again. Explicit `--model`, `--temp`, and `--max-tokens` override saved values for that invocation only. Input diff-budget, content/context, scope/footer, and commit-action questions remain separate workflow choices.
+
+Answer **No** to prepare a prompt for another tool and choose whether to copy it. Canceling the confirmation stops the operation without proceeding to provider setup, generation, clipboard copy, or a commit action. Missing credentials can still offer inline key setup; routine configured generation does not ask for configuration again. Clipboard prompts depend on the path taken and clipboard availability.
 
 For PRs in saved `auto` mode, inspect origin detection before answering the description-limit question; choose Yes for Azure Server URLs not recognized automatically. The **issue** and **pr** menu entries already select the output type, so there is normally no separate content-type question.
 

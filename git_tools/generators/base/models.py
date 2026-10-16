@@ -11,7 +11,7 @@ from .terminal import TYPER_STYLE, error, success, warning
 
 
 class ModelSelectionMixin:
-    """Resolve provider config and model parameters from CLI, prompts, or defaults."""
+    """Resolve provider config and generation parameters from CLI or saved defaults."""
 
     def select_provider(self) -> str:
         """Resolve the configured provider."""
@@ -69,14 +69,13 @@ class ModelSelectionMixin:
     def select_model_params(
         self, provider: str
     ) -> Tuple[str, Optional[float], Optional[int]]:
-        """Handle model selection and parameter input flow.
+        """Resolve CLI overrides, then saved settings/provider defaults.
 
-        Uses CLI parameters if provided. If not:
-        - Interactive mode: prompts for input
-        - Non-interactive mode: uses provider defaults
+        Interactive generation reuses the configuration from ``git-tools settings``;
+        only workflow decisions and external-generation consent need prompts.
         """
         provider = normalize_provider_name(provider)
-        provider_config = self.get_provider_config(provider)
+        self.get_provider_config(provider)
         # Live providers resolve models against the endpoint's real catalogue
         # (one fetch per process; static fallback when the endpoint is down).
         live = refresh_live_models(provider)
@@ -87,29 +86,23 @@ class ModelSelectionMixin:
             _print_model_catalog_status(provider, live)
         models = PROVIDERS[provider]["models"]
 
-        # Model selection: CLI param > interactive prompt > default
+        # Configuration is chosen once in settings, not on every invocation.
         if self._cli_model is not None:
             selected_model = self._resolve_cli_model(models)
-        elif self._interactive:
-            selected_model = self._interactive_model_selection(models, provider)
         else:
             selected_model = self._get_default_model(models, provider)
 
-        # Temperature: CLI param > interactive prompt > settings default
-        if self._cli_temperature is not None:
-            temperature = self._cli_temperature
-        elif self._interactive:
-            temperature = self._get_temperature_input(settings.default_temperature)
-        else:
-            temperature = settings.default_temperature
-
-        # Max tokens: CLI param > interactive prompt > settings default
-        if self._cli_max_tokens is not None:
-            max_tokens = self._cli_max_tokens
-        elif self._interactive:
-            max_tokens = self._get_max_tokens_input(settings.default_max_tokens)
-        else:
-            max_tokens = settings.default_max_tokens
+        # Use explicit None checks so --temp 0.0 remains a valid override.
+        temperature = (
+            self._cli_temperature
+            if self._cli_temperature is not None
+            else settings.default_temperature
+        )
+        max_tokens = (
+            self._cli_max_tokens
+            if self._cli_max_tokens is not None
+            else settings.default_max_tokens
+        )
 
         return selected_model, temperature, max_tokens
 

@@ -36,10 +36,11 @@ class BaseGenerator(
         self._provider_configs = {}  # Cache for loaded provider configs
         self.chatclient = None
 
-        # Interactive mode: True = prompt for missing params, False = use defaults
+        # Interactive mode controls workflow choices and external-generation consent.
         self._interactive = interactive
 
-        # CLI parameters (None means use default or prompt based on interactive mode)
+        # Model/sampling overrides: None uses saved settings in either mode.
+        # The input diff budget can still be prompted for in interactive mode.
         self._cli_model = model
         self._cli_temperature = temperature
         self._cli_max_tokens = max_tokens

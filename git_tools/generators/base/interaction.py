@@ -11,7 +11,7 @@ class InteractionMixin:
     """Prompt helpers styled to match Typer, plus clipboard output."""
 
     def prompt_text(self, message: str, default: str = "") -> str:
-        """Prompt for text input using questionary for consistent styling."""
+        """Prompt for text; cancellation aborts rather than accepting the default."""
         result = questionary.text(
             f"{message}:",
             default=default,
@@ -19,10 +19,12 @@ class InteractionMixin:
             qmark="❯",
             instruction="",
         ).ask()
-        return result if result is not None else default
+        if result is None:
+            raise KeyboardInterrupt
+        return result
 
     def prompt_confirm(self, message: str, default: bool = True) -> bool:
-        """Prompt for yes/no confirmation using select menu."""
+        """Prompt for yes/no confirmation; cancellation never implies consent."""
         # Order choices so desired default is first (cursor starts there naturally)
         if default:
             choices = ["Yes", "No"]
@@ -36,6 +38,7 @@ class InteractionMixin:
 
         If default is specified, reorders choices so default appears first
         (cursor naturally starts at first item, avoiding questionary's default styling issue).
+        Cancellation aborts the operation; it is not a selection of the first choice.
         """
         # Reorder choices so default is first if specified
         if default and default in choices:
@@ -49,7 +52,9 @@ class InteractionMixin:
             pointer="›",
             instruction="",
         ).ask()
-        return result if result is not None else choices[0]
+        if result is None:
+            raise KeyboardInterrupt
+        return result
 
     def get_user_input(self, prompt: str, default: Optional[str] = None) -> str:
         """Get input from user with default value support (legacy wrapper)."""

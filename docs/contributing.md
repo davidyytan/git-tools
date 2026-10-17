@@ -23,9 +23,9 @@ uv sync
 uv run git-tools settings
 ```
 
-Use `uv run git-tools` to exercise the working checkout. To install the CLI as an editable tool, use `uv tool install -e .`.
+Use Python **3.12** (the package requires `>=3.12,<3.13`) and Git. `uv run git-tools` exercises the working checkout. The settings command writes user-wide settings under `~/.git-tools/`; generation commands may send repository content to the configured provider. For an editable tool installation with shell completion, use [`./install.sh`](../README.md#install); `uv tool install -e .` alone does not run the completion step.
 
-For provider configuration, environment files, and interactive settings, see [Configuration](configuration.md). Provider modules live in `git_tools/providers/` (one per provider, copied from agent-cli) and are wired into the registry in `git_tools/settings/mappings.py`; there is no `mappings.json` to copy.
+For provider configuration, environment files, and interactive settings, see [Configuration](configuration.md). Provider modules live in `git_tools/providers/` (upstream-derived modules plus git-tools' `copilot.py`) and are wired into the registry in `git_tools/settings/mappings.py`; there is no `mappings.json` to copy.
 
 ## Branch and PR Flow
 
@@ -53,10 +53,15 @@ Common types are `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, an
 
 For normal feature and bugfix work, prefer using the tool:
 
+Stage only the paths intended for this commit (replace `<reviewed-paths>`), then review the index:
+
 ```bash
-git add -A
+git add -- <reviewed-paths>
+git diff --cached
 uv run git-tools commit
 ```
+
+Direct `commit` sends the staged diff to the configured provider and creates a commit by default. Use `uv run git-tools commit --no-commit --no-copy` for generation without committing or clipboard copying; this still uses the provider. See the [configuration limitations](configuration.md#current-limitations) before provider use.
 
 The commit-side workflow helper is the empty release opener, `git-tools commit --workflow-kind open-release`. See [Usage](usage.md) for details.
 
@@ -68,14 +73,18 @@ For platform setup, branch policies, and complete workflow procedures, use the [
 
 ## Validation
 
-Before opening a PR, run:
+For automated checks, use disposable HOME/config/temp locations and mock provider/network, clipboard, signing, and hosted-Git boundaries. Importing the settings module can migrate legacy settings, so isolate those paths **before imports**.
+
+Before opening a PR, run in that isolated validation environment:
 
 ```bash
 uv run python -m unittest discover -s tests
 git diff --check
 ```
 
-If you change provider configuration, prompt files, or workflow examples, also check the related docs and tests.
+Do not treat a green local suite as verification of live provider access, terminal behavior, signing, or hosted CI.
+
+If you change provider configuration, prompt files, or workflow examples, also check the related docs and tests. Keep intended policy distinct from known implementation gaps in [configuration](configuration.md#current-limitations) and [versioning](versioning.md#current-limitations); passing tests do not resolve those gaps.
 
 ## Keeping Things In Sync
 
@@ -83,7 +92,7 @@ When you change one of these areas, update the others in the same PR when needed
 
 - generator packages in `git_tools/generators/<name>/`; keep each package's `__init__.py` re-exports stable, because `cli.py`, the CI adapters, and tests import `git_tools.generators.<name>` by that path (see [code layout](architecture.md))
 - provider settings in `git_tools/settings/`
-- provider modules in `git_tools/providers/` (keep them identical to agent-cli's; put git-tools-specific wiring in `git_tools/settings/mappings.py`)
+- provider modules in `git_tools/providers/` (keep upstream-derived modules aligned with agent-cli; `copilot.py` is git-tools-specific, and git-tools registry wiring belongs in `git_tools/settings/mappings.py`)
 - user-facing env examples in `git-tools.env.example`
 - prompt files in `git_tools/prompts/`
 - workflow examples in `.github/workflows/` and `.azure/workflows/`

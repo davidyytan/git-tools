@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) · [Contributing](contributing.md) · [Style conventions](style.md)
 
-This guide maps the source tree so changes land in the module that owns them. It describes structure, not behavior; the user-facing guides stay authoritative for what each command does.
+This guide maps the source tree so changes land in the module that owns them. For command behavior and intended policy, use the user-facing guides, including their [configuration limitations](configuration.md#current-limitations) and [versioning limitations](versioning.md#current-limitations). The layout below does not imply that the implementation satisfies every safety contract.
 
 ## Top Level
 
@@ -80,7 +80,7 @@ The engine and strategy modules must stay stdlib-only: CI adapters import them f
 | `config.py` | `BumpConfig`, `.cz.toml` reading, automatic target discovery, tag formatting |
 | `git.py` | Git command wrappers and tag-argument construction |
 | `repo.py` | Repository-state queries that combine git history with `.cz.toml` |
-| `engine.py` | `BumpOptions`, `plan_version_file_updates`, and `run_bump` |
+| `engine.py` | `BumpOptions`, immutable `BumpPlan`, file planning, snapshot validation and apply (with the documented FIFO/file-mode gaps), and `run_bump` |
 | `decision.py` | `StrategyDecision` and its GitHub output encoding |
 | `rules.py` | Per-branch decisions for `develop`, `release/*`, `hotfix/*`, and `master` |
 | `strategy.py` | `decide_version_strategy`: branch validation and dispatch to the rules |
@@ -94,7 +94,7 @@ Imports flow one way: `errors` → `version` → `conventions` → `targets` →
 
 | Module | Owns |
 | --- | --- |
-| `config.py` | `CzInitOptions`, config discovery, TOML reading, and Commitizen section rendering |
+| `config.py` | `CzInitOptions`, config discovery, TOML validation, and comment-preserving field updates |
 | `detect.py` | Default version and tag format from existing config and tags |
 | `generator.py` | Interactive `CommitizenInitGenerator` |
 
@@ -116,7 +116,7 @@ Imports flow one way: `errors` → `version` → `conventions` → `targets` →
 
 ## Testing Conventions
 
-Run `uv run python -m unittest discover -s tests`. Tests import public names from the package path and patch internals at the submodule that defines them, for example `git_tools.generators.bumpgen.engine.git_tag` rather than `git_tools.generators.bumpgen.git_tag`: a function looks names up in its own module, so patching the package attribute would not reach it.
+Run `uv run python -m unittest discover -s tests` in an isolated validation environment; see [contributing](contributing.md#validation) for external-effect boundaries. Tests import public names from the package path and patch internals at the submodule that defines them, for example `git_tools.generators.bumpgen.engine.git_tag` rather than `git_tools.generators.bumpgen.git_tag`: a function looks names up in its own module, so patching the package attribute would not reach it.
 
 Keep a submodule's name distinct from any attribute the package re-exports. `mock.patch` resolves a dotted path module-first, which is why the console lives in `base/terminal.py` and `git_tools.generators.base.console` stays the console object.
 
@@ -124,9 +124,10 @@ Auxiliary version-sync warnings log under the `git_tools.generators.bumpgen` log
 
 | Area | Tests |
 | --- | --- |
-| Bump engine, config, targets | `tests/test_bump.py`, `tests/test_bump_generator.py`, `tests/test_cargo_sync.py` |
+| Bump engine, config, targets | `tests/test_bump.py`, `tests/test_bump_generator.py`, `tests/test_bump_safety.py`, `tests/test_cargo_sync.py` |
 | CI strategy and templates | `tests/test_git_flow_strategy.py`, `tests/test_pipeline_safety.py`, `tests/test_publish.py` |
-| Commit generation | `tests/test_commitgen.py` |
-| Issue and PR generation | `tests/test_issuepr_prompt.py`, `tests/test_azure_pr_settings.py` |
+| Commit generation and interaction | `tests/test_commitgen.py`, `tests/test_generation_flow.py` |
+| Console spacing and rendered generator flows | `tests/test_cli_spacing.py`, `tests/test_generation_spacing.py` |
+| Issue and PR generation | `tests/test_issuepr_prompt.py`, `tests/test_pr_comparison.py`, `tests/test_pr_content_safety.py`, `tests/test_azure_pr_settings.py` |
 | Init | `tests/test_initgen.py` |
-| Providers, models, settings UI | `tests/test_provider_config.py`, `tests/test_provider_parity.py`, `tests/test_live_models.py`, `tests/test_openrouter_provider_config.py`, `tests/test_cli.py` |
+| Providers, models, settings UI | `tests/test_effective_settings.py`, `tests/test_provider_config.py`, `tests/test_provider_parity.py`, `tests/test_live_models.py`, `tests/test_openrouter_provider_config.py`, `tests/test_cli.py` |

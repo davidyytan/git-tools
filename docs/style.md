@@ -7,7 +7,7 @@ This guide covers contributor-facing console conventions. For CLI commands and i
 Use the shared console in [git_tools/generators/base/terminal.py](../git_tools/generators/base/terminal.py). It detects terminal width and applies `settings.console_width_offset` (default: `-2`) to avoid border wrapping on some terminals. [git_tools/cli.py](../git_tools/cli.py) applies the same offset to Typer's help output.
 
 - `force_terminal=True` forces terminal-style rendering, including in non-interactive output; it does not detect whether input is interactive.
-- `soft_wrap=True` prevents trailing spaces from creating phantom lines.
+- The shared console uses `soft_wrap=True` for text. Panel renderers explicitly pass `soft_wrap=False` so borders and long content wrap within the available width.
 - Configure the offset with `GIT_TOOLS_CONSOLE_WIDTH_OFFSET`.
 
 Do not create independent consoles with different width or color behavior for new generators.
@@ -20,7 +20,7 @@ Reuse the constants and helpers from `git_tools/generators/base/terminal.py` (re
 STYLE_BORDER = "dim"
 ALIGN_PANEL = "left"
 STYLE_PRIMARY = "bold cyan"
-STYLE_SUCCESS = "bold cyan"
+STYLE_SUCCESS = "bold green"
 STYLE_WARNING = "yellow"
 STYLE_ERROR = "red"
 STYLE_DIM = "dim"
@@ -32,33 +32,31 @@ Questionary prompts use the shared `TYPER_STYLE`. Keep new prompts consistent wi
 
 ## Spacing Rules
 
-**Core principle:** Elements print only themselves. The calling workflow owns spacing between different element types.
+**Core principle:** Every rendered panel owns exactly one trailing blank separator line. The calling workflow owns transitions after question answers and plain text; do not add a second separator after a panel.
 
-- Panels and text helpers should not add leading or trailing blank lines.
-- Consecutive panels stack directly, without blank lines.
-- Consecutive questions do not need blank lines.
-- Add a blank line when transitioning between questions, panels, and text.
-- Add a blank line before a spinner or progress display. A transient spinner disappears, so do not add an extra blank line before the panel that replaces it.
-- Add a blank line before a final success message after progress or Git command output.
-- In non-interactive CLI commands, add a leading blank line before the first output to separate it from the shell command. Interactive prompts already provide that separation.
+- `print_panel` and the quota, reasoning, usage, generated-output, and local-prompt panel renderers leave one blank line after each panel, including the final panel.
+- Consecutive panels have one blank line between them, not zero or two.
+- Status-text helpers do not add their own blank lines. Consecutive questions need no extra separation.
+- Add one blank line after a question answer or plain-text section before the next panel, status section, or action. A preceding panel already provides that gap.
+- Separate Git command output from the final success message with one blank line. Do not add another leading blank line merely because the command was invoked directly.
+- Optional diagnostic panels that have no content emit nothing, including no separator.
 
 ```python
 user_input = prompt_text("Enter value")
 console.print()                  # Question → panel
-print_panel("First panel")
-print_panel("Second panel")      # Panel → panel: no blank line
-console.print()                  # Panel → question
-next_input = prompt_text("Next value")
+print_panel("First panel")       # Owns its trailing separator
+print_panel("Second panel")      # No caller-added blank line
+next_input = prompt_text("Next value")  # Previous panel already separates it
 ```
 
-Clipboard helpers may already handle their own success-message spacing. Check the helper before adding another blank line at its call site.
+Clipboard helpers also manage prompt/result spacing. After a panel, use `handoff_to_clipboard(..., leading_space=False)` or the corresponding automatic-copy argument to avoid doubling the panel's separator. Check each helper before adding whitespace at its call site.
 
 ## Interactive vs Non-Interactive
 
-Running `git-tools` without a command opens the interactive menu when a terminal is available. Explicit commands use CLI options and defaults unless interactive behavior is requested. Pass `interactive=True` when invoking generator commands from the main menu.
+Running `git-tools` without a command opens the interactive menu only when both stdin and stdout are terminals; otherwise it prints help. Direct generation commands use CLI options and saved defaults unless `--interactive` is requested. Bare `settings` requires an interactive terminal; direct `init` prompts only with `--interactive`, and `--defaults` suppresses those prompts. Pass `interactive=True` when invoking generator commands from the main menu.
 
-Use the existing navigation helpers for nested menus: **Back** or **Esc** returns one level, and **Ctrl+C** exits. Do not infer input interactivity from Rich's `force_terminal` setting.
+Use `_ask_with_back` and the existing **Back** choice for nested settings menus: **Back** or **Esc** returns one level, and **Ctrl+C** exits the command. Generator prompt cancellation aborts the operation rather than accepting a default; not every generator prompt has settings-style Back navigation. Do not infer input interactivity from Rich's `force_terminal` setting.
 
 ## Reviewing Output Changes
 
-Check both direct CLI invocation and the interactive menu when changing console output. Verify panel alignment, long-line wrapping, adjacent panels, prompt transitions, clipboard success messages, and error paths. Keep examples focused on layout rather than copying full transcripts with provider names, model defaults, or prompt sequences that can drift from the implementation.
+Use `tests/test_cli_spacing.py` and `tests/test_generation_spacing.py` for mocked narrow/wide rendering checks. Also check both direct CLI invocation and the interactive menu in a controlled test environment when changing console output. Verify panel alignment, long-line wrapping, adjacent panels, prompt transitions, clipboard success messages, and error paths. Keep examples focused on layout rather than copying full transcripts with provider names, model defaults, or prompt sequences that can drift from the implementation.

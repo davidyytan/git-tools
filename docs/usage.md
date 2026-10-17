@@ -10,7 +10,7 @@ git-tools --help            # Command overview
 git-tools commit --help     # Options for one command
 ```
 
-Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct subcommands do not prompt by default. To request prompts for a particular operation, use the supported but hidden `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`.
+Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. The `settings` command has its own terminal-dependent setup/edit behavior described below.
 
 | Command | What it does | Important side effects |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ Bare `git-tools` requires both stdin and stdout to be terminals to open the menu
 | `init` | Writes Commitizen-compatible `.cz.toml` | Does not initialize Git, create branches, commit, tag, or push |
 | `settings` | Edits saved user settings | Writes `~/.git-tools/settings.env`; model discovery can contact the provider |
 
-Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first. Initialization and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
+Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first, and check the [current destination/profile limitations](configuration.md#current-limitations) before sending it. Initialization and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
 
 ## Shared generation options
 
@@ -49,14 +49,14 @@ git-tools commit --commit
 
 | Option | Behavior when omitted in direct mode |
 | --- | --- |
-| `--scope` / `--no-scope` | No Conventional Commit scope |
-| `--footer` / `--no-footer` | No footer |
+| `--scope` / `--no-scope` | Saved scope preference; off by default |
+| `--footer` / `--no-footer` | Saved footer preference; off by default |
 | `--commit` / `--no-commit` | **Creates a real commit** with the generated message |
 | `--copy` / `--no-copy` | Automatically attempts clipboard copy when not committing; this is not a separate copy-after-commit action |
 | `--force-sensitive` | Off; refuses generation when staged paths match sensitive-file rules |
 | `--workflow-kind open-release` | Off; uses the fixed subject `chore: open release` instead of an LLM |
 
-**Current fallback limitation:** if the provider key is unavailable, commit generation automatically attempts to copy a locally prepared prompt, even with `--no-copy`. The flag is honored on the normal generated-message path, but not this missing-key fallback.
+`--no-copy` is honored on generated, local-prompt, and missing-key paths. Prepared local prompts are always displayed. Missing credentials do not authorize automatic copying: interactive mode asks, while direct mode copies a fallback prompt only with explicit `--copy`. Normal generated output still auto-copies in direct mode when not committing.
 
 Ordinary generation needs a staged diff and does not stage files for you. Sensitive-file checks match filenames/path patterns, not secret contents: they are not a substitute for reviewing the diff or using a secret scanner. In interactive mode you can confirm matched files; direct mode requires unstaging them or explicitly using `--force-sensitive`. This override also allows the selected content to enter the generation workflow.
 
@@ -82,13 +82,14 @@ git-tools pr --base main --source d --no-pr-limit
 
 | Option | Meaning and default |
 | --- | --- |
-| `--base`, `-b TEXT` | Base branch or commit hash. Ordinary mode auto-detects from checkout reflog, then `origin/HEAD`, then common branch names; final fallback is `main` |
-| `--source`, `-s TEXT` | `d`: diffs; `c`: commit messages; `b`: both (default). An unrecognized value falls back to `b` |
-| `--context`, `-c TEXT` | Additional intent/context; none by default |
+| `--base`, `-b TEXT` | Base branch/ref or commit hash. Ordinary mode infers from checkout reflog, then `origin/HEAD`, then common branch names; fails clearly if no usable base is found |
+| `--source`, `-s TEXT` | `d`: diffs; `c`: commit messages; `b`: both. Uses the saved source preference, initially `b`; an unrecognized explicit value falls back to `b` |
+| `--context`, `-c TEXT` | Additional intent/context; one optional field in interactive mode |
+| `--copy` / `--no-copy` | Override clipboard handling for this run; otherwise interactive mode asks and direct generated output auto-copies |
 
-The comparison uses committed branch history, not a substitute for `commit`'s staged-diff workflow. Branch detection/validation consults local and `origin` refs; it does not fetch. Invalid or unavailable base input can warn and fall back to a detected base, so inspect the displayed branch summary. Keep local target branches and remote-tracking refs current: commit-range discovery and diffs use the supplied base ref; diffs compare its merge-base with `HEAD` (`<base>...HEAD`).
+The comparison uses committed branch history, not a substitute for `commit`'s staged-diff workflow. Resolution is read-only: it does not fetch or switch branches. Explicit bare names prefer an existing local branch; a remote-tracking ref is used when the local branch is absent. Use `--base origin/develop` to request that ref explicitly. Inferred defaults prefer remote-tracking refs and skip the current branch; ordinary mode also avoids equal-HEAD comparisons, while fixed modes can use a distinct target at the same tip for context-only output. Invalid explicit refs fail rather than silently changing the base. The exact resolved ref is retained for version lookup and comparison; commit messages come from the same merge-base-to-HEAD range as the summary, and diffs retain merge-base semantics (`<base>...HEAD`). Keep target refs current and inspect the displayed summary.
 
-Ordinary generation needs commits to describe. Fixed workflow modes can use validated repository/version context when no unique commits are present. Both commands display output and automatically attempt clipboard copy in direct mode; interactive mode asks before copying. There are no `--copy` or `--no-copy` flags on `issue`/`pr`.
+Ordinary generation needs commits to describe. Fixed workflow modes can use validated repository/version context when no unique commits are present. Output parsing removes only a verified matching outer code fence; unfenced or partial content is preserved. PR clipboard text matches the parsed preview. Issue/both output retains its existing raw-response clipboard format for compatibility. Prepared local prompts are always displayed; missing-key fallback follows the same explicit-copy rule as `commit`.
 
 ### PR-only options
 
@@ -102,7 +103,7 @@ Ordinary generation needs commits to describe. Fixed workflow modes can use vali
 | `--workflow-version X.Y.Z` | Explicit release tuple for Start/backmerge modes; required for noninteractive hotfix backmerge, using the already-promoted version |
 | `--pr-limit` / `--no-pr-limit` | Apply/disable the configured PR-description limit for this run, on any host; aliases: `--azure-limit` / `--no-azure-limit` |
 
-Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override.
+Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override. An explicit Start tuple is validated and never replaced with an inferred version; missing current/base version context produces a targeted error.
 
 ```bash
 git-tools pr --base develop --start-pr --workflow-version 1.7.0
@@ -118,16 +119,16 @@ Review generated titles and the final merge/squash subject: those subjects drive
 
 ### PR-description length handling
 
-Saved `auto` mode detects Azure DevOps from the `origin` URL; GitHub/unknown origins default to no limit. Saved `false` disables detection and its interactive question. CLI flags override either setting. Detection may not recognize a self-hosted Azure Server URL; use `--pr-limit` or answer Yes interactively when appropriate.
+Saved `auto` mode detects Azure DevOps from the `origin` URL and applies that result without a routine confirmation; GitHub/unknown origins default to no limit. Saved `false` disables automatic limiting. CLI flags override either setting. Detection may not recognize a self-hosted Azure Server URL; use `--pr-limit` when appropriate.
 
 The default limit is `4000` **UTF-16 units**, configurable downward. An oversized parsed description gets one condensed-generation retry. If it is still oversized, the tool warns and retains/copies it rather than truncating it. This is best-effort handling, not a hard validator; raw-output fallback is not a guarantee of compliant length. Inspect the final description before pasting it.
 
 ## `bump`
 
-The authoritative version configuration is `.cz.toml`; see [versioning](versioning.md) for best-effort Python/Node/Rust sync targets and supported schemes. All auxiliary sync failures warn and skip without blocking the core bump/tag; core configuration and Git failures still stop it. Prefer a clean working tree and index: the bump stages managed files and runs `git commit`, so unrelated already-staged changes can be included.
+The authoritative version configuration is `.cz.toml`; see [versioning](versioning.md) for best-effort Python/Node/Rust sync targets and supported schemes. Handled auxiliary sync failures warn and skip rather than blocking the core bump/tag; core configuration and Git failures still stop it. Known planning/snapshot defects remain; read [current versioning limitations](versioning.md#current-limitations). Apply requires an empty index: all pre-staged changes, including managed files, are rejected before mutation. Unstage them deliberately before retrying (for example `git restore --staged .`); this leaves working-tree edits intact. Existing unstaged edits in managed files can still enter the bump commit, so review the complete plan. Unmanaged unstaged files are not staged by bump.
 
 ```bash
-git-tools bump --dry-run       # Compute and describe the change, without writes
+git-tools bump --dry-run       # Preview planned files/diffs without writes
 git-tools bump --get-next      # Print only the computed next version
 git-tools bump                 # Update, commit, and tag locally
 git-tools bump --increment MINOR --prerelease alpha --gpg-sign
@@ -140,7 +141,7 @@ git-tools bump --increment MINOR --prerelease alpha --gpg-sign
 | `--prerelease alpha\|beta\|rc` | Create/continue that prerelease channel; unset means stable release behavior |
 | `--increment-mode linear\|exact` | Prerelease bump behavior; default `linear` |
 | `--allow-no-commit` | Off; allows a bump without new commits, using PATCH when no increment is detected |
-| `--dry-run` | Off; compute and describe without file/Git writes |
+| `--dry-run` | Off; compute the managed-file plan and show diffs without file/Git writes |
 | `--get-next` | Off; compute and print only the next version, without writes |
 | `--yes`, `-y` | Off; permits initial untagged history when no tags or matching prior bump anchor exist; not a general confirmation/repair flag |
 | `--tag` / `--no-tag` | Create the new version tag by default |
@@ -155,7 +156,9 @@ By default, breaking changes cause MAJOR (or MINOR under major-version-zero poli
 
 History is anchored at the current version's tag, or a matching prior bump commit when the tag is absent. `--yes` does not waive inconsistent tagged history and does not recreate a missing tag. See [publication and recovery](publication.md).
 
-Preview modes return before managed-file consistency/write checks, commit hooks, and tag creation. A successful preview is not proof the actual bump will succeed. The write/commit/tag sequence is not transactional: a failure can leave updated/staged files or a bump commit without its tag. Inspect state before retrying. Bump never publishes remote refs.
+`--get-next` remains a lightweight version calculation. `--dry-run` also runs the in-memory file planner and consistency checks, showing changed paths, diffs, warnings, commit scope, and effective tag/signing behavior; staged repositories may be previewed. Interactive bump computes one plan, then offers **Preview / Apply / Cancel**, defaulting to Preview; after preview, Apply uses that same plan without repeating the wizard. Changes to the captured HEAD, branch, tags, managed-file bytes, discovery metadata, or selected Git settings invalidate the plan before writes. Git executable-mode changes are not currently captured, and nonregular metadata paths can hang planning even when auxiliary sync is disabled; see [current limitations](versioning.md#current-limitations). Initial-history consent is requested only when no tag or prior bump anchor exists.
+
+A successful preview cannot guarantee that hooks, signing, or Git will succeed. The write/commit/tag sequence remains nontransactional: a failure can leave updated/staged files or a bump commit without its tag. Inspect state before retrying. Bump never publishes remote refs.
 
 ## `init`
 
@@ -170,12 +173,12 @@ git-tools init --force --version 1.2.3
 | --- | --- |
 | `--config-file .cz.toml` | Only supported target; `.cz.toml` is also the default |
 | `--version TEXT` | Existing valid config version, otherwise latest supported version tag, otherwise `0.0.1`; explicit value overrides detection |
-| `--tag-format TEXT` | Detect from supported tags, otherwise `$version`; must contain `$version`. Quote it to prevent shell expansion |
-| `--major-version-zero` / `--no-major-version-zero` | Defaults to enabled for a zero-major version; disabled for nonzero major |
-| `--defaults` | Accepted compatibility flag; direct init already uses detected values without prompts. It does not suppress explicit `--interactive` prompts |
-| `--force` | Allow updating an existing config; normally refuse to overwrite |
+| `--tag-format TEXT` | Preserve an existing configured format; for new config, detect from tags or use `$version`. Explicit values must contain `$version`; quote them to prevent shell expansion |
+| `--major-version-zero` / `--no-major-version-zero` | Preserve existing policy when updating; new config enables it for zero-major versions |
+| `--defaults` | Use resolved defaults without prompts, even if `--interactive` is also supplied |
+| `--force` | Update an existing valid config while retaining custom fields and comments; otherwise refuse overwrite |
 
-The version syntax selects `semver2` (for example `1.0.0-alpha.0`) or `semver` (for example `1.0.0-a0`). Legacy `cz.toml` and a Commitizen section in `pyproject.toml` are rejected rather than migrated automatically. A valid existing `.cz.toml` updated with `--force` keeps unrelated sections but replaces its Commitizen section; invalid TOML may be overwritten. Review custom Commitizen fields before using it.
+For new config, the version syntax selects `semver2` (for example `1.0.0-alpha.0`) or `semver` (for example `1.0.0-a0`). Updating a stable `X.Y.Z` version preserves an explicit existing scheme, so future prerelease formatting does not change. Legacy `cz.toml` and a Commitizen section in `pyproject.toml` are rejected rather than migrated automatically. Updating a valid `.cz.toml` with `--force` preserves custom Commitizen fields, comments, nested tables, and saved tag/zero-major policy while applying the resolved version and explicit overrides. Invalid TOML is rejected without writing: repair it, or deliberately back up/remove it before creating a fresh config. Existing-config refusal happens before collecting unusable answers.
 
 ## `settings [NAME [VALUE]]`
 
@@ -188,9 +191,14 @@ git-tools settings temperature             # Edit one setting interactively
 git-tools settings temperature 0.4         # Save a value without prompts
 git-tools settings pr-limit auto
 git-tools settings pr-max-chars 3500
+git-tools settings commit-input-budget 200000
+git-tools settings issue-pr-input-budget 200000
+git-tools settings commit-scope false
+git-tools settings commit-footer false
+git-tools settings issue-pr-source b
 ```
 
-Supported names: `provider`, `main-model` (`model` alias), `support-model` (`sub-model` alias; reserved/unused), `api-base` (`endpoint` alias), `openrouter-provider`, `kimi-thinking`, `effort`, `api-key`, `temperature`, `max-tokens`, `max-retries`, `pr-limit`, and `pr-max-chars`. The last two also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
+Supported names: `provider`, `main-model` (`model` alias), `api-base` (`endpoint` alias), `openrouter-provider`, `kimi-thinking`, `effort`, `api-key`, `temperature`, `max-tokens` (`output-budget` alias), `commit-input-budget` (`token-limit` alias), `issue-pr-input-budget` (`issue-pr-token-limit` alias), `commit-scope`, `commit-footer`, `issue-pr-source`, `max-retries`, `pr-limit`, and `pr-max-chars`. The reserved `support-model` / `sub-model` editor remains compatible but is omitted from normal setup and menus. PR limit settings also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
 
 For provider choices, credential handling, model discovery, validation, defaults, and setting precedence, use [configuration](configuration.md). Prefer the masked API-key prompt over passing secrets as command arguments (which may enter shell history/process listings).
 
@@ -201,14 +209,14 @@ Use **Up/Down** and **Enter** for selections, and type into text prompts/searcha
 | Menu choice | Practical sequence |
 | --- | --- |
 | **init** | Confirm initial version and tag format, select zero-major policy when asked, review the summary, then answer **Write Commitizen config now?**. Continue with the platform bootstrap guide. |
-| **commit** | Stage files first. Select **Conventional Commit** or **chore: open release**, review warnings/input, and choose scope/footer preferences. Inspect the result before **Commit changes directly?**; decline to copy/use the text yourself. |
-| **issue** / **pr** | Check out the source and refresh target refs first. Select the PR mode when applicable; confirm base/version and inspect the branch summary. Choose diffs/commits/both, input budget, and additional context when prompted. Inspect/copy the result for your hosting UI. |
-| **bump** | Inspect repository context; select increment, release channel, prerelease mode when shown, initial-history permission, and tag signing. Choose preview first, then repeat with write options on a clean index. |
+| **commit** | Stage files first. Select **Conventional Commit** or **chore: open release**, review warnings/input using saved budget/scope/footer preferences. Inspect the result before **Commit changes directly?**; decline to copy/use the text yourself. |
+| **issue** / **pr** | Check out the source and refresh target refs first. Select the PR mode when applicable; confirm base/version and inspect the branch summary. Saved source/budget/PR-limit preferences apply automatically; enter optional additional context. Inspect/copy the result for your hosting UI. |
+| **bump** | Inspect repository context; select increment, release channel, and prerelease mode when shown. Initial-history permission is conditional. Review the computed version, files and effective signing, then Preview / Apply / Cancel; Apply reuses the reviewed plan on an empty index. |
 
-For ordinary content generation, answer **Yes** to **Generate … using external providers?** to use the provider, main model, and options already configured in `git-tools settings`. Model, temperature, and maximum output tokens are not asked again. Explicit `--model`, `--temp`, and `--max-tokens` override saved values for that invocation only. Input diff-budget, content/context, scope/footer, and commit-action questions remain separate workflow choices.
+For ordinary content generation, answer **Yes** to **Generate … using external providers?** to use the provider, main model, and options already configured in `git-tools settings`. Provider/model parameters, input budgets, scope/footer, source, and PR-limit preferences are reused without routine reconfiguration. CLI flags override saved values for that invocation only. Modes, base/version/context, external-send consent, and final commit/write actions remain task-specific decisions.
 
-Answer **No** to prepare a prompt for another tool and choose whether to copy it. Canceling the confirmation stops the operation without proceeding to provider setup, generation, clipboard copy, or a commit action. Missing credentials can still offer inline key setup; routine configured generation does not ask for configuration again. Clipboard prompts depend on the path taken and clipboard availability.
+Answer **No** to prepare a prompt for another tool and choose whether to copy it. Canceling the confirmation stops the operation without proceeding to provider setup, generation, clipboard copy, or a commit action. Missing credentials can still offer inline key setup; routine configured generation does not ask for configuration again. Prepared prompts are displayed even if copying is declined or unavailable. Explicit `--no-copy` never copies or asks to copy. `--copy` requests copying for generated output or prepared local prompts when handed off; for `commit`, copying occurs only when the command does not commit.
 
-For PRs in saved `auto` mode, inspect origin detection before answering the description-limit question; choose Yes for Azure Server URLs not recognized automatically. The **issue** and **pr** menu entries already select the output type, so there is normally no separate content-type question.
+For PRs in saved `auto` mode, inspect the origin detection result; use `--pr-limit` for Azure Server URLs not recognized automatically. The **issue** and **pr** menu entries already select the output type, so there is normally no separate content-type question.
 
-**Bump warning:** **Preview only without changing files or git state?** defaults to **No**. There is no separate final confirmation after the options summary before the bump runs.
+**Bump safety:** interactive Apply is explicit and uses the reviewed plan, subject to the [FIFO, executable-mode, and custom-selector limitations](versioning.md#current-limitations). Direct `git-tools bump` remains automation-friendly and applies without an extra confirmation, but rejects pre-staged content. Git-configured signing remains authoritative; the plan shows its effective behavior.

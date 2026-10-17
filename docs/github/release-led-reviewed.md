@@ -170,7 +170,7 @@ The release branch selects the target; cutting it does not itself open `rc.0`. A
 
 ## Release Stabilization and Promotion
 
-The release branch chooses the final release line. In reviewed flow, no direct commits land on `release/X.Y.Z` — every change arrives via an inner PR from a `release-fix/<name>` branch and squash-merges with a Conventional Commit subject.
+The release branch chooses the final release line. Human changes arrive via inner PRs from `release-fix/<name>`, not direct protected-branch pushes; automation still creates its authorized version commits. Inner PRs squash-merge with a Conventional Commit subject.
 
 Rules:
 

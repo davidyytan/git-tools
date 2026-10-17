@@ -36,9 +36,11 @@ Do not leave an unrelated generated merge subject in the completion dialog. Azur
 
 Require reviewers and PRs into `release/*` and `hotfix/*` through Azure Repos branch policies. Apply policies to each new stabilization branch, or use an administrator-managed branch-prefix policy. Do not grant developers blanket policy bypass. The automation identity may need a narrowly approved push exception for generated version commits; see [setup](setup.md#7-grant-build-service-permissions).
 
+The [numbered walkthrough](classic-reviewed-walkthrough.md) uses **Merge (no fast-forward)** for synchronization inner PRs and boundary backmerges so their ancestry and untagged bump anchors survive; do not squash those steps.
+
 The synchronization snippets below describe the Git merge subjects and conflict resolutions required by the engine. If the target stabilization branch requires PRs, perform those merges on a temporary `release-fix/*` or `hotfix-fix/*` source branch and submit an inner PR instead of directly pushing the protected branch. For preparation merges, preserve the exact subject `chore: merge master for release`, `chore: merge master for hotfix`, or `chore: merge develop for backmerge` as appropriate; this is synchronization, not a new stabilization fix. Pull the completed PR and automation result before generating the promotion or backmerge text. Keep the promotion branch until its backmerge is complete; do not select source-branch deletion early.
 
-An empty commit may not yield a file diff that Azure Repos can use to create an inner PR. If Azure will not offer that PR, include a small legitimate tracked stabilization/documentation change and keep the inner PR title `chore: open release`; do not bypass the review policy with a direct opener push. The empty-commit snippets express the engine's accepted opener subject.
+An empty commit may not yield a file diff that Azure Repos can use to create an inner PR. To use the engine's accepted opener subject `chore: open release`, include a small legitimate tracked stabilization/documentation change and use that inner PR title. Do not rely on an empty inner PR or bypass the review policy with a direct opener push.
 
 ## Command Recipes
 
@@ -92,9 +94,8 @@ git checkout -b release-fix/<name>
 git add -A
 git-tools commit
 
-# ALTERNATIVE to a real stabilization commit: open rc.0,
-# use an empty commit and a CC-style PR title `chore: open release`
-git commit --allow-empty -m "chore: open release"
+# An inner PR needs a real reviewable diff; an empty commit may not
+# provide a PR Azure Repos can create. Use a Conventional Commit PR title.
 
 git push -u origin release-fix/<name>
 git-tools pr --base release/X.Y.Z
@@ -189,7 +190,7 @@ After cutting `release/X.Y.Z`, the first PR for the next `develop` cycle must la
 
 ## Release Stabilization and Promotion
 
-The release branch does not reopen semver selection. It stabilizes the selected release line. In reviewed flow, no direct commits land on `release/X.Y.Z` — every change arrives via an inner PR from a `release-fix/<name>` branch.
+The release branch does not reopen semver selection. It stabilizes the selected release line. In reviewed flow, human changes arrive via inner PRs from `release-fix/<name>`, not direct protected-branch pushes; automation still creates its authorized version commits.
 
 Rules:
 

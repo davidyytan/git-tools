@@ -211,6 +211,7 @@ Why:
 - The bot's bump subject makes the next triggered run skip, preventing an
   ordinary bump loop. This is not a general guarantee against competing
   versioning workflows or manually changed versions.
+- Before enabling version writes, read the engine's [current limitations](../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps. These are implementation caveats, not changes to the release policy.
 - Reviewed flow is a repository-policy choice, not a compliance certification.
   Human changes require PRs; generated bot version commits need the approved
   narrow exception described above.
@@ -244,7 +245,7 @@ Before every dependent operation, pull the bot commit and fetch tags. Promote on
 
 ## Local CLI and PR Descriptions
 
-Direct `git-tools commit` generates and commits by default; use `--no-commit` to review output first. `git-tools pr` generates text, not a GitHub PR. Push the source branch, create the PR in GitHub, and use the documented base and title. See [CLI usage](../usage.md) for direct/interactive options and PR length preferences, and [configuration](../configuration.md) for provider settings.
+Direct `git-tools commit` generates and commits by default; use `--no-commit` to review output first. `git-tools pr` generates text, not a GitHub PR. Push the source branch, create the PR in GitHub, and use the documented base and title. See [CLI usage](../usage.md) for direct/interactive options and PR length preferences, and [configuration](../configuration.md) for provider settings. Review the [current provider limitations](../configuration.md#current-limitations) before generation, especially after changing endpoints or providers.
 
 ## After Setup
 

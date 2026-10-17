@@ -18,7 +18,7 @@ For a fresh repository, use the **[numbered end-to-end walkthroughs](walkthrough
 | Release-led | `release/X.Y.Z` chooses the release line | [Release-led](github/release-led.md) | [Release-led](azure-devops/release-led.md) |
 | Release-led — Reviewed | Release-led with squash inner PRs | [Reviewed](github/release-led-reviewed.md) | [Reviewed](azure-devops/release-led-reviewed.md) |
 
-Both platforms supply classic and release-led example adapters. Reviewed flows share their base adapter: enable **one** versioning workflow/pipeline per repo, not both adapters. Templates are examples to copy/configure in the target repo; their presence does not certify a live run in your organization. See each setup guide for supported engine refs, signing, permissions, and merge settings. `git-tools init` creates `.cz.toml` only; it does not install either adapter or configure hosting. These recipes assume `master` and `develop`, full history and tags, and fresh-repository bootstrap. Existing projects need a separate migration plan. Versioning CI does not require an LLM key; normal local commit and PR generation does.
+Both platforms supply classic and release-led example adapters. Reviewed flows share their base adapter: enable **one** versioning workflow/pipeline per repo, not both adapters. Templates are examples to copy/configure in the target repo; their presence does not certify a live run in your organization. See each setup guide for supported engine refs, signing, permissions, and merge settings. `git-tools init` creates `.cz.toml` only; it does not install either adapter or configure hosting. These recipes assume `master` and `develop`, full history and tags, and fresh-repository bootstrap. Existing projects need a separate migration plan. Versioning CI does not require an LLM key; normal local commit and PR generation does. Before provider use or configuring custom sync targets, read the current [configuration](configuration.md#current-limitations) and [versioning](versioning.md#current-limitations) limitations.
 
 ## Shared Naming Policy
 
@@ -55,9 +55,10 @@ Current helpers match the documented workflow:
 
 - `git-tools commit --workflow-kind open-release`
 - `git-tools pr --start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, and `--backmerge-hotfix-pr`
-- pass `--workflow-version X.Y.Z` when repo state cannot safely infer the tuple for a fixed-title Start or Backmerge flow
+- for direct `--backmerge-hotfix-pr`, always pass `--workflow-version X.Y.Z` naming the **already-promoted** hotfix; interactive mode asks without an inferred default
+- Start and release-backmerge can infer their tuple where context permits; pass an explicit exact `X.Y.Z` when needed. Explicit Start input requires readable current/base version context and a valid next-cycle transition
 
-These guides are GitHub and Azure DevOps PR-based adaptations of Git Flow. Classic, classic-reviewed, and release-led support either squash merge or merge commits, as long as the final commit subject on the target branch is the PR title. Release-led-reviewed uses squash merges for its strict review profile. Follow the selected platform's completion instructions.
+These guides are GitHub and Azure DevOps PR-based adaptations of Git Flow. Ordinary feature/stabilization PRs in classic, classic-reviewed, and release-led support either squash merge or merge commits, provided the final commit subject on the target branch is the PR title. Synchronization and boundary backmerge steps must still use the completion method required by the selected platform walkthrough. Release-led-reviewed uses squash for ordinary feature/stabilization PRs. GitHub's strict squash recipe and Azure's ancestry-preserving synchronization/backmerge recipe differ: the Azure walkthrough requires Merge (no fast-forward) for those specified steps, so it is not squash-only end to end. Follow the selected platform's completion instructions.
 
 If you want the closest thing to classic Git Flow, use [Git Flow Classic](github/classic.md) on GitHub or [Classic](azure-devops/classic.md) on Azure DevOps with merge commits for feature, release, and hotfix PRs.
 
@@ -69,4 +70,4 @@ Use **Classic** if you want `develop` to choose the release line first and then 
 
 Use **Classic — Reviewed** if you want classic semantics but every human change on `release/*` and `hotfix/*` must arrive via an inner PR for review trail.
 
-Use **Variant — Reviewed** if you want the release-led model but every human change on `release/*` and `hotfix/*` must arrive via an inner PR (squash) for a review trail. Generated version commits still arrive from the bot directly, with a narrowly approved policy exception. Keep source branches until promotion and backmerge both finish. For failed publication, see [publication and recovery](publication.md).
+Use **Variant — Reviewed** if you want the release-led model but every human change on `release/*` and `hotfix/*` must arrive via an inner PR for a review trail. Stabilization PRs squash-merge; the Azure walkthrough's specified synchronization and boundary-backmerge steps retain merge ancestry. Generated version commits still arrive from the bot directly, with a narrowly approved policy exception. Keep source branches until promotion and backmerge both finish. For failed publication, see [publication and recovery](publication.md).

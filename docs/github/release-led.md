@@ -163,11 +163,13 @@ See the [command recipe](#release-backmerge-into-develop) for the synchronizatio
 
 When version files conflict, preserve the intended develop line (the ahead alpha when present, otherwise the promoted stable target) consistently in `.cz.toml` and any project version field. Do not resolve by lexical string order.
 
-If you need to explicitly open a new `develop` cycle after a release, use the fixed title on the first PR for that cycle:
+If you need to explicitly open a new `develop` cycle after a release, use the first real feature/bugfix branch for that cycle:
 
-See the [command recipe](#release-backmerge-into-develop) for the synchronization commands.
+```bash
+git-tools pr --base develop --start-pr --workflow-version A.B.C
+```
 
-Landing `Start A.B.C` on `develop` must produce tagged `A.B.C-alpha.0`.
+Replace `A.B.C` with an exact valid next-cycle tuple, then complete the PR with final subject `Start A.B.C`. Do not use a Backmerge title to open a new cycle. Landing that Start title on `develop` must produce tagged `A.B.C-alpha.0`.
 
 ## Hotfix Stabilization and Promotion
 

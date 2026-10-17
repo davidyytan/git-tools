@@ -20,7 +20,7 @@ Each includes ordered Azure setup and manual pipeline authorization/run, the ini
 | [Classic](classic.md) | `develop`; next-cycle `Start` after release cut | Direct human commits | Squash or merge commit |
 | [Classic — Reviewed](classic-reviewed.md) | Same as classic | Inner PRs | Squash or merge commit |
 | [Release-led](release-led.md) | `release/X.Y.Z` | Direct human commits | Squash or merge commit |
-| [Release-led — Reviewed](release-led-reviewed.md) | Same as release-led | Inner PRs | Squash |
+| [Release-led — Reviewed](release-led-reviewed.md) | Same as release-led | Inner PRs | Squash for stabilization; merge commits for walkthrough synchronization/backmerges |
 
 Reviewed modes share their base adapter. Activate **one** versioning pipeline, not one per mode. Review requirements are enforced by repository policies; generated bot version commits need a narrowly approved direct-push exception.
 

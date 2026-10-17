@@ -151,7 +151,7 @@ Upload the **file itself** under **Pipelines → Library → Secure files**, the
 
 ## Local CLI and PR Descriptions
 
-Direct `git-tools commit` generates and commits by default; use `--no-commit` to review output first. See [configuration](../configuration.md) for provider settings and [CLI usage](../usage.md) for direct and interactive options.
+Direct `git-tools commit` generates and commits by default; use `--no-commit` to review output first. See [configuration](../configuration.md) for provider settings and [CLI usage](../usage.md) for direct and interactive options. Review the [current provider limitations](../configuration.md#current-limitations) before generation, especially after changing endpoints or providers.
 
 `git-tools pr` generates title/description text; it does not create or complete an Azure Repos PR. Push the source branch, then open **Repos → Pull requests → New pull request**, select the documented target, and paste the output.
 
@@ -380,6 +380,8 @@ The final commit subject on the target branch must represent the PR title. The r
 - do not leave an unrelated generated subject in the completion dialog
 - disable or prohibit rebase completion for this versioning flow
 
+The [numbered walkthroughs](README.md#full-walkthroughs) use **Merge (no fast-forward)** for boundary backmerges and, in reviewed modes, their synchronization inner PRs. Those steps must preserve ancestry and untagged bump anchors; permitting squash elsewhere is not permission to squash those steps.
+
 ### Merge commit profile
 
 - complete the PR with **Merge (no fast-forward)**
@@ -416,6 +418,8 @@ See [PR preferences](../usage.md) and [configuration](../configuration.md) for p
 ## Operational Safety and Limitations
 
 The adapters are mutating push pipelines, not PR validation builds. Keep write and signing credentials inaccessible to untrusted code and restrict who can modify authorized YAML. Reviewed flow is a repository-policy choice, not a compliance certification; generated bot commits still use an approved direct push exception.
+
+Before enabling version writes, read the engine's [current limitations](../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps. These are implementation caveats, not changes to the release policy.
 
 Full history, tags, and remote branch refs are required. The supplied triggers include `master`, `develop`, `release/*`, `hotfix/*`, `feature/*`, and `bugfix/*`. The reviewed inner branches (`release-fix/*`, `hotfix-fix/*`) do not trigger this pipeline; their merge triggers the target stabilization branch instead.
 

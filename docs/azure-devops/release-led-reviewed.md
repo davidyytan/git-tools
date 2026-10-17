@@ -4,10 +4,12 @@
 
 Use this flow if you want the **release branch to choose the final release line** (like [Variant — Release-led](release-led.md)) **and** every human change to land through a PR for review, including stabilization fixes that target an open `release/*` or `hotfix/*` branch.
 
-This is [Variant — Release-led](release-led.md) plus an inner PR layer, merged by squash:
+This is [Variant — Release-led](release-led.md) plus an inner PR layer. Ordinary stabilization changes use squash:
 
-- `release-fix/<name>` → `release/X.Y.Z` (squash PR)
-- `hotfix-fix/<name>`  → `hotfix/<name>` (squash PR)
+- `release-fix/<name>` → `release/X.Y.Z` (squash stabilization PR)
+- `hotfix-fix/<name>`  → `hotfix/<name>` (squash stabilization PR)
+
+The Azure walkthrough's synchronization and boundary-backmerge steps instead use ancestry-preserving **Merge (no fast-forward)**; see [Merge Strategy](#merge-strategy).
 
 `develop`, promotion, and backmerge PRs are unchanged from the release-led variant. Pick this flow when the release manager owns the version line **and** compliance or org policy requires a review trail for human changes. Otherwise use [Variant — Release-led](release-led.md) — the inner PR layer adds friction.
 
@@ -21,13 +23,19 @@ Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and
 
 ## Merge Strategy
 
-This flow uses **squash merges**. The squashed commit subject on `release/X.Y.Z` or `hotfix/<name>` is the input to the rc-bump logic, so it must be the inner PR title and a Conventional Commit.
+Ordinary feature and stabilization PRs use **squash merges**. The squashed commit subject on `release/X.Y.Z` or `hotfix/<name>` is the input to the rc-bump logic, so it must be the inner PR title and a Conventional Commit.
 
-- Complete inner PRs using **Squash commit** and set the final subject to the
-  PR title.
-- Configure the Azure Repos target branch's **Limit merge types** policy to
-  allow squash only for this strict squash profile; prohibit rebase completion.
-- Do not leave an unrelated generated subject in the completion dialog.
+- Complete ordinary stabilization inner PRs using **Squash commit** and set the
+  final subject to the PR title.
+- The [numbered Azure walkthrough](release-led-reviewed-walkthrough.md) requires
+  **Merge (no fast-forward)** for its synchronization inner PRs and boundary
+  backmerges into `develop`. Retain the merge parents and untagged preparation
+  bump anchors; do not squash those steps.
+- Configure **Limit merge types** on the affected targets to permit both required
+  styles, and choose the method specified for each step. This Azure recipe is
+  **not a strict squash-only end-to-end flow**. Prohibit rebase completion.
+- Preserve the exact specified PR/completion subject; do not leave an unrelated
+  generated subject in the completion dialog.
 
 Azure may prefix the subject with `Merged PR 42:`; the supported engine normalizes that prefix. The remaining subject must still be the Conventional Commit PR title. See [setup merge settings](setup.md#merge-settings).
 
@@ -35,9 +43,9 @@ Azure may prefix the subject with `Merged PR 42:`; the supported engine normaliz
 
 Require reviewers and PRs into `release/*` and `hotfix/*` through Azure Repos branch policies. Apply policies to each new stabilization branch, or use an administrator-managed branch-prefix policy. Do not grant developers blanket policy bypass. The automation identity may need a narrowly approved push exception for generated version commits; see [setup](setup.md#7-grant-build-service-permissions).
 
-The synchronization snippets below describe the Git merge subjects and conflict resolutions required by the engine. If the target stabilization branch requires PRs, perform those merges on a temporary `release-fix/*` or `hotfix-fix/*` source branch and submit an inner PR instead of directly pushing the protected branch. For preparation merges, preserve the exact subject `chore: merge master for release`, `chore: merge master for hotfix`, or `chore: merge develop for backmerge` as appropriate; this is synchronization, not a new stabilization fix. Pull the completed PR and automation result before generating the promotion or backmerge text. Keep the promotion branch until its backmerge is complete; do not select source-branch deletion early.
+The synchronization snippets below describe the Git merge subjects and conflict resolutions required by the engine. If the target stabilization branch requires PRs, perform those merges on a temporary `release-fix/*` or `hotfix-fix/*` source branch and submit an inner PR instead of directly pushing the protected branch. For preparation merges, preserve the exact subject `chore: merge master for release`, `chore: merge master for hotfix`, or `chore: merge develop for backmerge` as appropriate; this is synchronization, not a new stabilization fix. Use the ancestry-preserving merge method specified by the walkthrough for these synchronization PRs and their boundary backmerges. Pull the completed PR and automation result before generating the promotion or backmerge text. Keep the promotion branch until its backmerge is complete; do not select source-branch deletion early.
 
-An empty commit may not yield a file diff that Azure Repos can use to create an inner PR. If Azure will not offer that PR, include a small legitimate tracked stabilization/documentation change and keep the inner PR title `chore: open release`; do not bypass the review policy with a direct opener push. The empty-commit snippets express the engine's accepted opener subject.
+An empty commit may not yield a file diff that Azure Repos can use to create an inner PR. To use the engine's accepted opener subject `chore: open release`, include a small legitimate tracked stabilization/documentation change and use that inner PR title. Do not rely on an empty inner PR or bypass the review policy with a direct opener push.
 
 ## Command Recipes
 
@@ -79,9 +87,8 @@ git checkout -b release-fix/<name>
 git add -A
 git-tools commit
 
-# to open rc.0 without a real stabilization change, open an empty inner PR and
-# use the CC-style PR title `chore: open release`
-git commit --allow-empty -m "chore: open release"
+# An inner PR needs a real reviewable diff; an empty commit may not
+# provide a PR Azure Repos can create. Use a Conventional Commit PR title.
 
 git push -u origin release-fix/<name>
 git-tools pr --base release/X.Y.Z
@@ -174,7 +181,7 @@ The release branch selects the target; cutting it does not itself open `rc.0`. A
 
 ## Release Stabilization and Promotion
 
-The release branch chooses the final release line. In reviewed flow, no direct commits land on `release/X.Y.Z` — every change arrives via an inner PR from a `release-fix/<name>` branch and squash-merges with a Conventional Commit subject.
+The release branch chooses the final release line. Human changes arrive via inner PRs from `release-fix/<name>`, not direct protected-branch pushes; automation still creates its authorized version commits. Stabilization PRs squash-merge with a Conventional Commit subject; synchronization PRs follow the ancestry-preserving exceptions above.
 
 Rules:
 
@@ -254,10 +261,10 @@ The backmerge PR is the only `hotfix/* -> develop` boundary crossing. It is not 
 ```text
 feature/* or bugfix/* -> develop          -> tagged alpha
 Start X.Y.Z           -> develop          -> open tagged X.Y.Z-alpha.0 (optional)
-release-fix/*         -> release/X.Y.Z    -> inner PR (squash), opens/advances rc
+release-fix/*         -> release/X.Y.Z    -> stabilization PR (squash), opens/advances rc
 release/X.Y.Z         -> master           -> stable
 release/X.Y.Z         -> develop          -> backmerge only
-hotfix-fix/*          -> hotfix/<name>    -> inner PR (squash), advances patch rc
+hotfix-fix/*          -> hotfix/<name>    -> stabilization PR (squash), advances patch rc
 hotfix/<name>         -> master           -> next patch stable
 hotfix/<name>         -> develop          -> backmerge only
 ```

@@ -31,8 +31,10 @@ git-tools settings
 ```
 
 Choose a provider, credentials, and model if you want generated commit/PR prose.
-Fixed workflow titles, `init`, and the CI engine do not need an LLM. The fixed
-Git messages below are deliberate: use them to reproduce the version sequence.
+`init` and the CI engine do not need an LLM. Fixed workflow titles are
+deterministic, but `git-tools pr` still uses your configured provider to generate
+the description. The fixed Git messages below are deliberate: use them to
+reproduce the version sequence.
 As an alternative after staging a real change, preview with
 `git-tools commit --no-commit --no-copy`, then `git-tools commit` to generate and
 **create** a commit. Do not run both that command and the example `git commit`
@@ -663,4 +665,3 @@ real application with auxiliary version files, preserve the intended version
 consistently in those files during conflict resolution too. `.cz.toml` remains
 the authority; see [versioning](../versioning.md) and
 [publication/recovery](../publication.md) before repairing partial failures.
-

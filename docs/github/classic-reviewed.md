@@ -185,7 +185,7 @@ After cutting `release/X.Y.Z`, the first PR for the next `develop` cycle must la
 
 ## Release Stabilization and Promotion
 
-The release branch does not reopen semver selection. It stabilizes the selected release line. In reviewed flow, no direct commits land on `release/X.Y.Z` — every change arrives via an inner PR from a `release-fix/<name>` branch.
+The release branch does not reopen semver selection. It stabilizes the selected release line. In reviewed flow, human changes arrive via inner PRs from `release-fix/<name>`, not direct protected-branch pushes; automation still creates its authorized version commits.
 
 Rules:
 

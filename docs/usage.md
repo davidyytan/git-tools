@@ -50,11 +50,21 @@ git-tools commit --commit
 | Option | Behavior when omitted in direct mode |
 | --- | --- |
 | `--scope` / `--no-scope` | Saved scope preference; off by default |
+| `--body` / `--no-body` | Saved optional multiline description/body preference; enabled by default; short summary always required |
+| `--body-style bullets\|prose` | Saved body style; `bullets` (point form) by default, or prose paragraphs |
 | `--footer` / `--no-footer` | Saved footer preference; off by default |
 | `--commit` / `--no-commit` | **Creates a real commit** with the generated message |
 | `--copy` / `--no-copy` | Automatically attempts clipboard copy when not committing; this is not a separate copy-after-commit action |
 | `--force-sensitive` | Off; refuses generation when staged paths match sensitive-file rules |
 | `--workflow-kind open-release` | Off; uses the fixed subject `chore: open release` instead of an LLM |
+
+Use **Settings → Commit format** (or `git-tools settings commit-format`) to edit scope, description/body, body style, and footer together. Each completed edit saves immediately; Back leaves the group and returns to its caller. “Description (body)” is below the required one-line summary. Turning it off still permits factual footers when enabled; choosing prose removes body bullet instructions from both provider and prepared local prompts. The style is retained when the body is disabled. These are generation instructions, not a post-processing rewrite; inspect the output before committing.
+
+```bash
+# One-run overrides; do not commit or copy the result:
+git-tools commit --body --body-style prose --no-commit --no-copy
+git-tools commit --no-body --no-scope --no-footer --no-commit --no-copy
+```
 
 `--no-copy` is honored on generated, local-prompt, and missing-key paths. Prepared local prompts are always displayed. Missing credentials do not authorize automatic copying: interactive mode asks, while direct mode copies a fallback prompt only with explicit `--copy`. Normal generated output still auto-copies in direct mode when not committing.
 
@@ -193,12 +203,15 @@ git-tools settings pr-limit auto
 git-tools settings pr-max-chars 3500
 git-tools settings commit-input-budget 200000
 git-tools settings issue-pr-input-budget 200000
+git-tools settings commit-format          # Open the grouped editor
 git-tools settings commit-scope false
+git-tools settings commit-body true
+git-tools settings commit-body-style prose
 git-tools settings commit-footer false
 git-tools settings issue-pr-source b
 ```
 
-Supported names: `provider`, `main-model` (`model` alias), `api-base` (`endpoint` alias), `openrouter-provider`, `kimi-thinking`, `effort`, `api-key`, `temperature`, `max-tokens` (`output-budget` alias), `commit-input-budget` (`token-limit` alias), `issue-pr-input-budget` (`issue-pr-token-limit` alias), `commit-scope`, `commit-footer`, `issue-pr-source`, `max-retries`, `pr-limit`, and `pr-max-chars`. The reserved `support-model` / `sub-model` editor remains compatible but is omitted from normal setup and menus. PR limit settings also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
+Supported names: `provider`, `main-model` (`model` alias), `api-base` (`endpoint` alias), `openrouter-provider`, `kimi-thinking`, `effort`, `api-key`, `temperature`, `max-tokens` (`output-budget` alias), `commit-input-budget` (`token-limit` alias), `issue-pr-input-budget` (`issue-pr-token-limit` alias), `commit-format` (interactive group), `commit-scope`, `commit-body`, `commit-body-style`, `commit-footer`, `issue-pr-source`, `max-retries`, `pr-limit`, and `pr-max-chars`. The reserved `support-model` / `sub-model` editor remains compatible but is omitted from normal setup and menus. PR limit settings also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
 
 For provider choices, credential handling, model discovery, validation, defaults, and setting precedence, use [configuration](configuration.md). Prefer the masked API-key prompt over passing secrets as command arguments (which may enter shell history/process listings).
 
@@ -209,11 +222,11 @@ Use **Up/Down** and **Enter** for selections, and type into text prompts/searcha
 | Menu choice | Practical sequence |
 | --- | --- |
 | **init** | Confirm initial version and tag format, select zero-major policy when asked, review the summary, then answer **Write Commitizen config now?**. Continue with the platform bootstrap guide. |
-| **commit** | Stage files first. Select **Conventional Commit** or **chore: open release**, review warnings/input using saved budget/scope/footer preferences. Inspect the result before **Commit changes directly?**; decline to copy/use the text yourself. |
+| **commit** | Stage files first. Select **Conventional Commit** or **chore: open release**, review warnings/input using saved budget and commit-format preferences. Inspect the result before **Commit changes directly?**; decline to copy/use the text yourself. |
 | **issue** / **pr** | Check out the source and refresh target refs first. Select the PR mode when applicable; confirm base/version and inspect the branch summary. Saved source/budget/PR-limit preferences apply automatically; enter optional additional context. Inspect/copy the result for your hosting UI. |
 | **bump** | Inspect repository context; select increment, release channel, and prerelease mode when shown. Initial-history permission is conditional. Review the computed version, files and effective signing, then Preview / Apply / Cancel; Apply reuses the reviewed plan on an empty index. |
 
-For ordinary content generation, answer **Yes** to **Generate … using external providers?** to use the provider, main model, and options already configured in `git-tools settings`. Provider/model parameters, input budgets, scope/footer, source, and PR-limit preferences are reused without routine reconfiguration. CLI flags override saved values for that invocation only. Modes, base/version/context, external-send consent, and final commit/write actions remain task-specific decisions.
+For ordinary content generation, answer **Yes** to **Generate … using external providers?** to use the provider, main model, and options already configured in `git-tools settings`. Provider/model parameters, input budgets, commit format, source, and PR-limit preferences are reused without routine reconfiguration. CLI flags override saved values for that invocation only. Modes, base/version/context, external-send consent, and final commit/write actions remain task-specific decisions.
 
 Answer **No** to prepare a prompt for another tool and choose whether to copy it. Canceling the confirmation stops the operation without proceeding to provider setup, generation, clipboard copy, or a commit action. Missing credentials can still offer inline key setup; routine configured generation does not ask for configuration again. Prepared prompts are displayed even if copying is declined or unavailable. Explicit `--no-copy` never copies or asks to copy. `--copy` requests copying for generated output or prepared local prompts when handed off; for `commit`, copying occurs only when the command does not commit.
 

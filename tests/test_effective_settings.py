@@ -276,15 +276,20 @@ class IsolatedSettingsTests(SettingsTestCase):
     def test_defaults_saved_preferences_and_input_output_budgets(self):
         fresh = config.GitToolsSettings()
         self.assertFalse(fresh.commit_include_scope)
+        self.assertTrue(fresh.commit_include_body)
+        self.assertEqual(fresh.commit_body_style, "bullets")
         self.assertFalse(fresh.commit_include_footer)
         self.assertEqual(fresh.issue_pr_source, "b")
         for name, value in (("commit-scope", "true"), ("commit-footer", "true"),
+                            ("commit-body", "false"), ("commit-body-style", "prose"),
                             ("issue-pr-source", "c"), ("commit-input-budget", "1234"),
                             ("issue-pr-input-budget", "5678"), ("output-budget", "99")):
             result = self.runner.invoke(cli.app, ["settings", name, value])
             self.assertEqual(result.exit_code, 0, result.output)
         state = cli._load_settings_state()
         self.assertTrue(state["commit_include_scope"])
+        self.assertFalse(state["commit_include_body"])
+        self.assertEqual(state["commit_body_style"], "prose")
         self.assertTrue(state["commit_include_footer"])
         self.assertEqual((state["issue_pr_source"], state["token_limit"], state["issue_pr_token_limit"],
                           state["max_tokens"]), ("c", 1234, 5678, 99))
@@ -298,6 +303,7 @@ class IsolatedSettingsTests(SettingsTestCase):
     def test_invalid_new_editor_values_do_not_save(self):
         with patch.object(config, "save_setting") as save:
             for name, value in (("commit-scope", "perhaps"), ("commit-footer", "perhaps"),
+                                ("commit-body", "perhaps"), ("commit-body-style", "invalid"),
                                 ("issue-pr-source", "invalid"), ("commit-input-budget", "0"),
                                 ("issue-pr-input-budget", "-1"), ("commit-input-budget", "abc")):
                 result = self.runner.invoke(cli.app, ["settings", name, value])

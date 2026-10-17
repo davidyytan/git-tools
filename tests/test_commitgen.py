@@ -54,6 +54,88 @@ class CommitGeneratorTests(unittest.TestCase):
         self.assertIn("Do not include the [optional scope].", system_message)
         self.assertIn("Do not include the [optional footer(s)].", system_message)
 
+    def test_parser_preserves_prose_bullets_and_footer_separation(self) -> None:
+        generator = CommitGenerator()
+        messages = (
+            "feat(parser)!: preserve paragraphs\n\nFirst paragraph.  \n\nSecond paragraph.\n\nBREAKING CHANGE: keep this detail\n\nRefs: #42",
+            "fix: preserve list indentation\n\n- First detail\n  continuation line  \n\n- Second detail\n    nested context\n\nCloses: #42",
+            "fix: preserve paragraph gaps\n\nParagraph one\n\n\nParagraph two\n \t\nRefs: #7  ",
+            "fix: preserve CRLF\r\n\r\nFirst paragraph\r\n\r\nSecond paragraph\r\n\r\nRefs: #7",
+        )
+        for expected in messages:
+            for opening, closing in ((None, None), ("```", "```"), ("```text", "```"), ("~~~text", "~~~"), ("````", "`````")):
+                with self.subTest(expected=expected, opening=opening):
+                    raw = expected if opening is None else f"{opening}\n{expected}\n{closing}"
+                    self.assertEqual(generator.parse_commit_message(raw), expected)
+
+    def test_parser_normalizes_only_boundaries_and_header_separator(self) -> None:
+        generator = CommitGenerator()
+        expected = "fix: retain details\n\n  Indented paragraph  \n\nAnother paragraph\n\nRefs: #42  "
+        for raw in (
+            expected,
+            expected.replace("details\n\n", "details\n", 1),
+            expected.replace("details\n\n", "details\n \t\n\n", 1),
+            f"\n\n{expected}\n\n",
+            f"\n```text\n\n{expected}\n\n```\n\n",
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(generator.parse_commit_message(raw), expected)
+        self.assertEqual(generator.parse_commit_message("\nfix: subject only\n\n"), "fix: subject only")
+        self.assertEqual(generator.parse_commit_message("fix!: breaking subject"), "fix!: breaking subject")
+
+    def test_parser_only_unwraps_complete_matching_outer_fences(self) -> None:
+        generator = CommitGenerator()
+        message = "fix: preserve every detail\n\nFinal important paragraph"
+        invalid = (
+            "", "fix:", "fix:  ", "fix\n\nNot a subject", "not a commit",
+            f"```text\n{message}",
+            f"```text\n{message}\n~~~",
+            f"````text\n{message}\n```",
+            f"```text\n{message}\n``` trailing detail",
+            f"```te`xt\n{message}\n```",
+            f"    ```text\n{message}\n```",
+            f"```text\n{message}\n    ```",
+            f"Here is your commit:\n```\n{message}\n```",
+            f"```\n{message}\n```\nFinal important detail",
+            f"```\n{message}\n```\nOther detail\n```",
+            f"```\n{message}\n```\n\n```\nfix: another message\n```",
+        )
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                self.assertIsNone(generator.parse_commit_message(raw))
+
+    def test_parser_never_extracts_inner_fences_or_drops_unmatched_body_fences(self) -> None:
+        generator = CommitGenerator()
+        message = "fix: keep embedded example\n\nExample:\n```python\nprint('important')\n```\n\nFinal detail"
+        self.assertEqual(generator.parse_commit_message(message), message)
+        self.assertEqual(generator.parse_commit_message(f"````text\n{message}\n````"), message)
+        for suffix in ("\n```", "\n~~~", "\n```text\nunclosed content"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(generator.parse_commit_message(message + suffix), message + suffix)
+
+    def test_preserved_message_matches_display_clipboard_and_git_payloads(self) -> None:
+        expected = "feat(parser)!: keep all details\n\nFirst paragraph.\n\n- Detail\n  continued detail  \n\nBREAKING CHANGE: preserve footer\n\nRefs: #42  "
+        for interactive in (False, True):
+            for fenced in (False, True):
+                with self.subTest(interactive=interactive, fenced=fenced):
+                    generator = CommitGenerator(interactive=interactive, auto_commit=True)
+                    raw = f"```text\n{expected}\n```" if fenced else expected
+                    response = {"content": raw}
+                    with (
+                        patch.object(generator, "display_reasoning"),
+                        patch("git_tools.generators.commitgen.generator.console") as console,
+                    ):
+                        generator._display_response(response)
+                    panels = [call.args[0] for call in console.print.call_args_list if call.args]
+                    self.assertEqual(panels[0].renderable, expected)
+                    with patch("git_tools.generators.commitgen.generator.subprocess.run") as run:
+                        generator._handle_commit_action(response)
+                    run.assert_called_once_with(["git", "commit", "-m", expected], check=True, timeout=30)
+                    generator._cli_auto_commit = False
+                    with patch.object(generator, "handoff_to_clipboard") as clipboard:
+                        generator._handle_commit_action(response)
+                    clipboard.assert_called_once_with(expected, leading_space=False)
+
     def test_noninteractive_sensitive_files_fail_without_prompting(self) -> None:
         generator = CommitGenerator(interactive=False)
 

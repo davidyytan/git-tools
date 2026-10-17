@@ -1,22 +1,46 @@
 """Conventional Commit prompt construction and response parsing."""
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 
 class CommitMessageMixin:
     """Build the commit prompt, call the model, and validate the reply."""
 
-    def _build_system_message(self, include_scope: bool, include_footer: bool) -> str:
-        """Construct the system message using template.
+    def _build_system_message(
+        self,
+        include_scope: bool,
+        include_footer: bool,
+        include_body: bool = True,
+        body_style: Literal["bullets", "prose"] = "bullets",
+    ) -> str:
+        """Build instructions and a template for the chosen commit structure."""
+        if body_style not in {"bullets", "prose"}:
+            raise ValueError(f"Unsupported commit body style: {body_style}")
 
-        Args:
-            include_scope: Whether to include scope in commit message
-            include_footer: Whether to include footer in commit message
+        message_template = "<type>" + ("[optional scope]" if include_scope else "")
+        message_template += "[!]: <description>"
+        if include_body:
+            message_template += "\n\n[optional body]"
+        if include_footer:
+            message_template += "\n\n[optional footer(s)]"
 
-        Returns:
-            Formatted system message for the LLM
-        """
+        if include_body:
+            body_instruction = (
+                "[optional body] MAY provide additional context below the required header, "
+                "beginning one blank line after it. "
+            )
+            body_instruction += (
+                "Use concise dash (-) bullets for body details."
+                if body_style == "bullets"
+                else "Use concise prose paragraphs for body details, not list markers. "
+                "Separate paragraphs with blank lines."
+            )
+        else:
+            body_instruction = (
+                "Do not include a body. Output only the required subject/header"
+                + (" and any permitted, supported footer(s)." if include_footer else ".")
+            )
         scope_instruction = (
             "[optional scope] may be provided to a commit's type, to provide additional "
             "contextual information and is contained within parenthesis in lowercase, e.g., "
@@ -28,12 +52,21 @@ class CommitMessageMixin:
             "Include [optional footer(s)] for breaking changes. If included as a footer, "
             "a breaking change MUST consist of the uppercase text BREAKING CHANGE, followed "
             "by a colon, space, and description, e.g., BREAKING CHANGE: environment variables "
-            "now take precedence over config files."
+            "now take precedence over config files. Include issue references only when "
+            "supplied by the input. Include footers only for actual breaking changes or "
+            "supported issue references; omit them otherwise. Never invent breaking changes, "
+            "issue numbers, or other facts. Separate footers from the header or body with "
+            "a blank line."
             if include_footer
-            else "Do not include the [optional footer(s)]."
+            else "Do not include the [optional footer(s)]. For actual breaking changes, "
+            "retain the ! marker before the header colon; do not put BREAKING CHANGE "
+            "in the body."
         )
         return self.commit_prompt.format(
-            scope_instruction=scope_instruction, footer_instruction=footer_instruction
+            message_template=message_template,
+            scope_instruction=scope_instruction,
+            body_instruction=body_instruction,
+            footer_instruction=footer_instruction,
         )
 
     def generate_commit_message(
@@ -61,65 +94,61 @@ class CommitMessageMixin:
         return self.invoke_llm(messages)
 
     def parse_commit_message(self, content: str) -> Optional[str]:
-        """Extract commit message from code block, preserving original formatting.
+        """Validate the header and preserve body/footer formatting.
 
-        Args:
-            content: Raw LLM response content
-
-        Returns:
-            Parsed commit message or None if invalid format
+        Only complete matching outer fences are unwrapped; never search for an
+        arbitrary inner block. Boundary blank lines and the header separator may
+        be normalized, but paragraph breaks, indentation, and footer text remain.
         """
-        content = content.strip()
+        lines = content.splitlines(keepends=True)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
 
-        # Extract from code block if present (remove ``` markers and optional language identifier)
-        code_block_pattern = r"```(?:[a-z]*\n)?(.*?)```"
-        match = re.search(code_block_pattern, content, re.DOTALL)
+        if len(lines) >= 2:
+            opening = re.fullmatch(
+                r" {0,3}(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)",
+                lines[0].rstrip("\r\n"),
+            )
+            if opening is not None:
+                fence = opening.group("fence")
+                closing = re.compile(
+                    rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*"
+                )
+                valid_info = fence[0] != "`" or "`" not in opening.group("info")
+                if (
+                    valid_info
+                    and closing.fullmatch(lines[-1].rstrip("\r\n"))
+                    and not any(
+                        closing.fullmatch(line.rstrip("\r\n"))
+                        for line in lines[1:-1]
+                    )
+                ):
+                    lines = lines[1:-1]
 
-        if match:
-            extracted_content = match.group(1).strip()
-        else:
-            # If no code block, use content as-is
-            extracted_content = content
-
-        # Split into lines and process
-        lines = extracted_content.split("\n")
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
         if not lines:
             return None
 
-        # First line should be the header (type: message or type(scope): message)
         header_line = lines[0].strip()
-
-        # Validate header format (conventional commit structure)
-        header_pattern = r"^[a-z]+(\([^)]*\))?!?:\s*.+"
-        if not re.match(header_pattern, header_line):
+        if not re.fullmatch(r"[a-z]+(?:\([^)]*\))?!?:[ \t]*\S[^\r\n]*", header_line):
             return None
 
-        # Keep the description as-is (don't lowercase)
-        # If there are more lines, validate and format the body
-        if len(lines) > 1:
-            # Skip the first empty line after header if present
-            body_start_idx = 1
-            if body_start_idx < len(lines) and not lines[body_start_idx].strip():
-                body_start_idx = 2
+        body_start = 1
+        while body_start < len(lines) and not lines[body_start].strip():
+            body_start += 1
+        if body_start == len(lines):
+            return header_line
 
-            # Collect body lines (should be bullet points with dashes)
-            body_lines = []
-            for line in lines[body_start_idx:]:
-                stripped = line.strip()
-                if stripped:
-                    body_lines.append(line)
-
-            if body_lines:
-                # Validate that body lines are bullet points starting with '-'
-                for line in body_lines:
-                    if not line.strip().startswith("-"):
-                        # Body line doesn't follow bullet format, but allow it
-                        pass
-
-                body = "\n".join(body_lines)
-                return f"{header_line}\n\n{body}"
-
-        return header_line
+        # Keep body line endings and whitespace; only its terminal newline is a
+        # boundary. Use the header's line ending for an inserted blank separator.
+        newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
+        body = "".join(lines[body_start:]).rstrip("\r\n")
+        return header_line + newline * 2 + body
 
     def _build_full_prompt(self, diff_content: str, system_msg: str) -> str:
         """Build the full prompt for local mode or fallback."""

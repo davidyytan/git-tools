@@ -297,6 +297,54 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertNotIn("--version-source", result.output)
 
+    def test_commit_body_flags_preserve_tristate_and_forward_enum_values(self) -> None:
+        cases = [([], None, None), (["--body"], True, None), (["--no-body"], False, None),
+                 (["--body-style", "bullets"], None, "bullets"),
+                 (["--body-style", "prose"], None, "prose"),
+                 (["--no-body", "--body-style", "prose"], False, "prose")]
+        for arguments, body, style in cases:
+            with self.subTest(arguments=arguments), \
+                 patch("git_tools.generators.commitgen.CommitGenerator") as generator:
+                result = self.runner.invoke(app, ["commit", *arguments])
+                self.assertEqual(result.exit_code, 0, result.output)
+                options = generator.call_args.kwargs
+                self.assertIs(options["include_body"], body)
+                self.assertEqual(options["body_style"], style)
+                self.assertIsNone(options["include_scope"])
+                self.assertIsNone(options["include_footer"])
+                generator.return_value.generate_commit.assert_called_once_with()
+
+    def test_commit_rejects_invalid_body_style_before_generator_construction(self) -> None:
+        with patch("git_tools.generators.commitgen.CommitGenerator") as generator:
+            result = self.runner.invoke(app, ["commit", "--body-style", "paragraphs"])
+        self.assertNotEqual(result.exit_code, 0)
+        generator.assert_not_called()
+
+    def test_commit_and_settings_help_explain_body_and_grouped_keys(self) -> None:
+        import re
+
+        commit_help = re.sub(r"\x1b\[[0-9;]*m", "", self.runner.invoke(app, ["commit", "--help"]).output)
+        compact = " ".join(commit_help.replace("│", " ").split())
+        self.assertIn("--body", compact)
+        self.assertIn("--no-body", compact)
+        self.assertIn("--body-style", compact)
+        self.assertIn("multiline description", compact)
+        self.assertIn("summary is always required", compact)
+        settings_help = self.runner.invoke(app, ["settings", "--help"]).output
+        for key in ("commit-format", "commit-scope", "commit-body", "commit-body-style", "commit-footer"):
+            self.assertIn(key, settings_help)
+
+    def test_settings_choices_group_commit_format_and_keep_direct_aliases(self) -> None:
+        from git_tools.cli import _SETTINGS_EDITORS
+
+        state = {"provider": "openai", "model": "gpt-4.1", "temperature": 0.6,
+                 "max_tokens": 32000, "max_retries": 1, "api_configured": False}
+        rows = {row.value: plain_title(row.title) for row in _build_settings_choices(state)}
+        self.assertEqual(rows["commit-format"], "Commit format: scope off · body on · Point form · footer off")
+        for key in ("commit-scope", "commit-body", "commit-body-style", "commit-footer"):
+            self.assertNotIn(key, rows)
+            self.assertIn(key, _SETTINGS_EDITORS)
+
     def test_settings_choices_show_provider_model_effort_then_api_key(self) -> None:
         state = {
             "provider": "cliproxyapi",

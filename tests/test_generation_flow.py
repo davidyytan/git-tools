@@ -87,7 +87,9 @@ class SavedGenerationSettingsTests(unittest.TestCase):
             for cli_value, expected in ((None, True), (False, False), (True, True)):
                 with self.subTest(interactive=interactive, cli_value=cli_value):
                     generator = CommitGenerator(interactive=interactive, include_scope=cli_value, include_footer=cli_value)
-                    saved = SimpleNamespace(commit_include_scope=True, commit_include_footer=True, default_token_limit=200000)
+                    saved = SimpleNamespace(commit_include_scope=True, commit_include_footer=True,
+                                            commit_include_body=True, commit_body_style="bullets",
+                                            default_token_limit=200000)
                     with (
                         patch("git_tools.generators.commitgen.generator.settings", saved),
                         patch.object(generator, "_build_system_message", return_value="system") as build,
@@ -95,7 +97,7 @@ class SavedGenerationSettingsTests(unittest.TestCase):
                         patch.object(generator, "_generate_with_provider", return_value=True),
                     ):
                         generator._handle_external_provider_workflow("diff")
-                    build.assert_called_once_with(expected, expected)
+                    build.assert_called_once_with(expected, expected, True, "bullets")
                     if interactive:
                         confirm.assert_called_once_with("Generate commit message using external providers?", default=True)
                     else:
@@ -185,7 +187,8 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
             stack.enter_context(patch("git_tools.generators.base.interaction.questionary.text", side_effect=AssertionError("routine settings prompt")))
             clipboard = stack.enter_context(patch("pyperclip.copy"))
             commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
-            stack.enter_context(patch("git_tools.generators.commitgen.generator.settings", SimpleNamespace(default_token_limit=6543, commit_include_scope=False, commit_include_footer=False)))
+            stack.enter_context(patch("git_tools.generators.commitgen.generator.settings", SimpleNamespace(default_token_limit=6543, commit_include_scope=False, commit_include_footer=False,
+                                                                                                    commit_include_body=True, commit_body_style="bullets")))
             generator.generate_commit()
         self.assertEqual(questions, ["Select commit mode:", "Generate commit message using external providers?", "Commit changes directly?", "Copy to clipboard?"])
         enhanced.assert_called_once_with(6543)

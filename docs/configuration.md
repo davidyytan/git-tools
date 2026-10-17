@@ -118,12 +118,17 @@ Settings define stable defaults; modes apply them without re-asking routine conf
 git-tools settings commit-input-budget 200000
 git-tools settings issue-pr-input-budget 200000
 git-tools settings max-tokens 32000       # output-budget alias
+git-tools settings commit-format          # Scope, body, style, and footer submenu
 git-tools settings commit-scope false
+git-tools settings commit-body true
+git-tools settings commit-body-style prose # bullets (point form) or prose
 git-tools settings commit-footer false
 git-tools settings issue-pr-source b     # d: diffs, c: messages, b: both
 ```
 
-These apply in direct and interactive generation. `--token-limit`, `--scope`/`--no-scope`, `--footer`/`--no-footer`, and `--source` override them for one run without saving. Budgets limit diff processing, not the entire request (templates, messages and context are additional input). Task modes, release versions, extra context, and write/send consent are not remembered as preferences.
+**Settings → Commit format** groups scope, description/body, description style, and footer, following [Commitizen's separation of summary, body, and footer](https://commitizen-tools.github.io/commitizen/tutorials/writing_commits/). The short `<type>(scope): summary` header always remains required; “description (body)” means the optional multiline text below it, not that summary. Defaults preserve the prior format: scope off, body enabled with point-form (`bullets`) details, footer off. Choose `prose` for paragraphs without list markers, or turn the body off for a header plus any permitted footer. Style is remembered while the body is off. Completed submenu edits save immediately; Back/Esc leaves the current level, and canceling an individual choice does not save it.
+
+These apply in direct and interactive generation. `--token-limit`, `--scope`/`--no-scope`, `--body`/`--no-body`, `--body-style bullets|prose`, `--footer`/`--no-footer`, and `--source` override them for one run without saving. Both provider and prepared local prompts use the chosen structure. The parser preserves body paragraphs, list continuation indentation, and footer separation rather than converting their style afterward. The prompts instruct the model to include footers only for supported breaking-change facts or supplied issue references, never to invent them; review the generated result. The fixed `chore: open release` subject ignores these format preferences. Budgets limit diff processing, not the entire request (templates, messages and context are additional input). Task modes, release versions, extra context, and write/send consent are not remembered as preferences.
 
 ## Environment Reference
 
@@ -148,6 +153,8 @@ Defaults below are application defaults; model/provider capabilities may constra
 | `GIT_TOOLS_DEFAULT_TOKEN_LIMIT` | `200000`, commit input budget |
 | `GIT_TOOLS_DEFAULT_ISSUE_PR_TOKEN_LIMIT` | `200000`, issue/PR input budget |
 | `GIT_TOOLS_COMMIT_INCLUDE_SCOPE` | `false`, include a Conventional Commit scope by default |
+| `GIT_TOOLS_COMMIT_INCLUDE_BODY` | `true`, allow the optional multiline description/body below the required summary |
+| `GIT_TOOLS_COMMIT_BODY_STYLE` | `bullets`; `bullets` (point form) or `prose` for the optional body |
 | `GIT_TOOLS_COMMIT_INCLUDE_FOOTER` | `false`, include a commit footer by default |
 | `GIT_TOOLS_ISSUE_PR_SOURCE` | `b`, default input source: diffs `d`, messages `c`, or both `b` |
 | `GIT_TOOLS_LARGE_DIFF_THRESHOLD` | `5000` |

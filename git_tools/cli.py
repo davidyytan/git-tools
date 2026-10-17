@@ -75,6 +75,11 @@ class BumpIncrementMode(str, Enum):
     exact = "exact"
 
 
+class CommitBodyStyle(str, Enum):
+    bullets = "bullets"
+    prose = "prose"
+
+
 class CommitWorkflowKind(str, Enum):
     open_release = "open-release"
 
@@ -453,10 +458,8 @@ def _build_settings_choices(
                    value="commit-input-budget"),
             Choice(styled("Issue/PR input token budget: ", fmt_primary(state.get("issue_pr_token_limit", 200000))),
                    value="issue-pr-input-budget"),
-            Choice(styled("Commit scope by default: ", fmt_primary(state.get("commit_include_scope", False))),
-                   value="commit-scope"),
-            Choice(styled("Commit footer by default: ", fmt_primary(state.get("commit_include_footer", False))),
-                   value="commit-footer"),
+            Choice(styled("Commit format: ", fmt_primary(_commit_format_summary(state))),
+                   value="commit-format"),
             Choice(styled("Issue/PR input source: ", fmt_primary(_SOURCE_LABELS[state.get("issue_pr_source", "b")])),
                    value="issue-pr-source"),
             Choice(styled("Max Retries: ", fmt_primary(state["max_retries"])), value="max-retries"),
@@ -566,6 +569,14 @@ def commit(
         Optional[bool],
         typer.Option("--footer/--no-footer", help="Include conventional commit footer"),
     ] = None,
+    body: Annotated[
+        Optional[bool],
+        typer.Option("--body/--no-body", help="Include the optional multiline description below the required short summary"),
+    ] = None,
+    body_style: Annotated[
+        Optional[CommitBodyStyle],
+        typer.Option("--body-style", help="Optional description (body) style: bullets (point form) or prose; summary is always required"),
+    ] = None,
     auto_commit: Annotated[
         Optional[bool],
         typer.Option("--commit/--no-commit", help="Commit changes directly"),
@@ -608,6 +619,8 @@ def commit(
             token_limit=token_limit,
             include_scope=scope,
             include_footer=footer,
+            include_body=body,
+            body_style=body_style.value if body_style is not None else None,
             auto_commit=auto_commit,
             copy_clipboard=copy,
             force_sensitive=force_sensitive,
@@ -1119,6 +1132,8 @@ def _load_settings_state() -> dict[str, Any]:
         "token_limit": fresh.default_token_limit,
         "issue_pr_token_limit": fresh.default_issue_pr_token_limit,
         "commit_include_scope": fresh.commit_include_scope,
+        "commit_include_body": fresh.commit_include_body,
+        "commit_body_style": fresh.commit_body_style,
         "commit_include_footer": fresh.commit_include_footer,
         "issue_pr_source": fresh.issue_pr_source,
         "openrouter_provider": fresh.openrouter_provider,
@@ -1787,13 +1802,14 @@ def _edit_issue_pr_input_budget(state: dict[str, Any], value: Optional[str] = No
 
 
 def _edit_boolean_preference(state: dict[str, Any], state_key: str, label: str,
-                             value: Optional[str]) -> None:
+                             value: Optional[str], *, default: bool = False) -> None:
     from .settings.settings import save_setting
 
     if value is None:
         picked = _ask_with_back(questionary.select(
             label + ":", choices=[Choice("No", value="false"), Choice("Yes", value="true"), _back_choice()],
-            default=str(state.get(state_key, False)).lower(), style=TYPER_STYLE, qmark="❯",
+            default=str(state.get(state_key, default)).lower(), style=TYPER_STYLE, qmark="❯",
+            instruction="",
         ))
         if picked in (None, _BACK):
             return
@@ -1815,6 +1831,88 @@ def _edit_commit_scope(state: dict[str, Any], value: Optional[str] = None) -> No
 
 def _edit_commit_footer(state: dict[str, Any], value: Optional[str] = None) -> None:
     _edit_boolean_preference(state, "commit_include_footer", "Commit footer by default", value)
+
+
+def _edit_commit_body(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_boolean_preference(
+        state, "commit_include_body", "Description (body) below the required summary", value, default=True,
+    )
+
+
+def _edit_commit_body_style(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        value = _ask_with_back(questionary.select(
+            "Description style:",
+            choices=[Choice("Point form", value="bullets"), Choice("Prose", value="prose"), _back_choice()],
+            default=state.get("commit_body_style", "bullets"), style=TYPER_STYLE, qmark="❯",
+            instruction="",
+        ))
+        if value in (None, _BACK):
+            return
+    style = value.strip().lower()
+    if style not in {"bullets", "prose"}:
+        error("Description style must be bullets (point form) or prose.")
+        raise typer.Exit(1)
+    save_setting("GIT_TOOLS_COMMIT_BODY_STYLE", style)
+    state["commit_body_style"] = style
+    console.print()
+    success(f"Description style saved as {'Point form' if style == 'bullets' else 'Prose'}")
+
+
+def _commit_format_summary(state: dict[str, Any]) -> str:
+    scope = "on" if state.get("commit_include_scope", False) else "off"
+    body = "on" if state.get("commit_include_body", True) else "off"
+    style = "Point form" if state.get("commit_body_style", "bullets") == "bullets" else "Prose"
+    footer = "on" if state.get("commit_include_footer", False) else "off"
+    return f"scope {scope} · body {body} · {style} · footer {footer}"
+
+
+def _build_commit_format_choices(state: dict[str, Any]) -> list[Choice]:
+    def toggle(label: str, key: str, alias: str, default: bool = False) -> Choice:
+        status = "on" if state.get(key, default) else "off"
+        return Choice(styled(label + ": ", fmt_primary(status)), value=alias)
+
+    return [
+        toggle("Scope", "commit_include_scope", "commit-scope"),
+        toggle("Description (body)", "commit_include_body", "commit-body", True),
+        Choice(styled("Description style: ", fmt_primary(
+            "Point form" if state.get("commit_body_style", "bullets") == "bullets" else "Prose",
+        )), value="commit-body-style"),
+        toggle("Footer", "commit_include_footer", "commit-footer"),
+        _back_choice(),
+    ]
+
+
+def _refresh_commit_format_state(state: dict[str, Any]) -> None:
+    """Refresh only these preferences, preserving environment/file precedence."""
+    from pydantic import TypeAdapter
+    from .settings.settings import effective_value
+
+    for key in ("commit_include_scope", "commit_include_body", "commit_body_style", "commit_include_footer"):
+        field = GitToolsSettings.model_fields[key]
+        value, _source = effective_value("GIT_TOOLS_" + key.upper())
+        state[key] = field.default if value is None else TypeAdapter(field.annotation).validate_python(value)
+
+
+def _edit_commit_format(state: dict[str, Any], value: Optional[str] = None) -> None:
+    """Edit related preferences repeatedly; each completed item saves immediately."""
+    if value is not None:
+        error("Commit format is a group; omit the value or use commit-scope, commit-body, commit-body-style, or commit-footer.")
+        raise typer.Exit(1)
+    console.print()
+    while True:
+        choice = _ask_with_back(questionary.select(
+            "Commit format (short summary is always required):",
+            choices=_build_commit_format_choices(state), style=TYPER_STYLE, qmark="❯", pointer="›",
+            instruction="",
+        ))
+        if choice in (None, _BACK):
+            return
+        _SETTINGS_EDITORS[choice](state)
+        _refresh_commit_format_state(state)
+        console.print()
 
 
 def _edit_issue_pr_source(state: dict[str, Any], value: Optional[str] = None) -> None:
@@ -2139,7 +2237,10 @@ _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
     "token-limit": _edit_commit_input_budget,
     "issue-pr-input-budget": _edit_issue_pr_input_budget,
     "issue-pr-token-limit": _edit_issue_pr_input_budget,
+    "commit-format": _edit_commit_format,
     "commit-scope": _edit_commit_scope,
+    "commit-body": _edit_commit_body,
+    "commit-body-style": _edit_commit_body_style,
     "commit-footer": _edit_commit_footer,
     "issue-pr-source": _edit_issue_pr_source,
     "max-retries": _edit_max_retries,

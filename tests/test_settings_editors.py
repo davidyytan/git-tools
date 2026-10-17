@@ -290,6 +290,35 @@ class StyledMenuTests(unittest.TestCase):
             self.assertEqual(rows["kimi-thinking"], f"Kimi thinking: {shown}")
 
 
+class CommitFormatEditorTests(unittest.TestCase):
+    def test_group_choices_use_existing_direct_editor_keys(self) -> None:
+        from git_tools.cli import _BACK, _SETTINGS_EDITORS, _build_commit_format_choices
+        from git_tools.generators.base import plain_title
+
+        rows = _build_commit_format_choices({"commit_include_scope": True, "commit_include_body": False,
+                                              "commit_body_style": "prose", "commit_include_footer": True})
+        self.assertEqual([row.value for row in rows],
+                         ["commit-scope", "commit-body", "commit-body-style", "commit-footer", _BACK])
+        self.assertEqual([plain_title(row.title) for row in rows],
+                         ["Scope: on", "Description (body): off", "Description style: Prose", "Footer: on", "← Back"])
+        for row in rows[:-1]:
+            self.assertIn(row.value, _SETTINGS_EDITORS)
+
+    def test_style_editor_only_saves_accepted_enum(self) -> None:
+        from git_tools.cli import _edit_commit_body_style
+
+        state = {"commit_body_style": "bullets"}
+        with patch.object(settings_module, "save_setting") as save, patch("git_tools.cli.console"):
+            _edit_commit_body_style(state, "prose")
+        save.assert_called_once_with("GIT_TOOLS_COMMIT_BODY_STYLE", "prose")
+        self.assertEqual(state["commit_body_style"], "prose")
+        with patch.object(settings_module, "save_setting") as save:
+            with self.assertRaises(typer.Exit):
+                _edit_commit_body_style(state, "invalid")
+        save.assert_not_called()
+        self.assertEqual(state["commit_body_style"], "prose")
+
+
 class DirectEffortCatalogTests(unittest.TestCase):
     """`git-tools settings effort <value>` accepts exactly what the picker offers."""
 

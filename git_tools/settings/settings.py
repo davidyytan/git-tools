@@ -9,7 +9,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Literal, Optional, Tuple
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, DotEnvSettingsSource
@@ -499,6 +499,8 @@ class GitToolsSettings(EffectiveSettings):
 
     # Saved generation preferences; explicit command flags override these.
     commit_include_scope: bool = Field(default=False)
+    commit_include_body: bool = Field(default=True)
+    commit_body_style: Literal["bullets", "prose"] = Field(default="bullets")
     commit_include_footer: bool = Field(default=False)
     issue_pr_source: str = Field(default="b")
 

@@ -5,10 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from ..base import BaseGenerator, print_panel, success, warning
+from ..base import BaseGenerator, console, print_panel, success, warning
 from ..bumpgen import ConfigError, Version
 from .config import (
-    DEDICATED_CONFIG_FILES,
     SUPPORTED_CONFIG_FILES,
     VERSION_SCHEME_LABEL,
     CzInitError,
@@ -51,32 +50,34 @@ class CommitizenInitGenerator(BaseGenerator):
                 "Use .cz.toml as the authoritative Commitizen config instead."
             )
         existing_config = find_existing_commitizen_config(root)
-        options = self._build_options(root, existing_config)
-        target_path = root / options.config_file
-        existing_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
-
+        target_path = root / self._resolve_config_file(existing_config)
         self._validate_target(existing_config, target_path)
-        if existing_text.strip():
-            try:
-                read_toml(target_path)
-            except CzInitError:
-                if not (self._cli_force and target_path.name in DEDICATED_CONFIG_FILES):
-                    raise
-                warning(f"Overwriting invalid TOML in {target_path}.")
-                existing_text = ""
+        # Validate before prompts or default detection. --force authorizes an
+        # update, never discarding malformed config or its unknown policy.
+        read_toml(target_path)
+        existing_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+        options = self._build_options(root, existing_config)
+        updated_text = upsert_commitizen_section(
+            existing_text,
+            build_commitizen_section(options, updating=existing_config is not None),
+        )
 
         if self._interactive:
+            # Explicit options can omit every input question; avoid an orphan gap.
+            if (
+                len(SUPPORTED_CONFIG_FILES) > 1
+                or self._cli_version is None
+                or self._cli_tag_format is None
+                or (self._cli_major_version_zero is None and Version.parse(options.version).major == 0)
+            ):
+                console.print()
             self._print_summary(options)
             if not self.prompt_confirm("Write Commitizen config now?", default=True):
+                console.print()
                 raise CzInitError("Init cancelled.")
+            console.print()
 
-        target_path.write_text(
-            upsert_commitizen_section(
-                existing_text,
-                build_commitizen_section(options),
-            ),
-            encoding="utf-8",
-        )
+        target_path.write_text(updated_text, encoding="utf-8")
 
         success(f"Wrote Commitizen config to {target_path}")
         self._print_follow_up_warnings(root, options)
@@ -90,8 +91,23 @@ class CommitizenInitGenerator(BaseGenerator):
         config_file = self._resolve_config_file(existing_config)
         version = self._resolve_version(root)
         tag_format = self._resolve_tag_format(root)
-        major_version_zero = self._resolve_major_version_zero(version)
-        scheme = Version.parse(version).scheme
+        saved = read_toml(existing_config) if existing_config is not None else {}
+        tool = saved.get("tool", {})
+        commitizen = tool.get("commitizen") if isinstance(tool, dict) else None
+        saved_major_zero = None
+        if isinstance(commitizen, dict):
+            saved_major_zero = commitizen.get("major_version_zero", False)
+            if not isinstance(saved_major_zero, bool):
+                raise CzInitError("tool.commitizen.major_version_zero must be a boolean.")
+        major_version_zero = self._resolve_major_version_zero(version, saved_major_zero)
+        parsed_version = Version.parse(version)
+        scheme = parsed_version.scheme
+        # Stable X.Y.Z text is valid in both schemes, so keep an explicit
+        # existing choice instead of silently changing future prerelease syntax.
+        if isinstance(commitizen, dict) and not parsed_version.is_prerelease:
+            saved_scheme = commitizen.get("version_scheme")
+            if isinstance(saved_scheme, str) and saved_scheme in VERSION_SCHEME_LABEL:
+                scheme = saved_scheme
         return CzInitOptions(
             config_file=config_file,
             version=version,
@@ -126,13 +142,13 @@ class CommitizenInitGenerator(BaseGenerator):
         while True:
             candidate = (
                 self.prompt_text("Enter the initial version", default)
-                if self._interactive
+                if self._interactive and self._cli_version is None
                 else default
             ).strip()
             try:
                 Version.parse(candidate)
             except ConfigError:
-                if not self._interactive:
+                if not self._interactive or self._cli_version is not None:
                     raise CzInitError(
                         f"Unsupported version: {candidate}. Expected semver2 "
                         "(1.0.0-alpha.0), or semver (1.0.0-a0)."
@@ -145,30 +161,36 @@ class CommitizenInitGenerator(BaseGenerator):
             return candidate
 
     def _resolve_tag_format(self, root: Path) -> str:
-        default = self._cli_tag_format or detect_default_tag_format(root)
+        saved_path = find_existing_commitizen_config(root)
+        saved = read_nested_string(read_toml(saved_path), ("tool", "commitizen", "tag_format")) if saved_path else None
+        default = self._cli_tag_format if self._cli_tag_format is not None else detect_default_tag_format(root)
         while True:
-            candidate = (
+            raw_candidate = (
                 self.prompt_text("Enter the tag format", default)
-                if self._interactive
+                if self._interactive and self._cli_tag_format is None
                 else default
-            ).strip()
+            )
+            # Existing policy is not a request to normalize or revalidate it.
+            if self._cli_tag_format is None and saved is not None and raw_candidate == saved:
+                return saved
+            candidate = raw_candidate.strip()
             if "$version" not in candidate:
-                if not self._interactive:
+                if not self._interactive or self._cli_tag_format is not None:
                     raise CzInitError("Tag format must include $version.")
                 warning('Tag format must include "$version".')
                 continue
             return candidate
 
-    def _resolve_major_version_zero(self, version: str) -> bool:
+    def _resolve_major_version_zero(self, version: str, saved: bool | None = None) -> bool:
         parsed = Version.parse(version)
         if self._cli_major_version_zero is not None:
             return self._cli_major_version_zero
 
-        if parsed.major > 0:
+        if saved is None and parsed.major > 0:
             return False
 
-        default = True
-        if self._interactive:
+        default = saved if saved is not None else True
+        if self._interactive and parsed.major == 0:
             return self.prompt_confirm(
                 "Treat breaking changes as MINOR while major version is zero?",
                 default=default,
@@ -192,6 +214,7 @@ class CommitizenInitGenerator(BaseGenerator):
     def _print_summary(self, options: CzInitOptions) -> None:
         lines = [
             f"Config file: {options.config_file}",
+            "Update mode: preserve custom settings, policy, and comments",
             f"Version: {options.version}",
             f"Version scheme: {VERSION_SCHEME_LABEL[options.scheme]}",
             f"Tag format: {options.tag_format}",

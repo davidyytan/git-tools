@@ -48,8 +48,9 @@ def error(message: str) -> None:
 
 
 def print_panel(content: str, title: str = "", border_style: str = STYLE_BORDER) -> None:
-    """Print content in a Typer-style panel."""
-    console.print(Panel(content.strip(), title=f"[bold]{title}[/bold]" if title else "", border_style=border_style, title_align=ALIGN_PANEL))
+    """Print a Typer-style panel followed by one blank separator line."""
+    console.print(Panel(content.strip(), title=f"[bold]{title}[/bold]" if title else "", border_style=border_style, title_align=ALIGN_PANEL), soft_wrap=False)
+    console.print()
 
 
 # Prompt palette, after agent-cli's: bold cyan for the primary name, grey for

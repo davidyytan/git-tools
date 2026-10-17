@@ -127,7 +127,7 @@ class CliTests(unittest.TestCase):
             }
             return True
 
-        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5", "follow-main", "default", ""])
+        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5"])
         original_models = mappings.PROVIDERS["kimicli"]["models"]
         self.addCleanup(
             mappings.PROVIDERS["kimicli"].__setitem__,
@@ -170,7 +170,7 @@ class CliTests(unittest.TestCase):
             "model": "anthropic/claude-sonnet-4.6",
             "api_configured": True,
         }
-        answers = iter(["kimicli", "new-kimi-key", None])
+        answers = iter(["kimicli", "new-kimi-key", None, None, None])
         original_key = os.environ.get("KIMICODE_API_KEY")
         original_models = mappings.PROVIDERS["kimicli"]["models"].copy()
 
@@ -207,7 +207,7 @@ class CliTests(unittest.TestCase):
             "model": "anthropic/claude-sonnet-4.6",
             "api_configured": True,
         }
-        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5", "follow-main", "default", ""])
+        answers = iter(["kimicli", "new-kimi-key", "kimi-k2.5"])
         original_models = mappings.PROVIDERS["kimicli"]["models"].copy()
 
         def refresh(_provider: str, *, force: bool = False) -> bool:
@@ -311,12 +311,11 @@ class CliTests(unittest.TestCase):
         titles = [plain_title(choice.title) for choice in _build_settings_choices(state)]
 
         self.assertEqual(
-            titles[:4],
+            titles[:3],
             [
                 "Provider: cliproxyapi",
                 "Main Model: gpt-5.5",
-                "Support Model (unused): follow-main",
-                "API Endpoint",
+                "API Endpoint: not configured (provider default)",
             ],
         )
         self.assertEqual(titles[-1], "Done")
@@ -343,7 +342,7 @@ class CliTests(unittest.TestCase):
             [
                 "Provider: kimicli",
                 "Main Model: kimi-k2.5",
-                "Support Model (unused): follow-main",
+                "API Endpoint: not configured (provider default)",
             ],
         )
 

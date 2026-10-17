@@ -28,7 +28,7 @@ class DisplayMixin:
             quota_breakdown: List of quota breakdown lines
             max_token_count: Maximum token count limit used
         """
-        if not quota_breakdown:
+        if not quota_breakdown or not any(line.strip() for line in quota_breakdown):
             return
 
         # Separate dropped files messages from quota allocations
@@ -68,12 +68,15 @@ class DisplayMixin:
 
         # Filter out empty lines and strip each line to prevent phantom newlines
         clean_lines = [line.strip() for line in lines if line.strip()]
+        if not clean_lines:
+            return
         console.print(Panel(
             "\n".join(clean_lines),
             title=f"[bold]File Quota[/bold] [{STYLE_DIM}]{max_token_count:,} tokens[/{STYLE_DIM}]",
             border_style=STYLE_BORDER,
             title_align=ALIGN_PANEL,
-        ))
+        ), soft_wrap=False)
+        console.print()
 
     def display_token_usage(self, response: Dict[str, Any]) -> None:
         """Unified method to display token usage and cost information.
@@ -125,7 +128,10 @@ class DisplayMixin:
             total_cost = (cost or 0) + (upstream_cost or 0)
             lines.append(f"[bold]Total Cost:[/bold] [{STYLE_SUCCESS}]${total_cost:.6f}[/{STYLE_SUCCESS}]")
 
-        console.print(Panel("\n".join(lines).strip(), title="[bold]Token Usage[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL))
+        if not lines:
+            return
+        console.print(Panel("\n".join(lines).strip(), title="[bold]Token Usage[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+        console.print()
 
     def display_reasoning(self, response: Dict[str, Any]) -> None:
         """Display reasoning content if available in response.
@@ -136,5 +142,6 @@ class DisplayMixin:
         reasoning_content = response.get("additional_kwargs", {}).get(
             "reasoning_content"
         )
-        if reasoning_content:
-            console.print(Panel(escape(reasoning_content.strip()), title="[bold]Reasoning[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL))
+        if reasoning_content and reasoning_content.strip():
+            console.print(Panel(escape(reasoning_content.strip()), title="[bold]Reasoning[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+            console.print()

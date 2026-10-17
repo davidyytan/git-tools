@@ -72,6 +72,38 @@ def get_commit_messages(cwd: Path, start_ref: str | None) -> list[str]:
     return [chunk.strip() for chunk in result.stdout.split("\x1e") if chunk.strip()]
 
 
+def require_clean_index(cwd: Path) -> None:
+    """Never let a bump commit absorb changes staged by another operation."""
+    # Presentation settings must not hide staged gitlinks from this safety check.
+    result = run_command(
+        ["git", "diff", "--cached", "--quiet", "--exit-code", "--ignore-submodules=none"],
+        cwd=cwd, check=False,
+    )
+    if result.returncode == 1:
+        raise GitError(
+            "Staged changes are present. Unstage them before applying a bump "
+            "(for example, git restore --staged .), then retry. No bump files were changed."
+        )
+    if result.returncode != 0:
+        raise GitError("Cannot verify that the Git index is clean; no bump files were changed.")
+
+
+def describe_git_tag_behavior(
+    cwd: Path, *, create_tag: bool, annotated: bool, signed: bool,
+    message: str | None, respect_git_config: bool,
+) -> str:
+    """Describe Git's effective action, including implicit configured signing."""
+    if not create_tag:
+        return "No tag"
+    if signed:
+        return "Signed annotated tag (explicit request)"
+    if respect_git_config and get_git_bool_config(cwd, "tag.gpgSign") is True:
+        return "Signed annotated tag (Git tag.gpgSign=true)"
+    if annotated or message is not None:
+        return "Annotated tag (unsigned)"
+    return "Lightweight tag (unsigned)"
+
+
 def git_add(cwd: Path, paths: list[Path]) -> None:
     args = ["git", "add", *[os.fspath(path.relative_to(cwd)) for path in paths]]
     run_command(args, cwd=cwd)

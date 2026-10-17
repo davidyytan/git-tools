@@ -18,27 +18,21 @@ class GenerationContentMixin:
     ) -> Optional[Tuple[str, str]]:
         """Return ``(input_source, content)``, or ``None`` when there is nothing to send.
 
-        Input source: CLI param > interactive prompt > default ("b").
+        Input source: CLI override > saved preference (default "b").
         """
         if not commit_info or commit_info["commit_count"] < 1:
             return "c", fixed_context.to_prompt_block() if fixed_context else ""
 
-        if self._cli_input_source is not None:
-            input_source = self._cli_input_source.lower()
-            input_source = "b" if input_source not in ("d", "c", "b") else input_source
-        elif self._interactive:
-            source_choices = ["Diffs only", "Commit messages only", "Both diffs and commits"]
-            source_choice = self.prompt_select("Select input source", source_choices, default="Both diffs and commits")
-            input_source = {
-                "Diffs only": "d",
-                "Commit messages only": "c",
-                "Both diffs and commits": "b",
-            }.get(source_choice, "b")
-        else:
-            input_source = "b"  # Default: both
+        input_source = (
+            self._cli_input_source
+            if self._cli_input_source is not None
+            else settings.issue_pr_source
+        ).lower()
+        # Preserve the documented fallback for an invalid explicit source.
+        input_source = "b" if input_source not in ("d", "c", "b") else input_source
 
         if input_source == "c":
-            messages = self.get_commit_messages(commit_info["commit_count"])
+            messages = self.get_commit_messages(commit_info)
             content_parts = []
             if messages:
                 content_parts.append(f"Commit Messages:\n```\n{messages}\n```")
@@ -49,7 +43,7 @@ class GenerationContentMixin:
                 warning("No commit messages to generate from")
                 return None
         elif input_source == "b":
-            messages = self.get_commit_messages(commit_info["commit_count"])
+            messages = self.get_commit_messages(commit_info)
             max_token_count = self.get_diff_processing_params(
                 settings.default_issue_pr_token_limit
             )
@@ -71,14 +65,12 @@ class GenerationContentMixin:
                 warning(
                     "No code diffs found for this range; using commit messages only."
                 )
+                console.print()
             if fixed_context is not None:
                 content_parts.append(fixed_context.to_prompt_block())
             content = "\n\n".join(content_parts)
 
-            # Display quota breakdown using unified method
-            # Only add spacing if interactive (text → panel transition)
-            if diff_has_content and self._interactive:
-                console.print()
+            # Each rendered quota panel owns its trailing separator.
             if diff_has_content:
                 self.display_quota_breakdown(diffs[1], max_token_count)
         else:
@@ -95,10 +87,6 @@ class GenerationContentMixin:
                 content_parts.append(fixed_context.to_prompt_block())
             content = "\n\n".join(content_parts)
 
-            # Display quota breakdown using unified method
-            # Only add spacing if interactive (text → panel transition)
-            if self._interactive:
-                console.print()
             self.display_quota_breakdown(diffs[1], max_token_count)
 
         return input_source, content

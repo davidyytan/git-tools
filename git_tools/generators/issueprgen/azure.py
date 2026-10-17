@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from git_tools.settings.settings import settings
 
-from ..base import info, warning
+from ..base import console, info, warning
 
 # Azure DevOps caps the pull request description at 4000 characters.
 AZURE_PR_DESCRIPTION_LIMIT = 4000
@@ -69,10 +69,9 @@ class AzureLimitMixin:
     def _should_apply_azure_limit(self) -> bool:
         """Resolve the Azure PR description limit.
 
-        Resolution order: CLI param > saved disable > origin detection/confirmation.
-        Saved auto detects origin; interactive answers apply to this run only.
-        Interactive prompts state what was detected and default to the
-        detected value; non-interactive runs use detection silently.
+        Resolution order: CLI param > saved disable > origin detection.
+        Saved auto detects origin without a routine confirmation. Interactive
+        runs still report the detection; explicit overrides apply to one run.
         """
         if self._cli_azure_limit is not None:
             return self._cli_azure_limit
@@ -92,10 +91,9 @@ class AzureLimitMixin:
             info("Origin remote: Non-Azure DevOps repository")
         else:
             info("Origin remote: Not configured")
+        console.print()
 
-        return self.prompt_confirm(
-            f"Apply the {settings.azure_pr_max_chars}-character PR description limit?", default=is_azure
-        )
+        return is_azure
 
     def _enforce_azure_pr_description_limit(
         self, parsed: str, content: str, system_msg: str
@@ -136,6 +134,6 @@ class AzureLimitMixin:
         if count > limit:
             warning(
                 f"PR description is {count}/{limit} characters, "
-                "which exceeds the configured PR limit. Copied anyway."
+                "which exceeds the configured PR limit. Keeping the content without truncation."
             )
         return parsed

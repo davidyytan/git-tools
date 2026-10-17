@@ -1,5 +1,6 @@
 """System and user prompt assembly for issue and PR generation."""
 
+import re
 from typing import Any, Dict, Optional
 
 from git_tools.templates import get_issue_template, get_pr_template
@@ -83,15 +84,48 @@ class PromptAssemblyMixin:
         return self.invoke_llm(messages)
 
     def parse_generated_content(self, content: str) -> str:
-        """Remove first and last lines from the generated content.
+        """Unwrap a complete outer code fence without discarding response text.
 
-        Args:
-            content: Raw content from LLM response
-
-        Returns:
-            Parsed content with first and last lines removed
+        Only a single fenced block covering the whole nonblank response is
+        unwrapped. Unfenced, partial, or ambiguous wrappers are left untouched.
+        Interior fences shorter than the outer marker remain part of the body.
         """
-        lines = content.split("\n")
-        if len(lines) > 2:
-            return "\n".join(lines[1:-1])
-        return content
+        lines = content.splitlines(keepends=True)
+        first = 0
+        last = len(lines) - 1
+        while first <= last and not lines[first].strip():
+            first += 1
+        while last >= first and not lines[last].strip():
+            last -= 1
+        if first >= last:
+            return content
+
+        opening = re.fullmatch(
+            r" {0,3}(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)",
+            lines[first].rstrip("\r\n"),
+        )
+        if opening is None:
+            return content
+        fence = opening.group("fence")
+        if fence[0] == "`" and "`" in opening.group("info"):
+            return content
+
+        # A closing fence must use the opening marker and be at least as long.
+        closing = re.compile(
+            rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*"
+        )
+        if closing.fullmatch(lines[last].rstrip("\r\n")) is None:
+            return content
+        if any(
+            closing.fullmatch(line.rstrip("\r\n"))
+            for line in lines[first + 1:last]
+        ):
+            return content
+
+        body = "".join(lines[first + 1:last])
+        # The line ending before the closing fence belongs to the wrapper.
+        if body.endswith("\r\n"):
+            return body[:-2]
+        if body.endswith(("\n", "\r")):
+            return body[:-1]
+        return body

@@ -3,8 +3,20 @@
 from typing import List, Optional
 
 import questionary
+from rich.markup import escape
+from rich.panel import Panel
 
-from .terminal import TYPER_STYLE, console, error, success, warning
+from .terminal import ALIGN_PANEL, STYLE_BORDER, TYPER_STYLE, console, error, success, warning
+
+
+def _prompt_label(message: str) -> str:
+    """Keep one terminal mark, preserving questions before appended colons."""
+    label = message.rstrip()
+    punctuation = ":"
+    while label.endswith(("?", "!", ":")):
+        punctuation = label[-1]
+        label = label[:-1].rstrip()
+    return f"{label}{punctuation}"
 
 
 class InteractionMixin:
@@ -13,7 +25,7 @@ class InteractionMixin:
     def prompt_text(self, message: str, default: str = "") -> str:
         """Prompt for text; cancellation aborts rather than accepting the default."""
         result = questionary.text(
-            f"{message}:",
+            _prompt_label(message),
             default=default,
             style=TYPER_STYLE,
             qmark="❯",
@@ -45,7 +57,7 @@ class InteractionMixin:
             choices = [default] + [c for c in choices if c != default]
 
         result = questionary.select(
-            f"{message}:",
+            _prompt_label(message),
             choices=choices,
             style=TYPER_STYLE,
             qmark="❯",
@@ -65,6 +77,38 @@ class InteractionMixin:
 
         return self.prompt_text(prompt, default or "")
 
+    def handoff_to_clipboard(
+        self, content: str, *, allow_auto: bool = True, leading_space: bool = True
+    ) -> None:
+        """Apply explicit copy policy, then the interactive/direct-mode default.
+
+        Credential failures may offer local output, but must not create an
+        unrequested automatic clipboard side effect in non-interactive mode.
+        An explicit copy request still applies to that fallback.
+        """
+        # Panel callers already own the separator before an automatic result.
+        copy_kwargs = {} if leading_space else {"leading_space": False}
+        copy_clipboard = getattr(self, "_cli_copy_clipboard", None)
+        if copy_clipboard is False:
+            return
+        if copy_clipboard is True:
+            self.copy_to_clipboard_auto(content, **copy_kwargs)
+        elif self._interactive:
+            self.ask_to_copy_to_clipboard(content)
+        elif allow_auto:
+            self.copy_to_clipboard_auto(content, **copy_kwargs)
+
+    def handoff_local_prompt(self, content: str, *, allow_auto: bool = True) -> None:
+        """Always show usable local output, independently of clipboard access."""
+        console.print(Panel(
+            escape(content),
+            title="[bold]Prompt[/bold]",
+            border_style=STYLE_BORDER,
+            title_align=ALIGN_PANEL,
+        ), soft_wrap=False)
+        console.print()
+        self.handoff_to_clipboard(content, allow_auto=allow_auto, leading_space=False)
+
     def ask_to_copy_to_clipboard(self, content: str) -> None:
         """Ask user to copy parsed content to clipboard."""
         try:
@@ -83,17 +127,19 @@ class InteractionMixin:
                 success("Copied to clipboard!")
             except Exception as e:
                 self.logger.error(f"Clipboard error: {e}")
+                console.print()
                 error("Failed to copy content.")
         else:
             console.print()
             success("Generation complete.")
 
-    def copy_to_clipboard_auto(self, content: str) -> None:
-        """Copy content to clipboard without prompting (for local mode)."""
+    def copy_to_clipboard_auto(self, content: str, *, leading_space: bool = True) -> None:
+        """Copy without prompting; panel callers can omit the leading separator."""
+        if leading_space:
+            console.print()
         try:
             import pyperclip
             pyperclip.copy(content)
-            console.print()
             success("Copied to clipboard!")
         except ImportError:
             self.logger.warning("pyperclip not installed. Clipboard functionality unavailable.")

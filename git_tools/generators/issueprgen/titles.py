@@ -114,6 +114,16 @@ class FixedTitleMixin:
         if self.start_pr:
             if self._workflow_pr_context is not None:
                 return self._workflow_pr_context.fixed_title
+            if self._cli_workflow_version is not None:
+                target = self._validate_semver_tuple(
+                    self._cli_workflow_version.strip(),
+                    label="start target version",
+                )
+                raise ValueError(
+                    f"Cannot use explicit Start target {target} without validated "
+                    "workflow version context. Resolve the current and base "
+                    ".cz.toml versions before generating this Start PR."
+                )
             inferred_target = self._infer_start_target_version()
             return f"Start {inferred_target}" if inferred_target else None
 

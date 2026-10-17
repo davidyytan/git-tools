@@ -39,7 +39,7 @@ class IssuePullRequestPromptTests(unittest.TestCase):
             "subprocess.check_output",
             return_value=raw_messages,
         ) as check_output:
-            messages = generator.get_commit_messages(2)
+            messages = generator.get_commit_messages({"commit_range": "base-sha..head-sha"})
 
         self.assertEqual(
             messages,
@@ -54,7 +54,7 @@ class IssuePullRequestPromptTests(unittest.TestCase):
         )
         self.assertEqual(
             check_output.call_args.args[0],
-            ["git", "log", "-2", "--pretty=format:%B%x1e"],
+            ["git", "log", "--pretty=format:%B%x1e", "base-sha..head-sha", "--"],
         )
 
     def test_load_version_from_ref_reads_only_dot_cz_toml(self) -> None:
@@ -72,14 +72,14 @@ class IssuePullRequestPromptTests(unittest.TestCase):
             ["git", "show", "origin/develop:.cz.toml"],
         )
 
-    def test_pr_commit_log_prefers_origin_base_branch(self) -> None:
+    def test_pr_commit_log_uses_resolved_remote_only_base_branch(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
         def fake_run(*args, **kwargs):
             cmd = args[0]
-            ref = cmd[-1]
-            if ref == "origin/develop":
-                return subprocess.CompletedProcess(cmd, 0)
+            ref = cmd[-1].removesuffix("^{commit}")
+            if ref in {"origin/develop", "refs/remotes/origin/develop"}:
+                return subprocess.CompletedProcess(cmd, 0, stdout="base-sha\n")
             raise subprocess.CalledProcessError(1, cmd)
 
         with patch(
@@ -106,9 +106,9 @@ class IssuePullRequestPromptTests(unittest.TestCase):
 
         def fake_run(*args, **kwargs):
             cmd = args[0]
-            ref = cmd[-1]
-            if ref == "origin/master":
-                return subprocess.CompletedProcess(cmd, 0)
+            ref = cmd[-1].removesuffix("^{commit}")
+            if ref in {"origin/master", "refs/remotes/origin/master"}:
+                return subprocess.CompletedProcess(cmd, 0, stdout="base-sha\n")
             raise subprocess.CalledProcessError(1, cmd)
 
         with patch(
@@ -596,6 +596,7 @@ Issue: #123
             generation_type="pr",
             release_pr=True,
             interactive=False,
+            copy_clipboard=True,
         )
         release_context = PromotionPrContext(
             current_branch="release/1.0.0",
@@ -644,6 +645,7 @@ Issue: #123
             generation_type="pr",
             start_pr=True,
             interactive=False,
+            copy_clipboard=True,
         )
         workflow_context = WorkflowPrContext(
             workflow_kind="develop-start",
@@ -1217,7 +1219,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             self.assertFalse(generator._should_apply_azure_limit())
         prompt_confirm.assert_not_called()
 
-    def test_interactive_prompt_defaults_follow_detection(self) -> None:
+    def test_interactive_saved_auto_applies_detection_without_prompt(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
         with patch.object(
             generator,
@@ -1227,7 +1229,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             generator, "prompt_confirm", return_value=True
         ) as prompt_confirm:
             self.assertTrue(generator._should_apply_azure_limit())
-        self.assertEqual(prompt_confirm.call_args.kwargs["default"], True)
+        prompt_confirm.assert_not_called()
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
         with patch.object(
@@ -1238,14 +1240,14 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             generator, "prompt_confirm", return_value=False
         ) as prompt_confirm:
             self.assertFalse(generator._should_apply_azure_limit())
-        self.assertEqual(prompt_confirm.call_args.kwargs["default"], False)
+        prompt_confirm.assert_not_called()
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
         with patch.object(generator, "_get_origin_url", return_value=None), patch.object(
             generator, "prompt_confirm", return_value=False
         ) as prompt_confirm:
             self.assertFalse(generator._should_apply_azure_limit())
-        self.assertEqual(prompt_confirm.call_args.kwargs["default"], False)
+        prompt_confirm.assert_not_called()
 
     def test_interactive_detection_prints_origin_remote_line(self) -> None:
         cases = [
@@ -1424,7 +1426,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         mocks["warning"].assert_called_once()
         warning_message = mocks["warning"].call_args[0][0]
         self.assertIn("exceeds the configured PR limit", warning_message)
-        self.assertIn("Copied anyway", warning_message)
+        self.assertIn("Keeping the content without truncation", warning_message)
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
         self.assertIn("y" * 100, copied)

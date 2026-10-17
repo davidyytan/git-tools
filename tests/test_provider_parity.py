@@ -128,7 +128,7 @@ class ProviderParityTests(unittest.TestCase):
         from git_tools.cli import _edit_provider
         from git_tools.settings import settings as module
         state = {"provider": "openrouter", "model": "main", "api_configured": True}
-        with patch.dict(os.environ, {"GIT_TOOLS_API_BASE": "https://original.invalid/v1"}), patch("git_tools.cli._ask_with_back", side_effect=["qwen", None]), patch.object(module, "save_settings") as save:
+        with patch.dict(os.environ, {"GIT_TOOLS_API_BASE": "https://original.invalid/v1"}), patch("git_tools.cli._ask_with_back", side_effect=["qwen", None, None]), patch.object(module, "save_settings") as save:
             _edit_provider(state)
             self.assertEqual(os.environ["GIT_TOOLS_API_BASE"], "https://original.invalid/v1")
             self.assertEqual(state["provider"], "openrouter")
@@ -210,7 +210,7 @@ class ProviderParityTests(unittest.TestCase):
     def test_named_provider_in_terminal_runs_full_wizard(self):
         from git_tools.settings import settings as module
         state = {"provider": "kimicli", "model": "old", "api_configured": True}
-        with patch("git_tools.cli._has_interactive_terminal", return_value=True), patch("git_tools.cli._load_settings_state", return_value=state), patch("git_tools.cli._prompt_provider_api_key", return_value=(True, "test-key")), patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), patch("git_tools.cli._ask_with_back", side_effect=["follow-main", "route-slug", "high"]), patch("git_tools.settings.mappings.fetch_openrouter_endpoints", return_value=_endpoints("route-slug")), patch.object(module, "save_settings") as save:
+        with patch("git_tools.cli._has_interactive_terminal", return_value=True), patch("git_tools.cli._load_settings_state", return_value=state), patch("git_tools.cli._prompt_provider_api_key", return_value=(True, "test-key")), patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), patch("git_tools.cli._ask_with_back", side_effect=["route-slug", "high"]), patch("git_tools.settings.mappings.fetch_openrouter_endpoints", return_value=_endpoints("route-slug")), patch.object(module, "save_settings") as save:
             result = CliRunner().invoke(app, ["settings", "provider", "openrouter"])
         self.assertEqual(result.exit_code, 0, str(result.exception))
         save.assert_called_once()
@@ -233,7 +233,7 @@ class ProviderParityTests(unittest.TestCase):
         from git_tools.cli import _edit_provider
         from git_tools.settings import settings as module
         state = {"provider": "kimicli", "model": "old", "api_configured": True}
-        with patch("git_tools.cli._prompt_provider_api_key", return_value=(True, "candidate-key")), patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), patch("git_tools.cli._ask_with_back", side_effect=["follow-main", "any", None]), patch("git_tools.settings.mappings.fetch_openrouter_endpoints", return_value=()), patch.object(module, "save_settings") as save, patch.dict(os.environ, {}, clear=False):
+        with patch("git_tools.cli._prompt_provider_api_key", side_effect=[(True, "candidate-key"), (False, None)]), patch("git_tools.cli._choose_provider_model", side_effect=["vendor/model", None]), patch("git_tools.cli._ask_with_back", side_effect=["any", None, None, None]), patch("git_tools.settings.mappings.fetch_openrouter_endpoints", return_value=()), patch.object(module, "save_settings") as save, patch.dict(os.environ, {}, clear=False):
             original = os.environ.get("OPENROUTER_API_KEY")
             _edit_provider(state, "openrouter", interactive=True)
             self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), original)

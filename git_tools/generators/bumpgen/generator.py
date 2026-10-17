@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
-from .config import load_bump_config
-from .engine import BumpOptions, run_bump
+from .config import load_bump_config, normalize_tag
+from .engine import BumpOptions, apply_bump_plan, plan_bump, print_bump_plan, run_bump
 from .errors import BumpError
+from .git import get_tag_names
+from .repo import resolve_version_history_ref
 from .ui import BaseGenerator, info, print_panel
 
 
@@ -57,10 +60,56 @@ class BumpGenerator(BaseGenerator):
 
         options = self._build_options()
 
-        if self._interactive and not options.get_next:
-            self._print_summary(options)
+        if not self._interactive or options.get_next:
+            run_bump(options, cwd=root)
+            return
 
-        run_bump(options, cwd=root)
+        prompted = self._cli_increment is None or self._cli_prerelease is None
+        if not options.yes:
+            config = load_bump_config(root)
+            # Resolve with consent solely to determine whether consent is needed;
+            # inconsistent tagged history still raises the existing refusal.
+            history_ref = resolve_version_history_ref(
+                root, current_version=config.current_version_text,
+                current_tag_name=normalize_tag(config.current_version, config.tag_format),
+                tag_names=get_tag_names(root), yes=True,
+            )
+            if history_ref is None:
+                prompted = True
+                if not self.prompt_confirm(
+                    "No tags or prior bump anchor exist. Use the initial untagged history?",
+                    default=False,
+                ):
+                    print()
+                    info("Bump cancelled. No files or Git state changed.")
+                    return
+                options = replace(options, yes=True)
+
+        plan = plan_bump(options, cwd=root)
+        if prompted:
+            print()
+        self._print_summary(options, tag_behavior=plan.tag_behavior)
+        print_bump_plan(plan, show_diff=options.dry_run)
+        print()
+        if options.dry_run:
+            return
+        action = self.prompt_select(
+            "Choose action (Apply writes the listed files, commits, and creates the configured tag)",
+            ["Preview", "Apply", "Cancel"], default="Preview",
+        )
+        print()
+        if action == "Preview":
+            print_bump_plan(plan)
+            print()
+            action = self.prompt_select(
+                "Apply this reviewed plan or cancel?",
+                ["Apply", "Cancel"], default="Cancel",
+            )
+            print()
+        if action == "Apply":
+            apply_bump_plan(plan)
+        else:
+            info("Bump cancelled. No files or Git state changed.")
 
     def _build_options(self) -> BumpOptions:
         increment = self._cli_increment
@@ -95,24 +144,6 @@ class BumpGenerator(BaseGenerator):
                     default=increment_mode,
                 )
 
-            if not self._cli_yes:
-                yes = self.prompt_confirm(
-                    "Treat a missing current-version tag as an initial tag if needed?",
-                    default=False,
-                )
-
-            if not self._cli_gpg_sign:
-                gpg_sign = self.prompt_confirm(
-                    "Create a signed tag?",
-                    default=False,
-                )
-
-            if not dry_run:
-                dry_run = self.prompt_confirm(
-                    "Preview only without changing files or git state?",
-                    default=False,
-                )
-
         return BumpOptions(
             increment=increment,
             default_increment=self._cli_default_increment,
@@ -138,18 +169,10 @@ class BumpGenerator(BaseGenerator):
             return
 
         info(f"Current version: {config.current_version_text}")
+        if not self._cli_get_next:
+            print()
 
-    def _print_summary(self, options: BumpOptions) -> None:
-        tag_behavior = "No tag"
-        if options.create_tag:
-            tag_behavior = "Respect git config"
-            if options.gpg_sign:
-                tag_behavior = "Signed tag"
-            elif options.annotated_tag or options.annotated_tag_message is not None:
-                tag_behavior = "Annotated tag"
-            elif not options.respect_git_config:
-                tag_behavior = "Ignore git tag config"
-
+    def _print_summary(self, options: BumpOptions, *, tag_behavior: str) -> None:
         lines = [
             f"Increment: {options.increment or 'auto-detect from commits'}",
             f"Default increment: {options.default_increment or 'none'}",

@@ -69,6 +69,8 @@ class CommitGenerator(
             console.print()
 
         workflow_kind = self._resolve_commit_mode()
+        if self._interactive and self._cli_workflow_kind is None:
+            console.print()
         if workflow_kind != WORKFLOW_KIND_NORMAL:
             self._handle_workflow_commit(workflow_kind)
             return
@@ -96,7 +98,7 @@ class CommitGenerator(
         return diff_content
 
     def _handle_large_diff_processing(self, diff_content: str) -> str:
-        """Handle diff processing with size limiting (always prompts for limits)."""
+        """Process the diff using a CLI override or saved input budget."""
         # Get processing parameters upfront
         max_token_count = self.get_diff_processing_params(settings.default_token_limit)
 
@@ -107,9 +109,6 @@ class CommitGenerator(
 
             # Display quota breakdown if available
             if quota_breakdown:
-                # Only add spacing if interactive (questionary → panel transition)
-                if self._interactive:
-                    console.print()
                 self.display_quota_breakdown(quota_breakdown, max_token_count)
 
             return enhanced_diff
@@ -119,55 +118,56 @@ class CommitGenerator(
     def _handle_external_provider_workflow(self, diff_content: str) -> bool:
         """Handle the external provider workflow for commit generation.
 
-        Uses CLI parameters if provided. If not:
-        - Interactive mode: prompts for input
-        - Non-interactive mode: uses defaults (no scope, no footer, use external providers)
+        Scope and footer reuse saved preferences unless explicitly overridden.
+        Interactive mode retains consent before sending content externally.
         """
-        # Add spacing before interactive prompts (after quota panel)
-        if self._interactive:
-            console.print()
-
-        # Include scope: CLI param > interactive prompt > default (False)
-        if self._cli_include_scope is not None:
-            include_scope = self._cli_include_scope
-        elif self._interactive:
-            include_scope = self.prompt_confirm("Include conventional commit scope?", default=False)
-        else:
-            include_scope = False
-
-        # Include footer: CLI param > interactive prompt > default (False)
-        if self._cli_include_footer is not None:
-            include_footer = self._cli_include_footer
-        elif self._interactive:
-            include_footer = self.prompt_confirm("Include conventional commit footer?", default=False)
-        else:
-            include_footer = False
+        include_scope = (
+            self._cli_include_scope
+            if self._cli_include_scope is not None
+            else settings.commit_include_scope
+        )
+        include_footer = (
+            self._cli_include_footer
+            if self._cli_include_footer is not None
+            else settings.commit_include_footer
+        )
 
         system_msg = self._build_system_message(include_scope, include_footer)
+        if self._interactive:
+            self.display_generation_settings(
+                input_budget=self.get_diff_processing_params(settings.default_token_limit),
+                details=f"Scope: {'on' if include_scope else 'off'}; footer: {'on' if include_footer else 'off'}",
+            )
 
         # In interactive mode, ask if user wants to use external providers
         # In non-interactive mode, always use external providers
         if self._interactive:
             if not self.prompt_confirm("Generate commit message using external providers?", default=True):
+                console.print()
                 self._handle_local_mode(diff_content, system_msg)
                 return False
 
         return self._generate_with_provider(diff_content, system_msg)
 
-    def _handle_local_mode(self, diff_content: str, system_msg: str) -> None:
-        """Handle local mode: build prompt and copy to clipboard."""
+    def _handle_local_mode(
+        self, diff_content: str, system_msg: str, *, allow_auto: bool = True
+    ) -> None:
+        """Display the local prompt, then honor the requested clipboard policy."""
         prompt = self._build_full_prompt(diff_content, system_msg)
-        self.ask_to_copy_to_clipboard(prompt)
+        self.handoff_local_prompt(prompt, allow_auto=allow_auto)
 
     def _generate_with_provider(self, diff_content: str, system_msg: str) -> bool:
         """Generate commit message using external provider."""
         provider = self.select_provider()
 
+        # Separate the consent answer from provider diagnostics or local output.
+        if self._interactive:
+            console.print()
         # Check API key - if not configured, offer setup or fall back to local mode
         if not self.ensure_api_key_configured(provider):
             info("Falling back to local mode...")
-            prompt = self._build_full_prompt(diff_content, system_msg)
-            self.copy_to_clipboard_auto(prompt)
+            console.print()
+            self._handle_local_mode(diff_content, system_msg, allow_auto=False)
             return False
 
         model, temperature, max_tokens = self.select_model_params(provider)
@@ -176,10 +176,6 @@ class CommitGenerator(
             error(f"Failed to initialize {provider} service. Please check your configuration and API keys.")
             return False
 
-        # Spacing before spinner only in interactive mode (Questionary → Spinner)
-        # In CLI mode, Panel → Spinner → Panel, spinner disappears leaving Panel → Panel (no spacing)
-        if self._interactive:
-            console.print()
         response = self.generate_commit_message(diff_content, system_msg)
         if not response:
             error("Failed to generate commit message")
@@ -187,9 +183,6 @@ class CommitGenerator(
 
         self._display_response(response)
         self.display_token_usage(response)
-        # Only add spacing if interactive (panel → questionary transition)
-        if self._interactive:
-            console.print()
         self._handle_commit_action(response)
         return True
 
@@ -198,7 +191,8 @@ class CommitGenerator(
         self.display_reasoning(response)
         commit_message = self.parse_commit_message(response["content"])
         if commit_message:
-            console.print(Panel(escape(commit_message.strip()), title="[bold]Commit Message[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL))
+            console.print(Panel(escape(commit_message.strip()), title="[bold]Commit Message[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+            console.print()
 
     def _handle_commit_action(self, response: Dict[str, Any]) -> None:
         """Handle the commit or clipboard action.
@@ -226,8 +220,9 @@ class CommitGenerator(
             should_commit = True  # Default: commit directly
 
         if should_commit:
-            # Spacing before git output (Panel → Text in CLI, Questionary → Text in interactive)
-            console.print()
+            # Panels already separate direct actions; prompt answers need a gap.
+            if self._interactive and self._cli_auto_commit is None:
+                console.print()
             try:
                 subprocess.run(
                     ["git", "commit", "-m", commit_message], check=True, timeout=30
@@ -246,14 +241,9 @@ class CommitGenerator(
                 if commit_message and commit_message.strip()
                 else raw_content
             )
-            # Determine if we should copy to clipboard: CLI param > interactive prompt > default (True)
-            if self._cli_copy_clipboard is not None:
-                if self._cli_copy_clipboard:
-                    self.copy_to_clipboard_auto(content_to_copy)
-            elif self._interactive:
-                self.ask_to_copy_to_clipboard(content_to_copy)
-            else:
-                self.copy_to_clipboard_auto(content_to_copy)
+            if self._interactive and self._cli_auto_commit is None and self._cli_copy_clipboard is True:
+                console.print()
+            self.handoff_to_clipboard(content_to_copy, leading_space=False)
 
 
 def generate_commit() -> None:

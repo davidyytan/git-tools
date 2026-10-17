@@ -103,6 +103,9 @@ def _has_interactive_terminal() -> bool:
 
 REASONING_EFFORT_CHOICES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
+_SOURCE_LABELS = {"b": "Both commits and diffs", "c": "Commit messages", "d": "Diffs"}
+
+
 # Sentinel Choice value that triggers free-text model entry in the settings menu.
 ADD_MODEL_SENTINEL = "__git_tools_add_model__"
 
@@ -401,11 +404,10 @@ def _build_settings_choices(
         ),
     ]
 
-    choices.extend([
-        Choice(styled("Support Model (unused): ", fmt_dim(state.get("support_model", "follow-main"))),
-               value="support-model"),
-        Choice(styled("API Endpoint"), value="api-base"),
-    ])
+    choices.append(Choice(
+        styled("API Endpoint: ", fmt_primary(_safe_endpoint_display(state.get("api_base") or "")),
+               fmt_dim(f" ({state.get('api_base_source', 'provider default')})")), value="api-base",
+    ))
     if provider == "openrouter":
         choices.append(Choice(
             styled("OpenRouter upstream routing: ", fmt_primary(state.get("openrouter_provider") or "any")),
@@ -442,9 +444,21 @@ def _build_settings_choices(
     )
     choices.extend(
         [
-            Choice(styled(f"API Key ({provider}): ", api_status), value="api-key"),
+            Choice(styled(f"API Key ({provider}): ", api_status,
+                          fmt_dim(f" ({state['api_key_source']})") if state.get("api_key_source") else ""),
+                   value="api-key"),
             Choice(styled("Temperature: ", fmt_primary(state["temperature"])), value="temperature"),
-            Choice(styled("Max Tokens: ", fmt_primary(state["max_tokens"])), value="max-tokens"),
+            Choice(styled("Output token budget: ", fmt_primary(state["max_tokens"])), value="max-tokens"),
+            Choice(styled("Commit input token budget: ", fmt_primary(state.get("token_limit", 200000))),
+                   value="commit-input-budget"),
+            Choice(styled("Issue/PR input token budget: ", fmt_primary(state.get("issue_pr_token_limit", 200000))),
+                   value="issue-pr-input-budget"),
+            Choice(styled("Commit scope by default: ", fmt_primary(state.get("commit_include_scope", False))),
+                   value="commit-scope"),
+            Choice(styled("Commit footer by default: ", fmt_primary(state.get("commit_include_footer", False))),
+                   value="commit-footer"),
+            Choice(styled("Issue/PR input source: ", fmt_primary(_SOURCE_LABELS[state.get("issue_pr_source", "b")])),
+                   value="issue-pr-source"),
             Choice(styled("Max Retries: ", fmt_primary(state["max_retries"])), value="max-retries"),
             Choice(pr_limit, value="azure-pr-limit"),
             Choice(styled("PR Max Chars: ", fmt_primary(state.get("azure_pr_max_chars", 4000))),
@@ -496,6 +510,7 @@ def main(ctx: typer.Context) -> None:
         if choice is None or choice == "exit":
             raise typer.Exit(0)
 
+        console.print()
         # Settings is a detour, not a destination: leaving it lands back here.
         if choice == "settings":
             try:
@@ -505,6 +520,7 @@ def main(ctx: typer.Context) -> None:
                 raise typer.Exit(0)
             # Content commands read the settings singleton; pick up any edits.
             reload_settings()
+            console.print()
             continue
 
         # Invoke the selected command with interactive=True
@@ -536,11 +552,11 @@ def commit(
     ] = None,
     max_tokens: Annotated[
         Optional[int],
-        typer.Option("--max-tokens", help="Maximum tokens for completion"),
+        typer.Option("--max-tokens", help="Output token budget for the generated response"),
     ] = None,
     token_limit: Annotated[
         Optional[int],
-        typer.Option("--token-limit", "-l", help="Token limit for diff processing"),
+        typer.Option("--token-limit", "-l", help="Input token budget for source changes"),
     ] = None,
     scope: Annotated[
         Optional[bool],
@@ -571,7 +587,7 @@ def commit(
     ] = None,
     interactive: Annotated[
         bool,
-        typer.Option("--interactive", "-i", hidden=True, help="Run in interactive mode"),
+        typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
     """Generate a conventional commit message or the release opener subject.
@@ -602,6 +618,11 @@ def commit(
     except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(1)
     except Exception as e:
         logging.error(f"Unexpected error: {e}", exc_info=True)
         error("An unexpected error occurred. Please check the logs.")
@@ -637,15 +658,19 @@ def issue(
     ] = None,
     max_tokens: Annotated[
         Optional[int],
-        typer.Option("--max-tokens", help="Maximum tokens for completion"),
+        typer.Option("--max-tokens", help="Output token budget for the generated response"),
     ] = None,
     token_limit: Annotated[
         Optional[int],
-        typer.Option("--token-limit", "-l", help="Token limit for diff processing"),
+        typer.Option("--token-limit", "-l", help="Input token budget for source changes"),
+    ] = None,
+    copy: Annotated[
+        Optional[bool],
+        typer.Option("--copy/--no-copy", help="Copy generated content to clipboard or skip copying"),
     ] = None,
     interactive: Annotated[
         bool,
-        typer.Option("--interactive", "-i", hidden=True, help="Run in interactive mode"),
+        typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
     """Generate a GitHub issue from recent commits.
@@ -667,12 +692,18 @@ def issue(
             temperature=temperature,
             max_tokens=max_tokens,
             token_limit=token_limit,
+            copy_clipboard=copy,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
     except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(1)
     except Exception as e:
         logging.error(f"Unexpected error: {e}", exc_info=True)
         error("An unexpected error occurred. Please check the logs.")
@@ -743,11 +774,15 @@ def pr(
     ] = None,
     max_tokens: Annotated[
         Optional[int],
-        typer.Option("--max-tokens", help="Maximum tokens for completion"),
+        typer.Option("--max-tokens", help="Output token budget for the generated response"),
     ] = None,
     token_limit: Annotated[
         Optional[int],
-        typer.Option("--token-limit", "-l", help="Token limit for diff processing"),
+        typer.Option("--token-limit", "-l", help="Input token budget for source changes"),
+    ] = None,
+    copy: Annotated[
+        Optional[bool],
+        typer.Option("--copy/--no-copy", help="Copy generated content to clipboard or skip copying"),
     ] = None,
     azure_limit: Annotated[
         Optional[bool],
@@ -766,7 +801,7 @@ def pr(
     ] = None,
     interactive: Annotated[
         bool,
-        typer.Option("--interactive", "-i", hidden=True, help="Run in interactive mode"),
+        typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
     """Generate a pull request description from recent commits.
@@ -820,12 +855,18 @@ def pr(
             max_tokens=max_tokens,
             token_limit=token_limit,
             azure_limit=azure_limit,
+            copy_clipboard=copy,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
     except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(1)
     except Exception as e:
         logging.error(f"Unexpected error: {e}", exc_info=True)
         error("An unexpected error occurred. Please check the logs.")
@@ -864,7 +905,7 @@ def bump(
     ] = False,
     dry_run: Annotated[
         bool,
-        typer.Option("--dry-run", help="Print the computed bump without changing files or git state"),
+        typer.Option("--dry-run", help="Preview planned version files and diffs without changing files or Git state"),
     ] = False,
     get_next: Annotated[
         bool,
@@ -899,7 +940,7 @@ def bump(
     ] = True,
     check_consistency: Annotated[
         bool,
-        typer.Option("--check-consistency/--no-check-consistency", help="Require managed version fields to match before writing"),
+        typer.Option("--check-consistency/--no-check-consistency", help="Require the authoritative version field to match before writing"),
     ] = True,
     major_version_zero: Annotated[
         Optional[bool],
@@ -907,7 +948,7 @@ def bump(
     ] = None,
     interactive: Annotated[
         bool,
-        typer.Option("--interactive", "-i", hidden=True, help="Run in interactive mode"),
+        typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
     """Bump version from Conventional Commits and optionally create the matching tag.
@@ -949,6 +990,11 @@ def bump(
     except BumpError as e:
         error(str(e))
         raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(1)
     except Exception as e:
         logging.error(f"Unexpected error: {e}", exc_info=True)
         error("An unexpected error occurred. Please check the logs.")
@@ -986,15 +1032,15 @@ def init_command(
     ] = None,
     defaults: Annotated[
         bool,
-        typer.Option("--defaults", help="Write config using detected defaults without prompting"),
+        typer.Option("--defaults", help="Use detected defaults without prompting (overrides --interactive)"),
     ] = False,
     force: Annotated[
         bool,
-        typer.Option("--force", help="Update the existing Commitizen config in place"),
+        typer.Option("--force", help="Update existing Commitizen config, preserving custom settings and comments"),
     ] = False,
     interactive: Annotated[
         bool,
-        typer.Option("--interactive", "-i", hidden=True, help="Run in interactive mode"),
+        typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
     """Create a Commitizen-compatible config for git-tools.
@@ -1006,7 +1052,7 @@ def init_command(
     """
     from .generators.initgen import CommitizenInitGenerator, CzInitError
 
-    use_interactive = interactive
+    use_interactive = interactive and not defaults
 
     try:
         generator = CommitizenInitGenerator(
@@ -1022,6 +1068,11 @@ def init_command(
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
     except CzInitError as e:
+        error(str(e))
+        raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except ValueError as e:
         error(str(e))
         raise typer.Exit(1)
     except Exception as e:
@@ -1042,22 +1093,34 @@ _SETTING_DEFAULTS = {
     "temperature": GitToolsSettings.model_fields["default_temperature"].default,
     "max_tokens": GitToolsSettings.model_fields["default_max_tokens"].default,
     "max_retries": GitToolsSettings.model_fields["default_max_retries"].default,
+    "token_limit": GitToolsSettings.model_fields["default_token_limit"].default,
+    "issue_pr_token_limit": GitToolsSettings.model_fields["default_issue_pr_token_limit"].default,
 }
 
 
 def _load_settings_state() -> dict[str, Any]:
     """Re-read persisted settings; the import-time singleton would be stale
     when the menu is re-entered after edits in the same session."""
-    from .settings.settings import GitToolsSettings, check_api_key_configured
+    from .settings.settings import (GitToolsSettings, check_api_key_configured,
+                                    effective_provider_base_url, effective_value)
 
     fresh = GitToolsSettings()
     provider = normalize_provider_name(fresh.default_provider)
     is_api_configured, _ = check_api_key_configured(provider)
+    endpoint, endpoint_source = effective_provider_base_url(provider)
+    _, key_source = effective_value(provider_api_key_env(provider))
     return {
         "provider": provider,
         "model": _resolve_current_model(provider, fresh.effective_main_model),
         "support_model": fresh.support_model,
-        "api_base": os.environ.get("GIT_TOOLS_API_BASE", ""),
+        "api_base": endpoint or "",
+        "api_base_source": endpoint_source,
+        "api_key_source": key_source,
+        "token_limit": fresh.default_token_limit,
+        "issue_pr_token_limit": fresh.default_issue_pr_token_limit,
+        "commit_include_scope": fresh.commit_include_scope,
+        "commit_include_footer": fresh.commit_include_footer,
+        "issue_pr_source": fresh.issue_pr_source,
         "openrouter_provider": fresh.openrouter_provider,
         "kimi_thinking": fresh.kimi_thinking,
         "reasoning_effort": fresh.default_reasoning_effort,
@@ -1099,294 +1162,208 @@ def _prompt_provider_api_key(provider: str) -> tuple[bool, str | None]:
     if configured:
         return True, None
 
+    console.print()
     warning(f"{label} needs an API key before models can be detected.")
+    console.print()
     return False, None
 
 
 def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
                    *, interactive: Optional[bool] = None) -> None:
-    """Select endpoint before discovery, restoring process state on cancellation."""
-    from .settings.settings import save_settings
+    """Configure a provider transactionally, with real previous-step navigation."""
+    from .settings.settings import check_api_key_configured, save_settings
 
-    interactive_flow = (value is None or _has_interactive_terminal()) if interactive is None else interactive
-    if not interactive_flow and value is None:
-        error("Non-interactive provider setup requires a provider name.")
-        raise typer.Exit(1)
-    old_provider = state["provider"]
+    use_wizard = (value is None or _has_interactive_terminal()) if interactive is None else interactive
     selection = normalize_provider_name(value) if value is not None else None
-    if selection is None:
-        selection = _ask_with_back(questionary.select(
-            "Select provider:", choices=[*_build_provider_choices(old_provider), _back_choice()],
-            default=old_provider, style=TYPER_STYLE, qmark="❯",
-        ))
-        if selection in (None, _BACK):
-            return
-    if selection not in PROVIDERS:
+    if selection is not None and selection not in PROVIDERS:
         error(f"Unknown provider: {selection}")
         raise typer.Exit(1)
-    changed = selection != old_provider
-    old_base = os.environ.get("GIT_TOOLS_API_BASE")
-    # A switch applies the provider's own endpoint: the custom one remembered
-    # under its key when there is one, else the module default (agent-cli
-    # keeps a base URL per provider profile; agent-core never inherits
-    # another provider's endpoint).
-    endpoint = _provider_endpoint(selection) if changed else _current_api_base(selection)
-    if selection == "qwen" and interactive_flow:
-        endpoint = _ask_with_back(questionary.text(
-            "Qwen API endpoint (exact plan/region URL):", default=endpoint or "",
-            style=TYPER_STYLE, qmark="❯",
-        ))
-        if endpoint is None:
-            return
-        endpoint = _validate_api_base(endpoint)
-    # Explicit provider selection is allowed before Qwen endpoint configuration;
-    # generation/discovery will fail safely until the endpoint is supplied.
-    os.environ["GIT_TOOLS_API_BASE"] = endpoint or ""
-    try:
-        if interactive_flow:
-            _edit_provider_impl(state, None, selected_provider=selection, endpoint=endpoint)
-        else:
-            _edit_provider_impl(state, selection, endpoint=endpoint)
-        if state["provider"] != selection:
-            return
-        state["api_base"] = endpoint or ""
-        if changed and not interactive_flow:
-            state["support_model"] = "follow-main"
-            state["openrouter_provider"] = None
-    finally:
-        if old_base is None:
-            os.environ.pop("GIT_TOOLS_API_BASE", None)
-        else:
-            os.environ["GIT_TOOLS_API_BASE"] = old_base
-
-
-def _prompt_provider_options(
-    provider: str, model: str, state: dict[str, Any], changed: bool,
-) -> dict[str, str] | None:
-    """Collect the rest of setup without saving partial selections.
-
-    On a provider change the prompts start from that provider's remembered
-    profile (agent-cli seeds its flow from the provider's profile the same
-    way); otherwise from the current values.
-    """
-    profile = _remembered_profile(provider) if changed else {}
-    current_support = profile.get("support_model") if changed else state.get("support_model")
-    support = _ask_with_back(questionary.select(
-        "Support model (reserved, unused):",
-        choices=[Choice("Follow main dynamically", value="follow-main"),
-                 *_build_model_choices(provider, current_model=current_support
-                                       if current_support and current_support != "follow-main" else None),
-                 _back_choice()], style=TYPER_STYLE, qmark="❯"))
-    if support in (None, _BACK):
-        return None
-    if support == ADD_MODEL_SENTINEL:
-        support = _ask_with_back(questionary.text("Support model ID:", style=TYPER_STYLE, qmark="❯"))
-        if support is None or not support.strip():
-            return None
-    updates = {"GIT_TOOLS_MODEL_SUPPORT": support.strip(),
-               "GIT_TOOLS_OPENROUTER_PROVIDER": (profile.get("openrouter_provider") or "") if changed
-               else state.get("openrouter_provider") or "",
-               "GIT_TOOLS_REASONING_EFFORT": (profile.get("reasoning_effort") or "") if changed
-               else state.get("reasoning_effort") or "",
-               "GIT_TOOLS_KIMI_THINKING": ""}
-    if provider == "openrouter":
-        from .settings.mappings import fetch_openrouter_endpoints
-        from .settings.settings import load_provider_config
-        config = load_provider_config(provider)
-        endpoints = fetch_openrouter_endpoints(config.base_url, config.api_key, model)
-        remembered_pin = updates["GIT_TOOLS_OPENROUTER_PROVIDER"] or "any"
-        tags = [entry.tag for entry in endpoints]
-        pin = _ask_with_back(questionary.select(
-            "OpenRouter upstream for the main model:",
-            choices=[_any_upstream_choice(),
-                     *[_upstream_choice(entry, remembered_pin) for entry in endpoints],
-                     Choice("Enter upstream slug manually", value=ADD_MODEL_SENTINEL), _back_choice()],
-            default=remembered_pin if remembered_pin in ("any", *tags) else None,
-            style=TYPER_STYLE, qmark="❯"))
-        if pin in (None, _BACK):
-            return None
-        if pin == ADD_MODEL_SENTINEL:
-            pin = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
-            if pin is None or not pin.strip():
-                return None
-        updates["GIT_TOOLS_OPENROUTER_PROVIDER"] = "" if pin == "any" else pin.strip().lower()
-    if provider == "kimicli":
-        # Thinking and tier are one choice, from the catalog entry (agent-cli).
-        remembered = profile.get("kimi_thinking") if changed else (
-            None if state.get("kimi_thinking") is None else str(bool(state.get("kimi_thinking"))).lower())
-        current_thinking = {"true": True, "false": False}.get(remembered or "")
-        picked = _pick_kimi_thinking(
-            provider, model, current_thinking, updates["GIT_TOOLS_REASONING_EFFORT"] or None,
-            keep_current=not changed and model == state.get("model"),
-        )
-        if picked is None:
-            return None
-        thinking, effort = picked
-        updates["GIT_TOOLS_KIMI_THINKING"] = "" if thinking is None else str(thinking).lower()
-        updates["GIT_TOOLS_REASONING_EFFORT"] = effort or ""
-        return updates
-    if provider in {"openai", "cliproxyapi"}:
-        effort_capable = is_openai_reasoning_model(model, platform=provider == "openai")
-    else:
-        effort_capable = (provider in {"openrouter", "qwen", "anthropic"}
-                          or bool(_model_effort(provider, model))
-                          or is_openai_reasoning_model(model))
-    if effort_capable:
-        effort = _ask_with_back(questionary.select(
-            "Reasoning effort:", choices=[*_build_effort_choices(provider, model, updates["GIT_TOOLS_REASONING_EFFORT"]), _back_choice()],
-            style=TYPER_STYLE, qmark="❯"))
-        if effort in (None, _BACK):
-            return None
-        updates["GIT_TOOLS_REASONING_EFFORT"] = effort
-    return updates
-
-
-def _edit_provider_impl(state: dict[str, Any], value: Optional[str] = None,
-                        *, selected_provider: Optional[str] = None,
-                        endpoint: Optional[str] = None) -> None:
-    from .settings.settings import check_api_key_configured, save_setting, save_settings
-
-    providers = list(PROVIDERS.keys())
-    interactive_flow = value is None
-    if selected_provider is not None:
-        selection = selected_provider
-    elif value is None:
-        selection = _ask_with_back(
-            questionary.select(
-                f"Select provider (current: {state['provider']}, default: {_SETTING_DEFAULTS['provider']}):",
-                choices=[*_build_provider_choices(state["provider"]), _back_choice()],
-                default=state["provider"] if state["provider"] in providers else _SETTING_DEFAULTS["provider"],
-                style=TYPER_STYLE,
-                qmark="❯",
-                pointer="›",
-                instruction="",
-            )
-        )
-        if selection is None or selection == _BACK:
-            return
-    else:
-        selection = normalize_provider_name(value)
-        if selection not in PROVIDERS:
-            error(f"Unknown provider: {value}. One of: {', '.join(providers)}")
+    if not use_wizard:
+        if selection is None:
+            error("Non-interactive provider setup requires a provider name.")
             raise typer.Exit(1)
-
-    provider_changed = selection != state["provider"]
-
-    if interactive_flow:
-        proceed, new_key = _prompt_provider_api_key(selection)
-        if not proceed:
-            return
-
-        env_var = provider_api_key_env(selection)
-        old_env_present = env_var in os.environ
-        old_env_value = os.environ.get(env_var)
-        catalog_snapshot = snapshot_provider_catalog(selection)
-        if new_key is not None:
-            # Provider config reads process env first. Apply the candidate key
-            # for discovery. On success it remains authoritative in this process;
-            # cancellation or an exception restores the caller's old value.
-            os.environ[env_var] = new_key
-        try:
-            # A switch starts from the target provider's remembered model.
-            current_model = state["model"] if not provider_changed else (_remembered_profile(selection)["model"] or "")
-            new_model = _choose_provider_model(selection, current_model)
-            setup_choices = None
-            if new_model is not None:
-                setup_choices = _prompt_provider_options(selection, new_model, state, provider_changed)
-                if setup_choices is None:
-                    new_model = None
-        except BaseException:
-            restore_provider_catalog(selection, catalog_snapshot)
-            if new_key is not None:
-                if old_env_present:
-                    os.environ[env_var] = old_env_value or ""
-                else:
-                    os.environ.pop(env_var, None)
-            raise
-        if new_model is None:
-            restore_provider_catalog(selection, catalog_snapshot)
-            if new_key is not None:
-                if old_env_present:
-                    os.environ[env_var] = old_env_value or ""
-                else:
-                    os.environ.pop(env_var, None)
-            return
-
-        # Persist provider, optional key, and model in one atomic file replace.
-        # A write failure restores the exact process environment used before
-        # setup, so the whole operation remains transactional.
-        updates: dict[str, str | None] = {
-            "GIT_TOOLS_PROVIDER": selection,
-            "GIT_TOOLS_DEFAULT_MODEL": new_model,
-            "GIT_TOOLS_MODEL_MAIN": new_model,
-        }
-        if endpoint is not None:
-            updates["GIT_TOOLS_API_BASE"] = endpoint
-        if provider_changed:
-            updates.update({"GIT_TOOLS_MODEL_SUPPORT": "follow-main",
-                            "GIT_TOOLS_OPENROUTER_PROVIDER": "",
-                            "GIT_TOOLS_REASONING_EFFORT": "",
-                            "GIT_TOOLS_KIMI_THINKING": ""})
-        updates.update(setup_choices or {})
-        if new_key is not None:
-            updates = {env_var: new_key, **updates}
-        try:
-            save_settings(updates)
-        except BaseException:
-            restore_provider_catalog(selection, catalog_snapshot)
-            if new_key is not None:
-                if old_env_present:
-                    os.environ[env_var] = old_env_value or ""
-                else:
-                    os.environ.pop(env_var, None)
-            raise
-        state["provider"] = selection
-        state["model"] = new_model
-        state["support_model"] = updates["GIT_TOOLS_MODEL_SUPPORT"]
-        state["openrouter_provider"] = updates.get("GIT_TOOLS_OPENROUTER_PROVIDER") or None
-        state["reasoning_effort"] = updates.get("GIT_TOOLS_REASONING_EFFORT") or None
-        thinking = updates.get("GIT_TOOLS_KIMI_THINKING", "")
-        state["kimi_thinking"] = None if not thinking else thinking == "true"
-        state["api_configured"] = bool(new_key) or check_api_key_configured(selection)[0]
-        console.print()
+        profile = _remembered_profile(selection)
+        updates: dict[str, str | None] = {"GIT_TOOLS_PROVIDER": selection,
+                                         "GIT_TOOLS_API_BASE": (_provider_endpoint(selection)
+                                                                if selection != state["provider"]
+                                                                else _current_api_base(selection))}
+        if selection != state["provider"]:
+            model = profile["model"] or _provider_default_model(selection)
+            updates.update({"GIT_TOOLS_DEFAULT_MODEL": model, "GIT_TOOLS_MODEL_MAIN": model,
+                            "GIT_TOOLS_MODEL_SUPPORT": profile["support_model"] or "follow-main",
+                            "GIT_TOOLS_OPENROUTER_PROVIDER": profile["openrouter_provider"] or "",
+                            "GIT_TOOLS_REASONING_EFFORT": profile["reasoning_effort"] or "",
+                            "GIT_TOOLS_KIMI_THINKING": profile["kimi_thinking"] or ""})
+        save_settings(updates)
+        _apply_provider_updates(state, selection, updates)
         success(f"Provider set to {selection}")
-        if new_key is not None:
-            success(f"{provider_label(selection)} API key saved.")
-        success(f"Model set to {new_model}")
         return
 
-    # Direct `settings provider <name>` remains non-interactive and preserves
-    # the previous behavior: switch immediately and select a valid fallback.
-    updates: dict[str, str | None] = {"GIT_TOOLS_PROVIDER": selection}
-    if endpoint is not None:
-        updates["GIT_TOOLS_API_BASE"] = endpoint
-    if provider_changed:
-        # The target provider's profile comes back: its remembered model and
-        # sub-choices, else the provider default and a clean slate.
-        profile = _remembered_profile(selection)
-        refresh_live_models(selection)
-        model_config = _find_model_config(selection, profile["model"] or state["model"])
-        if model_config:
-            new_model = model_config["model_name"]
-        else:
-            new_model = profile["model"] or _provider_default_model(selection)
-        updates.update({"GIT_TOOLS_DEFAULT_MODEL": new_model, "GIT_TOOLS_MODEL_MAIN": new_model,
-                        "GIT_TOOLS_MODEL_SUPPORT": profile["support_model"] or "follow-main",
-                        "GIT_TOOLS_OPENROUTER_PROVIDER": profile["openrouter_provider"] or "",
-                        "GIT_TOOLS_REASONING_EFFORT": profile["reasoning_effort"] or "",
-                        "GIT_TOOLS_KIMI_THINKING": profile["kimi_thinking"] or ""})
-    save_settings(updates)
-    state["provider"] = selection
-    state["api_configured"], _ = check_api_key_configured(selection)
-    if provider_changed:
-        state["model"] = new_model
-        state["support_model"] = updates["GIT_TOOLS_MODEL_SUPPORT"]
-        state["openrouter_provider"] = updates["GIT_TOOLS_OPENROUTER_PROVIDER"] or None
-        state["reasoning_effort"] = updates["GIT_TOOLS_REASONING_EFFORT"] or None
+    # Capture before discovery temporarily replaces the process endpoint.
+    original_endpoint = _current_api_base(state["provider"])
+    # Each provider retains its own uncommitted answers when navigating back.
+    pending: dict[str, dict[str, Any]] = {}
+    snapshots: dict[str, Any] = {}
+    original_env: dict[str, str | None] = {}
+    committed = False
+    step = "provider" if selection is None else "endpoint" if selection == "qwen" else "key"
+    try:
+        while True:
+            if step == "provider":
+                picked = _ask_with_back(questionary.select(
+                    "Select provider:", choices=[*_build_provider_choices(selection or state["provider"]), _back_choice()],
+                    default=selection or state["provider"], style=TYPER_STYLE, qmark="❯",
+                ))
+                if picked in (None, _BACK):
+                    return
+                selection = picked
+                step = "endpoint" if selection == "qwen" else "key"
+            assert selection is not None
+            if selection not in pending:
+                changed = selection != state["provider"]
+                profile = _remembered_profile(selection)
+                thinking = profile["kimi_thinking"] if changed else state.get("kimi_thinking")
+                if isinstance(thinking, str):
+                    thinking = {"true": True, "false": False}.get(thinking.lower())
+                pending[selection] = {
+                    "endpoint": _provider_endpoint(selection) if changed else original_endpoint,
+                    "key": None,
+                    "model": (profile["model"] or _provider_default_model(selection)) if changed else state["model"],
+                    "support_model": (profile["support_model"] or "follow-main") if changed else state.get("support_model", "follow-main"),
+                    "openrouter_provider": profile["openrouter_provider"] if changed else state.get("openrouter_provider"),
+                    "reasoning_effort": profile["reasoning_effort"] if changed else state.get("reasoning_effort"),
+                    "kimi_thinking": thinking,
+                }
+                snapshots[selection] = snapshot_provider_catalog(selection)
+            draft = pending[selection]
+            env_var = provider_api_key_env(selection)
+            for key in ("GIT_TOOLS_API_BASE", env_var):
+                original_env.setdefault(key, os.environ.get(key))
+            # Candidate values are visible only to discovery until atomic save.
+            os.environ["GIT_TOOLS_API_BASE"] = draft["endpoint"] or ""
+            for provider in pending:
+                key = provider_api_key_env(provider)
+                if key in original_env:
+                    _restore_environment_value(key, original_env[key])
+            if draft["key"]:
+                os.environ[env_var] = draft["key"]
+
+            if step == "endpoint":
+                endpoint = _ask_with_back(questionary.text(
+                    "Qwen API endpoint (exact plan/region URL):", default=draft["endpoint"] or "",
+                    style=TYPER_STYLE, qmark="❯",
+                ))
+                if endpoint in (None, _BACK):
+                    step = "provider"
+                    continue
+                draft["endpoint"] = _validate_api_base(endpoint)
+                step = "key"
+                continue
+            if step == "key":
+                proceed, new_key = _prompt_provider_api_key(selection)
+                if not proceed:
+                    step = "endpoint" if selection == "qwen" else "provider"
+                    continue
+                if new_key is not None:
+                    draft["key"] = new_key
+                step = "model"
+                continue
+            if step == "model":
+                model = _choose_provider_model(selection, draft["model"])
+                if model is None:
+                    step = "key"
+                    continue
+                draft["model"] = model
+                step = "routing" if selection == "openrouter" else "reasoning"
+                continue
+            if step == "routing":
+                pin = _prompt_openrouter_upstream(draft["model"], draft["openrouter_provider"])
+                if pin is None:
+                    step = "model"
+                    continue
+                draft["openrouter_provider"] = pin or None
+                step = "reasoning"
+                continue
+            if step == "reasoning":
+                if selection == "kimicli":
+                    picked = _pick_kimi_thinking(
+                        selection, draft["model"], draft["kimi_thinking"], draft["reasoning_effort"],
+                        keep_current=True,
+                    )
+                    if picked is None:
+                        step = "model"
+                        continue
+                    draft["kimi_thinking"], draft["reasoning_effort"] = picked
+                else:
+                    capable = (is_openai_reasoning_model(draft["model"], platform=selection == "openai")
+                               if selection in {"openai", "cliproxyapi"}
+                               else selection in {"openrouter", "qwen", "anthropic", "acrc", "copilot"})
+                    if capable:
+                        choices = _build_effort_choices(selection, draft["model"], draft["reasoning_effort"])
+                        current = (draft["reasoning_effort"] or "").strip().lower()
+                        default = current if any(choice.value == current for choice in choices) else ""
+                        effort = _ask_with_back(questionary.select(
+                            "Reasoning effort:", choices=[*choices, _back_choice()], default=default,
+                            style=TYPER_STYLE, qmark="❯",
+                        ))
+                        if effort in (None, _BACK):
+                            step = "routing" if selection == "openrouter" else "model"
+                            continue
+                        draft["reasoning_effort"] = effort or None
+                updates = {
+                    "GIT_TOOLS_PROVIDER": selection, "GIT_TOOLS_DEFAULT_MODEL": draft["model"],
+                    "GIT_TOOLS_MODEL_MAIN": draft["model"], "GIT_TOOLS_API_BASE": draft["endpoint"],
+                    "GIT_TOOLS_MODEL_SUPPORT": draft["support_model"],
+                    "GIT_TOOLS_OPENROUTER_PROVIDER": draft["openrouter_provider"] or "",
+                    "GIT_TOOLS_REASONING_EFFORT": draft["reasoning_effort"] or "",
+                    "GIT_TOOLS_KIMI_THINKING": ("" if draft["kimi_thinking"] is None
+                                                else str(draft["kimi_thinking"]).lower()),
+                }
+                if draft["key"]:
+                    updates = {env_var: draft["key"], **updates}
+                save_settings(updates)
+                _apply_provider_updates(state, selection, updates)
+                committed = True
+                console.print()
+                success(f"Provider set to {selection}")
+                if draft["key"]:
+                    success(f"{provider_label(selection)} API key saved.")
+                success(f"Model set to {draft['model']}")
+                return
+    finally:
+        for key, old_value in original_env.items():
+            _restore_environment_value(key, old_value)
+        for provider, snapshot in snapshots.items():
+            if not committed or provider != selection:
+                restore_provider_catalog(provider, snapshot)
+        if committed and selection is not None and pending[selection]["key"]:
+            # An explicitly replaced key remains active in this process, matching
+            # the API-key editor. Existing keys are never overwritten by blanks.
+            os.environ[provider_api_key_env(selection)] = pending[selection]["key"]
+
+
+def _restore_environment_value(key: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = value
+
+
+def _apply_provider_updates(state: dict[str, Any], provider: str,
+                            updates: dict[str, str | None]) -> None:
+    from .settings.settings import check_api_key_configured
+
+    state["provider"] = provider
+    state["api_base"] = updates.get("GIT_TOOLS_API_BASE") or ""
+    for key, env in (("model", "GIT_TOOLS_MODEL_MAIN"), ("support_model", "GIT_TOOLS_MODEL_SUPPORT"),
+                     ("openrouter_provider", "GIT_TOOLS_OPENROUTER_PROVIDER"),
+                     ("reasoning_effort", "GIT_TOOLS_REASONING_EFFORT")):
+        if env in updates:
+            state[key] = updates[env] or None
+    if "GIT_TOOLS_KIMI_THINKING" in updates:
         thinking = updates["GIT_TOOLS_KIMI_THINKING"]
         state["kimi_thinking"] = None if not thinking else thinking == "true"
-    console.print()
-    success(f"Provider set to {selection}")
+    state["api_configured"] = bool(updates.get(provider_api_key_env(provider))) or check_api_key_configured(provider)[0]
 
 
 def _print_model_catalog_status(provider: str, live: bool) -> None:
@@ -1432,8 +1409,10 @@ def _print_model_catalog_status(provider: str, live: bool) -> None:
 
 def _choose_provider_model(provider: str, current_model: str) -> str | None:
     """Discover and choose a model for one provider without persisting it."""
+    console.print()
     live = refresh_live_models(provider, force=True)
     _print_model_catalog_status(provider, live)
+    console.print()
     default_model = current_model or _provider_default_model(provider)
     model_choice = _ask_model_choice(
         provider,
@@ -1515,7 +1494,9 @@ def _prompt_openrouter_upstream(model: str, current: Optional[str]) -> Optional[
     if endpoints:
         choices.extend(_upstream_choice(entry, current) for entry in endpoints)
     else:
+        console.print()
         warning(f"Could not list OpenRouter upstreams for {model}.")
+        console.print()
         if current:
             choices.append(Choice(
                 styled(fmt_current(f"Keep current pin: {current}"), fmt_dim(" (unverified)")), value=current,
@@ -1624,10 +1605,12 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
         configured = (state["reasoning_effort"] or "").strip().lower()
         default = configured if any(choice.value == configured for choice in choices) else ""
         if configured and default != configured:
+            console.print()
             warning(
                 f"Saved effort {configured} is not one of this model's tiers; "
                 "pick a listed tier or the model default."
             )
+            console.print()
         effort_choice = _ask_with_back(
             questionary.select(
                 f"Reasoning effort (current: {effective_effort or 'unset'}):",
@@ -1785,6 +1768,76 @@ def _edit_max_tokens(state: dict[str, Any], value: Optional[str] = None) -> None
     )
 
 
+def _edit_commit_input_budget(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_number(
+        state, state_key="token_limit", env_var="GIT_TOOLS_DEFAULT_TOKEN_LIMIT",
+        label="Commit input token budget", parse=int, is_valid=lambda n: n > 0,
+        invalid_message="Commit input token budget must be an integer.",
+        range_message="Commit input token budget must be greater than 0.", value=value,
+    )
+
+
+def _edit_issue_pr_input_budget(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_number(
+        state, state_key="issue_pr_token_limit", env_var="GIT_TOOLS_DEFAULT_ISSUE_PR_TOKEN_LIMIT",
+        label="Issue/PR input token budget", parse=int, is_valid=lambda n: n > 0,
+        invalid_message="Issue/PR input token budget must be an integer.",
+        range_message="Issue/PR input token budget must be greater than 0.", value=value,
+    )
+
+
+def _edit_boolean_preference(state: dict[str, Any], state_key: str, label: str,
+                             value: Optional[str]) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        picked = _ask_with_back(questionary.select(
+            label + ":", choices=[Choice("No", value="false"), Choice("Yes", value="true"), _back_choice()],
+            default=str(state.get(state_key, False)).lower(), style=TYPER_STYLE, qmark="❯",
+        ))
+        if picked in (None, _BACK):
+            return
+        value = picked
+    normalized = value.strip().lower()
+    if normalized not in {"true", "false", "yes", "no", "on", "off", "1", "0"}:
+        error(f"{label} must be true or false.")
+        raise typer.Exit(1)
+    enabled = normalized in {"true", "yes", "on", "1"}
+    save_setting("GIT_TOOLS_" + state_key.upper(), str(enabled).lower())
+    state[state_key] = enabled
+    console.print()
+    success(f"{label} saved as {str(enabled).lower()}")
+
+
+def _edit_commit_scope(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_boolean_preference(state, "commit_include_scope", "Commit scope by default", value)
+
+
+def _edit_commit_footer(state: dict[str, Any], value: Optional[str] = None) -> None:
+    _edit_boolean_preference(state, "commit_include_footer", "Commit footer by default", value)
+
+
+def _edit_issue_pr_source(state: dict[str, Any], value: Optional[str] = None) -> None:
+    from .settings.settings import save_setting
+
+    if value is None:
+        value = _ask_with_back(questionary.select(
+            "Issue/PR input source:", choices=[*[Choice(label, value=key) for key, label in _SOURCE_LABELS.items()],
+                                               _back_choice()],
+            default=state.get("issue_pr_source", "b"), style=TYPER_STYLE, qmark="❯",
+        ))
+        if value in (None, _BACK):
+            return
+    source = value.strip().lower()
+    if source not in _SOURCE_LABELS:
+        error("Issue/PR input source must be b (both), c (commits), or d (diffs).")
+        raise typer.Exit(1)
+    save_setting("GIT_TOOLS_ISSUE_PR_SOURCE", source)
+    state["issue_pr_source"] = source
+    console.print()
+    success(f"Issue/PR input source saved as {_SOURCE_LABELS[source]}")
+
+
 def _edit_max_retries(state: dict[str, Any], value: Optional[str] = None) -> None:
     _edit_number(
         state,
@@ -1817,6 +1870,7 @@ def _edit_azure_pr_limit(state: dict[str, Any], value: Optional[str] = None) -> 
         raise typer.Exit(1)
     save_setting("GIT_TOOLS_AZURE_PR_LIMIT", mode)
     state["azure_pr_limit"] = mode
+    console.print()
     success(f"PR limit saved as {mode}")
 
 
@@ -1830,13 +1884,30 @@ def _edit_azure_pr_max_chars(state: dict[str, Any], value: Optional[str] = None)
     )
 
 
-def _current_api_base(provider: str) -> str:
-    from .settings.settings import load_provider_config
+def _safe_endpoint_display(value: str) -> str:
+    """Do not echo URL userinfo, query tokens, or fragments from legacy env files."""
+    from urllib.parse import urlsplit, urlunsplit
 
+    if not value:
+        return "not configured"
     try:
-        return load_provider_config(provider).base_url or ""
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return "configured (invalid URL; hidden)"
+        host = parsed.hostname
+        if ":" in host:
+            host = f"[{host}]"
+        if parsed.port:
+            host += f":{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
     except ValueError:
-        return os.environ.get("GIT_TOOLS_API_BASE", PROVIDERS[provider]["default_base_url"])
+        return "configured (invalid URL; hidden)"
+
+
+def _current_api_base(provider: str) -> str:
+    from .settings.settings import effective_provider_base_url
+
+    return effective_provider_base_url(provider)[0] or ""
 
 
 def _provider_endpoint(provider: str) -> str:
@@ -1876,8 +1947,14 @@ def _edit_api_base(state: dict[str, Any], value: Optional[str] = None) -> None:
             return
     endpoint = _validate_api_base(value)
     save_setting("GIT_TOOLS_API_BASE", endpoint)
-    state["api_base"] = endpoint
+    from .settings.settings import effective_provider_base_url
+    effective, source = effective_provider_base_url(state["provider"])
+    state["api_base"] = effective or ""
+    state["api_base_source"] = source
+    console.print()
     success("API endpoint saved.")
+    if source.startswith("environment:"):
+        warning(f"Effective endpoint still comes from {source}; unset it to use the saved value.")
 
 
 def _edit_support_model(state: dict[str, Any], value: Optional[str] = None) -> None:
@@ -1885,8 +1962,10 @@ def _edit_support_model(state: dict[str, Any], value: Optional[str] = None) -> N
 
     if value is None:
         provider = state["provider"]
+        console.print()
         live = refresh_live_models(provider, force=True)
         _print_model_catalog_status(provider, live)
+        console.print()
         value = _ask_with_back(questionary.select(
             "Support model (reserved, unused):",
             choices=[Choice("Follow main dynamically", value="follow-main"),
@@ -1905,6 +1984,7 @@ def _edit_support_model(state: dict[str, Any], value: Optional[str] = None) -> N
         raise typer.Exit(1)
     save_setting("GIT_TOOLS_MODEL_SUPPORT", model)
     state["support_model"] = model
+    console.print()
     success("Support model saved (not used for generation).")
 
 
@@ -1921,6 +2001,7 @@ def _edit_openrouter_provider(state: dict[str, Any], value: Optional[str] = None
             pin = ""
     save_setting("GIT_TOOLS_OPENROUTER_PROVIDER", pin)
     state["openrouter_provider"] = pin or None
+    console.print()
     success("OpenRouter routing saved.")
 
 
@@ -1995,6 +2076,7 @@ def _edit_kimi_thinking(state: dict[str, Any], value: Optional[str] = None) -> N
         save_settings({"GIT_TOOLS_KIMI_THINKING": rendered, "GIT_TOOLS_REASONING_EFFORT": effort or ""})
         state["kimi_thinking"] = thinking
         state["reasoning_effort"] = effort or None
+        console.print()
         success("Kimi thinking saved.")
         return
     choice = {"off": "disabled", "on": "enabled"}.get(value.strip().lower(), value.strip().lower())
@@ -2003,6 +2085,7 @@ def _edit_kimi_thinking(state: dict[str, Any], value: Optional[str] = None) -> N
         save_settings({"GIT_TOOLS_KIMI_THINKING": "true", "GIT_TOOLS_REASONING_EFFORT": choice})
         state["kimi_thinking"] = True
         state["reasoning_effort"] = choice
+        console.print()
         success("Kimi thinking saved.")
         return
     metadata = _find_model_config(state["provider"], state["model"]) or {}
@@ -2023,6 +2106,7 @@ def _edit_kimi_thinking(state: dict[str, Any], value: Optional[str] = None) -> N
     else:
         save_setting("GIT_TOOLS_KIMI_THINKING", rendered)
     state["kimi_thinking"] = None if not rendered else rendered == "true"
+    console.print()
     success("Kimi thinking saved.")
     if rendered == "false" and configured_effort:
         success(f"Effort override {configured_effort} cleared: thinking is off, so no tier is sent.")
@@ -2050,6 +2134,14 @@ _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
     "api-key": _edit_api_key,
     "temperature": _edit_temperature,
     "max-tokens": _edit_max_tokens,
+    "output-budget": _edit_max_tokens,
+    "commit-input-budget": _edit_commit_input_budget,
+    "token-limit": _edit_commit_input_budget,
+    "issue-pr-input-budget": _edit_issue_pr_input_budget,
+    "issue-pr-token-limit": _edit_issue_pr_input_budget,
+    "commit-scope": _edit_commit_scope,
+    "commit-footer": _edit_commit_footer,
+    "issue-pr-source": _edit_issue_pr_source,
     "max-retries": _edit_max_retries,
     "pr-limit": _edit_azure_pr_limit,
     "pr-max-chars": _edit_azure_pr_max_chars,
@@ -2075,6 +2167,8 @@ def _run_settings_menu(*, done_label: str = "Done") -> None:
         if choice is None or choice == "done":
             return
         _SETTINGS_EDITORS[choice](state)
+        # Show effective values after saves; process env may still override them.
+        state = _load_settings_state()
         console.print()
 
 

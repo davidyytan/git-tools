@@ -7,11 +7,32 @@ import questionary
 from git_tools.settings.mappings import PROVIDERS, refresh_live_models
 from git_tools.settings.settings import normalize_provider_name, settings
 
-from .terminal import TYPER_STYLE, error, success, warning
+from .terminal import TYPER_STYLE, console, error, print_panel, success, warning
+from rich.markup import escape
 
 
 class ModelSelectionMixin:
     """Resolve provider config and generation parameters from CLI or saved defaults."""
+
+    def display_generation_settings(self, *, input_budget: int, details: str = "") -> None:
+        """Show reused preferences without discovery, credentials, or more prompts."""
+        if not self._interactive:
+            return
+        model = self._cli_model if self._cli_model is not None else settings.effective_main_model
+        temperature = (self._cli_temperature if self._cli_temperature is not None
+                       else settings.default_temperature)
+        output_budget = (self._cli_max_tokens if self._cli_max_tokens is not None
+                         else settings.default_max_tokens)
+        lines = [
+            f"Provider: {self.select_provider()}",
+            f"Model: {model or 'provider default'}",
+            f"Temperature: {temperature} (model capabilities may override)",
+            f"Output token budget: {output_budget}",
+            f"Input diff budget: {input_budget}",
+        ]
+        if details:
+            lines.append(details)
+        print_panel(escape("\n".join(lines)), title="Effective Generation Settings")
 
     def select_provider(self) -> str:
         """Resolve the configured provider."""
@@ -47,13 +68,19 @@ class ModelSelectionMixin:
             return False
 
         # Interactive mode - offer setup
+        console.print()
         if self.prompt_confirm(f"Set up your {provider_label(provider)} API key now?", default=True):
             from git_tools.settings.settings import DEFAULT_SETTINGS_PATH
             if setup_api_key(provider):
+                console.print()
                 success(f"API key saved to {DEFAULT_SETTINGS_PATH}")
+                console.print()
                 return True
             else:
+                console.print()
                 warning("API key setup cancelled.")
+        else:
+            console.print()
 
         return False
 
@@ -84,6 +111,7 @@ class ModelSelectionMixin:
             from git_tools.cli import _print_model_catalog_status
 
             _print_model_catalog_status(provider, live)
+            console.print()
         models = PROVIDERS[provider]["models"]
 
         # Configuration is chosen once in settings, not on every invocation.
@@ -190,9 +218,12 @@ class ModelSelectionMixin:
                 temperature = float(temp_input)
                 if min_temp <= temperature <= max_temp:
                     return temperature
+                console.print()
                 warning(f"Temperature must be between {min_temp} and {max_temp}.")
             except ValueError:
+                console.print()
                 warning("Please enter a valid number.")
+            console.print()
 
     def _get_max_tokens_input(self, default: Optional[int] = None) -> Optional[int]:
         """Handle max tokens input validation."""
@@ -210,9 +241,12 @@ class ModelSelectionMixin:
                 tokens = int(tokens_input)
                 if tokens > 0:
                     return tokens
+                console.print()
                 warning("Max tokens must be greater than 0.")
             except ValueError:
+                console.print()
                 warning("Please enter a valid integer.")
+            console.print()
 
     def get_token_limit(self, default: int = None, context: str = "diff") -> int:
         """Get token limit from user with validation."""
@@ -226,5 +260,6 @@ class ModelSelectionMixin:
         try:
             return int(token_input) if token_input else default
         except ValueError:
+            console.print()
             warning(f"Invalid input. Using default of {default} tokens.")
             return default

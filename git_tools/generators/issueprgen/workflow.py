@@ -62,17 +62,37 @@ class WorkflowContextMixin:
             return None
         self._require_develop_base_branch(base_branch, mode="Start PR mode")
 
+        # Resolve explicit input before any optional-context fallback. It must
+        # never be replaced by an inferred release line when context is absent.
+        explicit_target = None
+        if self._cli_workflow_version is not None:
+            explicit_target = self._validate_semver_tuple(
+                self._cli_workflow_version.strip(),
+                label="start target version",
+            )
+
         current_branch = self._get_current_branch_name()
         base_version_text = self._load_version_from_ref(base_branch)
         try:
             current_config = load_bump_config(Path.cwd())
-        except BumpError:
+        except BumpError as exc:
+            if explicit_target is not None:
+                raise ValueError(
+                    f"Cannot validate explicit Start target {explicit_target}: "
+                    f"could not load the current .cz.toml version configuration: {exc}"
+                ) from exc
             return None
         current_version_text = current_config.current_version_text
         if base_version_text is None:
+            if explicit_target is not None:
+                raise ValueError(
+                    f"Cannot validate explicit Start target {explicit_target}: "
+                    f"could not load the base version from {base_branch}:.cz.toml. "
+                    "Restore readable version context before generating this Start PR."
+                )
             return None
 
-        target_version = self._resolve_workflow_target_version(
+        target_version = explicit_target or self._resolve_workflow_target_version(
             label="start target version",
             inferred=self._infer_start_target_version(),
         )

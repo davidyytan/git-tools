@@ -40,7 +40,7 @@ class BaseGenerator(
         self._interactive = interactive
 
         # Model/sampling overrides: None uses saved settings in either mode.
-        # The input diff budget can still be prompted for in interactive mode.
+        # Input diff budgets likewise reuse settings unless explicitly overridden.
         self._cli_model = model
         self._cli_temperature = temperature
         self._cli_max_tokens = max_tokens

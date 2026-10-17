@@ -63,10 +63,10 @@ class WorkflowCommitMixin:
                 title="[bold]Workflow Commit Subject[/bold]",
                 border_style=STYLE_BORDER,
                 title_align=ALIGN_PANEL,
-            )
+            ),
+            soft_wrap=False,
         )
-        if self._interactive:
-            console.print()
+        console.print()
 
         self._handle_fixed_subject_action(
             subject,
@@ -87,7 +87,8 @@ class WorkflowCommitMixin:
             should_commit = True
 
         if should_commit:
-            console.print()
+            if self._interactive and self._cli_auto_commit is None:
+                console.print()
             commit_command = ["git", "commit"]
             if allow_empty:
                 commit_command.append("--allow-empty")
@@ -106,8 +107,10 @@ class WorkflowCommitMixin:
 
         if self._cli_copy_clipboard is not None:
             if self._cli_copy_clipboard:
-                self.copy_to_clipboard_auto(subject)
+                if self._interactive and self._cli_auto_commit is None:
+                    console.print()
+                self.copy_to_clipboard_auto(subject, leading_space=False)
         elif self._interactive:
             self.ask_to_copy_to_clipboard(subject)
         else:
-            self.copy_to_clipboard_auto(subject)
+            self.copy_to_clipboard_auto(subject, leading_space=False)

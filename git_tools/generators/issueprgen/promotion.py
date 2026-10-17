@@ -4,6 +4,7 @@ from typing import Optional
 
 from ..bumpgen import Version
 from .contexts import HOTFIX_BRANCH_PATTERN, RELEASE_BRANCH_PATTERN, PromotionPrContext
+from .branches import BranchResolutionMixin
 
 
 class PromotionContextMixin:
@@ -12,7 +13,7 @@ class PromotionContextMixin:
     def _resolve_release_pr_context(self, base_branch: str) -> Optional[PromotionPrContext]:
         if not self.release_pr:
             return None
-        if base_branch not in {"master", "main"}:
+        if BranchResolutionMixin._base_branch_name(base_branch) not in {"master", "main"}:
             raise ValueError(
                 "Release PR mode is for release/* -> master. "
                 "Use backmerge release PR mode for release/* -> develop."
@@ -63,7 +64,7 @@ class PromotionContextMixin:
     def _resolve_hotfix_pr_context(self, base_branch: str) -> Optional[PromotionPrContext]:
         if not self.hotfix_pr:
             return None
-        if base_branch not in {"master", "main"}:
+        if BranchResolutionMixin._base_branch_name(base_branch) not in {"master", "main"}:
             raise ValueError(
                 "Hotfix PR mode is for hotfix/* -> master. "
                 "Use backmerge hotfix PR mode for hotfix/* -> develop."

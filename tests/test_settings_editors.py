@@ -173,7 +173,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
     def test_interactive_unpinned_choice_clears_the_old_pin(self) -> None:
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
-              patch("git_tools.cli._list_openrouter_upstreams", return_value=["new-upstream"]),
+              patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("new-upstream")),
               patch("git_tools.cli.questionary.select"),
               patch("git_tools.cli._ask_with_back", return_value="any"),
               patch.object(settings_module, "save_settings") as save):

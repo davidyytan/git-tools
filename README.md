@@ -12,7 +12,7 @@ Requires **Python 3.12**, Git, and [uv](https://docs.astral.sh/uv/getting-starte
 ./install.sh --reinstall
 ```
 
-Installation is editable and enables shell completion. Restart your shell afterward. If the command is not on PATH, run `uv tool update-shell` and restart your shell. Source changes are picked up without reinstalling; dependency changes may require `--reinstall`.
+The installer creates an editable tool installation, then enables shell completion if `git-tools` is on PATH. Restart your shell afterward. If the command is not on PATH, completion setup is skipped and the installer exits with an error: run `uv tool update-shell`, restart your shell, then run `git-tools --install-completion` and restart again (or rerun the installer after fixing PATH). Source changes are picked up without reinstalling; dependency changes may require `--reinstall`.
 
 ## Start a repository and ship a release
 
@@ -22,7 +22,7 @@ Choose [GitHub](docs/github/README.md#full-walkthroughs) or [Azure DevOps](docs/
 
 ## Quick Start — individual commands
 
-For an already configured repository, or local text generation without release automation:
+For an already configured repository, or text generation without release automation (the examples below still use the configured provider):
 
 Run commands from the repository you want to work on:
 
@@ -30,17 +30,17 @@ Run commands from the repository you want to work on:
 git-tools settings           # Choose provider, credentials, and model
 git-tools                    # Interactive command menu
 
-# Preview a message for deliberately staged changes:
+# Generate a message for deliberately staged changes without committing/copying:
 git-tools commit --no-commit --no-copy
 
-# Generate PR text locally; inspect and paste it into your hosting UI:
-git-tools pr --base develop
+# Generate PR text via the configured provider; inspect and paste the output:
+git-tools pr --base develop --no-copy
 
 # Preview a version bump without changing files or Git state:
 git-tools bump --dry-run
 ```
 
-**Direct `git-tools commit` creates a commit by default.** Stage only intended files first. PR/issue commands generate text; they do not submit or merge hosted requests. Use a clean index before an actual bump: unrelated staged changes can enter its commit.
+**Direct `git-tools commit` creates a commit by default.** Stage only intended files first. PR/issue commands generate text; they do not submit or merge hosted requests. Actual bumps require an empty index and reject pre-staged content before writing. Use `bump --dry-run` to review planned files/diffs; interactive bump offers Preview / Apply / Cancel.
 
 ## Documentation
 
@@ -57,7 +57,9 @@ Start with the **[documentation index](docs/README.md)**.
 | CI publication and recovery | [Publication](docs/publication.md) |
 | Optional data and experiment workflow | [DVC](docs/dvc.md) |
 
-`.cz.toml` is the **sole version and Git-tag authority**. During bump, other version files are best-effort sync targets: failures warn and skip rather than block the core bump. Python/uv, npm, and standalone Cargo app versions are discovered at the root and one directory level down, without recursive scanning or bumping dependencies. Multiple locations for the same ecosystem require an explicit `auxiliary_directories` selection. See [versioning](docs/versioning.md) for exact targets and limitations.
+`.cz.toml` is the **sole version and Git-tag authority**. During bump, other version files are best-effort sync targets: sync failures warn and skip rather than block the core bump. Automatic discovery checks the root and one directory level down; its structured Python/uv, npm, and standalone Cargo handlers target the app's own version fields, not dependency versions. Multiple locations for the same ecosystem require an explicit `auxiliary_directories` selection. This structured-handler scope is **not a safety guarantee for arbitrary custom `version_files` regexes** outside the selected directories; the current selector gap can rewrite dependency versions. See [versioning](docs/versioning.md) for exact targets and [current versioning limitations](docs/versioning.md#current-limitations) for that unresolved gap and the planning FIFO/file-mode defects.
+
+Known configuration defects can also route a cleared endpoint to an unintended host, revive a reset endpoint after switching providers, or change Kimi's effective effort when accepting a picker default. Read [current configuration limitations](docs/configuration.md#current-limitations) before using provider generation. These are implementation gaps, not supported policy.
 
 Workflow adapters are examples to copy and configure in the target repository; `init` does not install CI automation. Activate one adapter for your selected mode.
 

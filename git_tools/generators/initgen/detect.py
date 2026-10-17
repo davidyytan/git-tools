@@ -38,6 +38,11 @@ def detect_default_version(root: Path) -> str:
 
 
 def detect_default_tag_format(root: Path) -> str:
+    existing_config = find_existing_commitizen_config(root)
+    if existing_config is not None:
+        saved = read_nested_string(read_toml(existing_config), ("tool", "commitizen", "tag_format"))
+        if saved is not None:
+            return saved
     latest_tag = detect_latest_semver_tag(root)
     if latest_tag is not None:
         return latest_tag[1]

@@ -28,6 +28,7 @@ except ModuleNotFoundError as exc:
             print(f"{title}\n{content.strip()}")
         else:
             print(content.strip())
+        print()
 
     class BaseGenerator:
         """Fallback base class for stdlib-only bump and strategy flows."""

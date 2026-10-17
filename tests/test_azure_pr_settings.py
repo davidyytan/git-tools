@@ -74,11 +74,11 @@ class AzurePrSettingsTests(unittest.TestCase):
             self.assertEqual(generator._enforce_azure_pr_description_limit("😀" * 1001, "input", "system"), "short")
             self.assertIn("2000 characters", generate.call_args.args[1])
 
-    def test_custom_limit_changes_interactive_prompt(self):
+    def test_saved_auto_does_not_repeat_limit_question(self):
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
         with patch.object(config.settings, "azure_pr_limit", "auto"), patch.object(config.settings, "azure_pr_max_chars", 2000), patch.object(generator, "_get_origin_url", return_value="https://dev.azure.com/org/proj/_git/repo"), patch.object(generator, "prompt_confirm", return_value=True) as prompt:
             self.assertTrue(generator._should_apply_azure_limit())
-            prompt.assert_called_once_with("Apply the 2000-character PR description limit?", default=True)
+            prompt.assert_not_called()
 
     def test_generic_cli_flags_and_legacy_aliases(self):
         runner = CliRunner()

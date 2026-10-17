@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Match Commitizen's linear or exact prerelease bump behavior.",
     )
     parser.add_argument("--allow-no-commit", action="store_true", help="Allow bumping even when no new commits are found.")
-    parser.add_argument("--dry-run", action="store_true", help="Print the computed bump without changing files or git state.")
+    parser.add_argument("--dry-run", action="store_true", help="Preview planned version files and diffs without changing files or Git state.")
     parser.add_argument("--get-next", action="store_true", help="Print only the next version.")
     parser.add_argument(
         "--yes",

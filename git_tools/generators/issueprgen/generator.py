@@ -62,6 +62,7 @@ class IssuePullRequestGenerator(
         token_limit: Optional[int] = None,
         azure_limit: Optional[bool] = None,
         interactive: bool = False,
+        copy_clipboard: Optional[bool] = None,
     ):
         super().__init__(
             model=model,
@@ -86,6 +87,7 @@ class IssuePullRequestGenerator(
         self._cli_workflow_version = workflow_version
         self._cli_context = context
         self._cli_azure_limit = azure_limit
+        self._cli_copy_clipboard = copy_clipboard
         self.release_pr = bool(release_pr)
         self.hotfix_pr = bool(hotfix_pr)
         self.start_pr = bool(start_pr)
@@ -109,24 +111,20 @@ class IssuePullRequestGenerator(
         self.resolve_pr_mode()
 
         base_branch = self.get_default_branch()
-        try:
-            promotion_context = None
-            workflow_pr_context = None
-            if self.release_pr:
-                promotion_context = self._resolve_release_pr_context(base_branch)
-            elif self.hotfix_pr:
-                promotion_context = self._resolve_hotfix_pr_context(base_branch)
-            elif self.start_pr:
-                workflow_pr_context = self._resolve_start_pr_context(base_branch)
-            elif self.backmerge_release_pr:
-                workflow_pr_context = self._resolve_backmerge_release_pr_context(base_branch)
-            elif self.backmerge_hotfix_pr:
-                workflow_pr_context = self._resolve_backmerge_hotfix_pr_context(base_branch)
-            self._promotion_pr_context = promotion_context
-            self._workflow_pr_context = workflow_pr_context
-        except ValueError as exc:
-            error(str(exc))
-            return
+        promotion_context = None
+        workflow_pr_context = None
+        if self.release_pr:
+            promotion_context = self._resolve_release_pr_context(base_branch)
+        elif self.hotfix_pr:
+            promotion_context = self._resolve_hotfix_pr_context(base_branch)
+        elif self.start_pr:
+            workflow_pr_context = self._resolve_start_pr_context(base_branch)
+        elif self.backmerge_release_pr:
+            workflow_pr_context = self._resolve_backmerge_release_pr_context(base_branch)
+        elif self.backmerge_hotfix_pr:
+            workflow_pr_context = self._resolve_backmerge_hotfix_pr_context(base_branch)
+        self._promotion_pr_context = promotion_context
+        self._workflow_pr_context = workflow_pr_context
 
         commit_info = self.get_commit_info(base_branch)
 
@@ -141,27 +139,17 @@ class IssuePullRequestGenerator(
             if self._interactive:
                 console.print()
             self.show_commit_summary(commit_info)
-            # Only add spacing if interactive (panel → questionary transition)
-            if self._interactive:
-                console.print()
 
         collected = self._collect_generation_content(commit_info, fixed_context)
         if collected is None:
             return
         input_source, content = collected
 
-        # Add spacing before interactive prompts (after quota panel)
-        if self._interactive:
-            console.print()
-
         # Context: CLI param > interactive prompt > default (None)
         if self._cli_context is not None:
             context = self._cli_context
         elif self._interactive:
-            if self.prompt_confirm("Add additional context?", default=False):
-                context = self.prompt_text("Enter additional context").strip()
-            else:
-                context = None
+            context = self.prompt_text("Additional context (optional; leave blank to skip)").strip()
         else:
             context = None  # Default: no context
 
@@ -176,9 +164,15 @@ class IssuePullRequestGenerator(
                 + "\n```"
             )
 
+        # Separate an answered context prompt (or fixed mode without a summary)
+        # from the next status/settings section. Existing panels own their gap.
+        if self._interactive and (
+            self._cli_context is None or not (commit_info and commit_info["commit_count"] >= 1)
+        ):
+            console.print()
         system_msg = self._build_system_message(content, input_source)
 
-        # Azure DevOps PR description limit: CLI param > prompt > origin detection.
+        # PR description limit: CLI override > saved preference/origin detection.
         apply_azure_limit = False
         if self.generation_type == "pr" and self._should_apply_azure_limit():
             apply_azure_limit = True
@@ -189,22 +183,31 @@ class IssuePullRequestGenerator(
             )
             system_msg = f"{system_msg}\n\n{instruction}"
 
+        if self._interactive:
+            self.display_generation_settings(
+                input_budget=self.get_diff_processing_params(settings.default_issue_pr_token_limit),
+                details=(f"Input source: {input_source}; PR description limit: "
+                         f"{str(settings.azure_pr_max_chars) + ' UTF-16 units' if apply_azure_limit else 'off'}"),
+            )
         # In interactive mode, ask if user wants to use external providers
         # In non-interactive mode, always use external providers
         if self._interactive:
             if not self.prompt_confirm("Generate content using external providers?", default=True):
-                full_prompt = system_msg + "\n\n" + self._build_full_prompt(content)
-                self.ask_to_copy_to_clipboard(full_prompt)
+                console.print()
+                self._handle_local_mode(content, system_msg)
                 return
 
         # Provider initialization
         provider = self.select_provider()
 
+        # Separate the consent answer from provider diagnostics or local output.
+        if self._interactive:
+            console.print()
         # Check API key - if not configured, offer setup or fall back to local mode
         if not self.ensure_api_key_configured(provider):
             info("Falling back to local mode...")
-            full_prompt = system_msg + "\n\n" + self._build_full_prompt(content)
-            self.copy_to_clipboard_auto(full_prompt)
+            console.print()
+            self._handle_local_mode(content, system_msg, allow_auto=False)
             return
 
         model, temperature, max_tokens = self.select_model_params(provider)
@@ -212,10 +215,6 @@ class IssuePullRequestGenerator(
         if not self._initialize_service(provider, model, temperature, max_tokens):
             return
 
-        # Spacing before spinner only in interactive mode (Questionary → Spinner)
-        # In CLI mode, Panel → Spinner → Panel, spinner disappears leaving Panel → Panel (no spacing)
-        if self._interactive:
-            console.print()
         response = self.generate_content(content, system_msg)
         if not response:
             error("Failed to generate content")
@@ -250,7 +249,9 @@ class IssuePullRequestGenerator(
         if display_output:
             if used_raw_fallback:
                 warning("Parsed PR content was empty. Using raw model output instead.")
-            console.print(Panel(escape(display_output.strip()), title=f"[bold]{type_labels.get(self.generation_type, 'Output')}[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL))
+                console.print()
+            console.print(Panel(escape(display_output.strip()), title=f"[bold]{type_labels.get(self.generation_type, 'Output')}[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+            console.print()
         else:
             error_msgs = {
                 "pr": "No valid PR content found",
@@ -262,14 +263,14 @@ class IssuePullRequestGenerator(
 
         self.display_token_usage(response)
 
-        # Panel → Questionary (interactive) needs spacing
-        # CLI mode: copy_to_clipboard_auto handles its own spacing before success
-        if self._interactive:
-            console.print()
-            self.ask_to_copy_to_clipboard(copy_output)
-        else:
-            self.copy_to_clipboard_auto(copy_output)
-        return
+        self.handoff_to_clipboard(copy_output, leading_space=False)
+
+    def _handle_local_mode(
+        self, content: str, system_msg: str, *, allow_auto: bool = True
+    ) -> None:
+        """Display a reusable prompt even when copying is disabled or unavailable."""
+        full_prompt = system_msg + "\n\n" + self._build_full_prompt(content)
+        self.handoff_local_prompt(full_prompt, allow_auto=allow_auto)
 
 
 def generate_issue_pullrequest() -> None:

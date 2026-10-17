@@ -77,7 +77,10 @@ class ProviderConfigTests(unittest.TestCase):
         with patch("git_tools.generators.base.console.print") as print_mock:
             generator.display_token_usage(response)
 
-        panel = print_mock.call_args.args[0]
+        panel_calls = [call for call in print_mock.call_args_list if call.args]
+        self.assertEqual(len(panel_calls), 1)
+        self.assertEqual(print_mock.call_args.args, ())  # panel-owned trailing blank
+        panel = panel_calls[0].args[0]
         rendered = str(panel.renderable)
         self.assertIn("120", rendered)
         self.assertIn("30", rendered)

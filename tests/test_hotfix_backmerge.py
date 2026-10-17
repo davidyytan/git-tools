@@ -20,6 +20,9 @@ def load_mixins():
         module.__path__ = [str(directory)]
         sys.modules[name] = module
     sys.modules[prefix + ".bumpgen"] = bumpgen
+    # Branch resolution now reports failed interactive inference through base.warning.
+    # Keep this source-isolated harness stdlib-only without importing the real UI.
+    sys.modules[prefix + ".base"].warning = Mock()
 
     def load(name, path):
         spec = importlib.util.spec_from_file_location(prefix + "." + name, root / path)

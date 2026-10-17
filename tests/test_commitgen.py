@@ -18,7 +18,7 @@ class CommitGeneratorTests(unittest.TestCase):
                 ):
                     generator._display_response(response)
 
-                panels = [call.args[0] for call in console.print.call_args_list]
+                panels = [call.args[0] for call in console.print.call_args_list if call.args]
                 self.assertEqual([panel.title for panel in panels], ["[bold]Commit Message[/bold]"])
                 self.assertEqual(panels[0].renderable, "fix: avoid duplicate output")
 
@@ -127,6 +127,31 @@ class CommitGeneratorTests(unittest.TestCase):
             check=True,
             timeout=30,
         )
+
+    def test_open_release_respects_copy_policy_without_changing_commit_defaults(self) -> None:
+        for interactive in (False, True):
+            for copy_flag in (None, False, True):
+                with self.subTest(interactive=interactive, copy_flag=copy_flag):
+                    generator = CommitGenerator(
+                        interactive=interactive,
+                        workflow_kind="open-release",
+                        auto_commit=False,
+                        copy_clipboard=copy_flag,
+                    )
+                    with (
+                        patch.object(generator, "_get_staged_files", return_value=[]),
+                        patch.object(generator, "ask_to_copy_to_clipboard") as ask,
+                        patch.object(generator, "copy_to_clipboard_auto") as auto,
+                        patch("subprocess.run") as run,
+                    ):
+                        generator.generate_commit()
+                    run.assert_not_called()
+                    self.assertEqual(ask.call_count, int(interactive and copy_flag is None))
+                    self.assertEqual(auto.call_count, int(copy_flag is True or (copy_flag is None and not interactive)))
+                    if ask.called:
+                        ask.assert_called_once_with("chore: open release")
+                    if auto.called:
+                        auto.assert_called_once_with("chore: open release", leading_space=False)
 
     def test_open_release_workflow_subject(self) -> None:
         generator = CommitGenerator(

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Optional, Tuple
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, DotEnvSettingsSource
 
 from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter
 
@@ -136,22 +136,116 @@ def provider_base_url_env(provider: str) -> str:
     return next(choice for choice in choices if choice != "GIT_TOOLS_API_BASE")
 
 
-def _saved_value(key: str) -> str | None:
-    """A setting as the process environment or the settings files hold it.
+def effective_value(*keys: str, default: str | None = None) -> tuple[str | None, str]:
+    """Resolve aliases within each source, never across precedence levels.
 
-    The environment wins, then the settings files in their usual order (last
-    found wins). ``None`` when the key is nowhere.
+    Return the value and a non-secret source description. Empty environment
+    values and credentials are unset; designated file controls may be cleared.
     """
-    value = os.environ.get(key)
-    if value is None:
-        from dotenv import dotenv_values
+    from dotenv import dotenv_values
 
-        for path in _get_env_file_paths():
-            if path.exists():
-                found = dotenv_values(path).get(key)
-                if found is not None:
-                    value = found
-    return value
+    environment = {key.upper(): value for key, value in os.environ.items()}
+    for key in keys:
+        if environment.get(key.upper()) not in (None, ""):
+            return environment[key.upper()], f"environment: {key}"
+    for path in reversed(_get_env_file_paths()):
+        try:
+            values = {key.upper(): value for key, value in dotenv_values(path).items()}
+        except OSError:
+            continue
+        for key in keys:
+            value = values.get(key.upper())
+            if value is not None and (value != "" or key.upper() in _FILE_CLEAR_KEYS):
+                location = "local env" if path == Path.cwd() / "git-tools.env" else "user settings"
+                return value, f"{location}: {key}"
+    return default, "provider default" if default is not None else "not configured"
+
+
+def _saved_value(key: str) -> str | None:
+    """Return one effective value using the shared source precedence."""
+    return effective_value(key)[0]
+
+
+def effective_provider_base_url(provider: str) -> tuple[str | None, str]:
+    """Resolve an endpoint without constructing a credential-requiring config."""
+    value, source = effective_value(
+        "GIT_TOOLS_API_BASE", provider_base_url_env(provider),
+        default=PROVIDERS[normalize_provider_name(provider)].get("default_base_url") or None,
+    )
+    return value or None, source
+
+
+class _FileSettingsSource(DotEnvSettingsSource):
+    """Keep explicit file clears only for provider/profile controls, never keys."""
+
+    def _read_env_file(self, file_path: Path) -> dict[str, Any]:
+        values = self._static_read_env_file(
+            file_path, encoding=self.env_file_encoding, case_sensitive=self.case_sensitive,
+            ignore_empty=False, parse_none_str=self.env_parse_none_str,
+        )
+        return {key: value for key, value in values.items()
+                if value is not None and (value != "" or key.upper() in _FILE_CLEAR_KEYS)}
+
+
+def _canonical_source(source: Any, settings_cls: type[BaseSettings]) -> Any:
+    """Normalize alias keys before Pydantic merges sources.
+
+    Otherwise a low-priority primary alias can beat a high-priority secondary
+    alias (for example a saved shared endpoint versus OPENAI_BASE_URL in env).
+    """
+    def read() -> dict[str, Any]:
+        data = source().copy()
+        missing = object()
+        for name, field in settings_cls.model_fields.items():
+            alias = field.validation_alias
+            keys = [alias] if isinstance(alias, str) else list(getattr(alias, "choices", []))
+            if not keys:
+                continue
+            candidates = [*keys, name]
+            found = next((data[key] for key in candidates if key in data), missing)
+            for key in candidates:
+                data.pop(key, None)
+            if found is not missing:
+                data[keys[0]] = found
+        return data
+    return read
+
+
+_INITIAL_ENV_FILE_PATHS = _get_env_file_paths()
+
+
+class EffectiveSettings(BaseSettings):
+    """One source order for application and provider settings.
+
+    Explicit constructor/CLI values > environment > user file > local file >
+    defaults. Each file is a separate source so aliases obey that same order.
+    """
+    def __init__(self, **values: Any) -> None:
+        configured_files = self.model_config.get("env_file")
+        # Refresh normal paths (cwd, migration, editor saves), while honoring
+        # caller model_config overrides and explicit _env_file, including None.
+        values.setdefault("_env_file", _get_env_file_paths()
+                          if configured_files == _INITIAL_ENV_FILE_PATHS else configured_files)
+        super().__init__(**values)
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls: type[BaseSettings], init_settings: Any,
+                                   env_settings: Any, dotenv_settings: Any,
+                                   file_secret_settings: Any) -> tuple[Any, ...]:
+        paths = dotenv_settings.env_file
+        if isinstance(paths, (str, os.PathLike)):
+            paths = [paths]
+        files = [_FileSettingsSource(
+            settings_cls, env_file=path, env_file_encoding=dotenv_settings.env_file_encoding,
+            case_sensitive=dotenv_settings.case_sensitive, env_prefix=dotenv_settings.env_prefix,
+            env_nested_delimiter=dotenv_settings.env_nested_delimiter,
+            env_parse_none_str=dotenv_settings.env_parse_none_str,
+            env_parse_enums=dotenv_settings.env_parse_enums,
+        ) for path in reversed(paths or [])]
+        return tuple(_canonical_source(source, settings_cls)
+                     for source in (init_settings, env_settings, *files, file_secret_settings))
+
+    model_config = {"populate_by_name": True, "env_ignore_empty": True}
 
 
 def saved_provider_base_url(provider: str) -> str | None:
@@ -176,6 +270,15 @@ _PROFILE_FIELDS = {
     "GIT_TOOLS_OPENROUTER_PROVIDER": "OPENROUTER_PROVIDER",
 }
 
+# An assigned blank for these file controls is an explicit reset, not absence.
+# Process-environment blanks and saved credentials still fall through normally.
+_FILE_CLEAR_KEYS = {
+    "GIT_TOOLS_API_BASE", "GIT_TOOLS_MODEL_SUB", *_PROFILE_FIELDS,
+    *(f"{provider.upper()}_BASE_URL" for provider in PROVIDERS),
+    *(f"GIT_TOOLS_{provider.upper()}_{field}"
+      for provider in PROVIDERS for field in set(_PROFILE_FIELDS.values())),
+}
+
 
 def provider_profile_key(provider: str, field: str) -> str:
     """The provider-scoped key for one profile field (``GIT_TOOLS_OPENAI_MODEL_MAIN``)."""
@@ -198,11 +301,14 @@ def _mirror_profile(updates: dict[str, str | None]) -> dict[str, str | None]:
     """``updates`` plus their provider-profile mirrors for the provider they belong to.
 
     The provider is the one being switched to when the updates carry
-    ``GIT_TOOLS_PROVIDER``, else the saved current one. A custom endpoint is
+    ``GIT_TOOLS_PROVIDER``, else the effective current one (including aliases
+    and the implicit application default). A custom endpoint is
     mirrored under the provider's own endpoint key; the default endpoint is
     not, and setting it again forgets a remembered custom one.
     """
-    provider = updates.get("GIT_TOOLS_PROVIDER") or _saved_value("GIT_TOOLS_PROVIDER") or ""
+    provider = (updates.get("GIT_TOOLS_PROVIDER") or updates.get("GIT_TOOLS_DEFAULT_PROVIDER")
+                or effective_value("GIT_TOOLS_PROVIDER", "GIT_TOOLS_DEFAULT_PROVIDER",
+                                   default=GitToolsSettings.model_fields["default_provider"].default)[0])
     provider = normalize_provider_name(provider) if provider else ""
     if provider not in PROVIDERS:
         return dict(updates)
@@ -232,24 +338,9 @@ def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | 
     Returns:
         Tuple of (is_configured, key_value_or_none)
     """
-    env_vars = _get_provider_api_key_envs(provider)
-
-    # Check environment variable first
-    for env_var in env_vars:
-        if key := os.environ.get(env_var):
-            return True, key
-
-    # Check .env files
-    for env_var in env_vars:
-        pattern = re.compile(rf'^{env_var}\s*=\s*["\']?([^"\'#\n]+)["\']?', re.MULTILINE)
-        for path in _get_env_file_paths():
-            if path.exists():
-                try:
-                    content = path.read_text()
-                    if match := pattern.search(content):
-                        return True, match.group(1).strip()
-                except OSError:
-                    continue
+    key, _source = effective_value(*_get_provider_api_key_envs(provider))
+    if key:
+        return True, key
 
     # Local-proxy providers ship a usable default key, so treat them as
     # configured even when nothing is set explicitly.
@@ -337,11 +428,12 @@ def setup_api_key(provider: str = "openrouter") -> bool:
     return save_setting(env_var, key.strip())
 
 
-class GitToolsSettings(BaseSettings):
+class GitToolsSettings(EffectiveSettings):
     """Application-wide settings loaded from environment variables.
 
     All settings have sensible defaults and can be overridden via environment
-    variables with the GIT_TOOLS_ prefix. Empty strings are treated as unset.
+    variables with the GIT_TOOLS_ prefix. Empty exports are unset; saved
+    provider/profile controls can use an assigned blank to clear an override.
 
     Attributes:
         default_provider: Default LLM provider to use
@@ -358,13 +450,23 @@ class GitToolsSettings(BaseSettings):
         protected_file_extensions: File extensions that are never dropped, only truncated
     """
 
+    def __init__(self, **values: Any) -> None:
+        main_keys = ("main_model", "GIT_TOOLS_MODEL_MAIN", "GIT_TOOLS_DEFAULT_MODEL")
+        if "default_model" in values and not any(key in values for key in main_keys):
+            values["main_model"] = values["default_model"]
+        super().__init__(**values)
+        if "main_model" in self.model_fields_set and self.main_model is None:
+            # A main-model clear/null must not revive the separate legacy field.
+            self.default_model = None
+
     # LLM defaults
     default_provider: str = Field(
         default="openrouter",
         validation_alias=AliasChoices("GIT_TOOLS_PROVIDER", "GIT_TOOLS_DEFAULT_PROVIDER"),
     )
     default_model: Optional[str] = Field(default=None)
-    main_model: Optional[str] = Field(default=None, validation_alias="GIT_TOOLS_MODEL_MAIN")
+    main_model: Optional[str] = Field(default=None, validation_alias=AliasChoices(
+        "GIT_TOOLS_MODEL_MAIN", "GIT_TOOLS_DEFAULT_MODEL"))
     support_model: str = Field(default="follow-main", validation_alias=AliasChoices(
         "GIT_TOOLS_MODEL_SUPPORT", "GIT_TOOLS_MODEL_SUB"))
     openrouter_provider: Optional[str] = Field(default=None)
@@ -394,6 +496,18 @@ class GitToolsSettings(BaseSettings):
         if mode not in {"auto", "false"}:
             raise ValueError("azure_pr_limit must be auto or false")
         return mode
+
+    # Saved generation preferences; explicit command flags override these.
+    commit_include_scope: bool = Field(default=False)
+    commit_include_footer: bool = Field(default=False)
+    issue_pr_source: str = Field(default="b")
+
+    @field_validator("issue_pr_source", mode="before")
+    @classmethod
+    def validate_issue_pr_source(cls, value: Any) -> str:
+        # Keep the documented generator fallback for invalid source values.
+        source = str(value or "b").strip().lower()
+        return source if source in {"c", "d", "b"} else "b"
 
     # Token limits
     default_token_limit: int = Field(default=200000, ge=1)
@@ -490,7 +604,7 @@ class GitToolsSettings(BaseSettings):
 
     class Config:
         env_prefix = "GIT_TOOLS_"
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -508,7 +622,7 @@ def reload_settings() -> None:
     settings.__dict__.update(GitToolsSettings().__dict__)
 
 
-class BaseLLMConfig(BaseSettings):
+class BaseLLMConfig(EffectiveSettings):
     """Base configuration for all LLM providers.
 
     Attributes:
@@ -560,7 +674,7 @@ class OpenRouterConfig(BaseLLMConfig):
     )
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -578,7 +692,7 @@ class KimiCLIConfig(BaseLLMConfig):
     )
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -608,7 +722,7 @@ class CLIProxyAPIConfig(BaseLLMConfig):
     )
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -622,7 +736,7 @@ class ACRCConfig(BaseLLMConfig):
     )
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -636,7 +750,7 @@ class CopilotConfig(BaseLLMConfig):
     )
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -661,7 +775,7 @@ class QwenConfig(BaseLLMConfig):
         return value
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -675,7 +789,7 @@ class OpenAIConfig(BaseLLMConfig):
     )
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 
@@ -689,7 +803,7 @@ class AnthropicConfig(BaseLLMConfig):
     )
 
     class Config:
-        env_file = _get_env_file_paths()
+        env_file = _INITIAL_ENV_FILE_PATHS
         extra = "ignore"
 
 

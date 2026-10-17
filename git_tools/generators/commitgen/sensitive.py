@@ -217,8 +217,7 @@ Committing these files may expose:
   • Private keys
   • Secret tokens"""
 
-        console.print()
-        console.print(Panel(warning_text.strip(), title="[bold]⚠ WARNING[/bold]", border_style=STYLE_ERROR, title_align=ALIGN_PANEL))
+        console.print(Panel(warning_text.strip(), title="[bold]⚠ WARNING[/bold]", border_style=STYLE_ERROR, title_align=ALIGN_PANEL), soft_wrap=False)
         console.print()
 
         return self.prompt_confirm("Are you SURE you want to commit these files?", default=False)
@@ -238,6 +237,7 @@ Committing these files may expose:
                     "(--force-sensitive)"
                 )
                 console.print("\n".join(self._format_sensitive_file_lines(sensitive_files)))
+                console.print()
                 return True
 
             if not self._interactive:
@@ -245,8 +245,10 @@ Committing these files may expose:
                 return False
 
             if not self._confirm_commit_sensitive_files(sensitive_files):
+                console.print()
                 warning("Commit cancelled. Please unstage sensitive files before continuing.")
                 console.print(f"  [{STYLE_DIM}]You can unstage files with: git reset HEAD <file>[/{STYLE_DIM}]")
                 return False
+            console.print()
 
         return True

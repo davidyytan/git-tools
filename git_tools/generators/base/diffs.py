@@ -298,16 +298,21 @@ class DiffProcessingMixin:
     ) -> Optional[Tuple[str, List[str]]]:
         """Get unified diff between base branch and HEAD (committed changes only).
 
-        Uses git diff base_branch...HEAD which compares the merge-base with HEAD,
-        excluding any staged or uncommitted changes.
+        Uses the inspected comparison's pinned merge-base/HEAD when available;
+        otherwise compares base_branch...HEAD. Both exclude staged/uncommitted edits.
 
         Args:
             base_branch: The base branch to compare against
             max_token_count: If set, enables size-aware mode and truncates diffs to stay within this token count
         """
+        comparison = getattr(self, "_comparison_commit_info", None)
+        diff_range = f"{base_branch}...HEAD"
+        if (comparison and comparison.get("base_branch") == base_branch
+                and comparison.get("merge_base") and comparison.get("head_hash")):
+            diff_range = f"{comparison['merge_base']}..{comparison['head_hash']}"
         try:
             full_diff = subprocess.check_output(
-                ["git", "diff", f"{base_branch}...HEAD"], text=True, timeout=60
+                ["git", "diff", diff_range, "--"], text=True, timeout=60
             ).strip()
 
             return self._process_diff_with_size_limiting(full_diff, max_token_count)
@@ -336,20 +341,11 @@ class DiffProcessingMixin:
             return None
 
     def get_diff_processing_params(self, default_token_count: int) -> int:
-        """Unified method to get diff processing parameters.
+        """Resolve a CLI input budget or the saved generator-specific budget.
 
-        Uses CLI token_limit if provided. If not:
-        - Interactive mode: prompts for input
-        - Non-interactive mode: uses default
-
-        Args:
-            default_token_count: Default token count limit for this generator type
-
-        Returns:
-            max_token_count: The token limit for diff processing
+        Interactive generation reuses settings just like direct generation; changing
+        the input budget belongs in settings or an explicit per-run override.
         """
         if self._cli_token_limit is not None:
             return self._cli_token_limit
-        if self._interactive:
-            return self.get_token_limit(default=default_token_count, context="diff")
         return default_token_count

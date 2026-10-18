@@ -8,7 +8,7 @@
 git-tools settings
 ```
 
-Choose **Provider** for a continuous setup: provider → credentials/endpoint → main model → OpenRouter upstream (with available price, context, quantization, caching and uptime metadata, cheapest first) or Kimi thinking (off, on or a declared tier) → reasoning effort for the other supported providers. Most current choices are preselected, but the Kimi tier-only case has a [known default-selection defect](#current-limitations). Support is reserved/unused and omitted from the normal wizard/menu. A blank key keeps an existing/default key. Back retains pending choices and revisits the preceding step; canceling discards the whole unfinished setup. Choices are saved together only after completing the flow.
+Choose **Provider** for a continuous setup: provider → credentials/endpoint → main model → OpenRouter upstream (with available price, context, quantization, caching and uptime metadata, cheapest first) or Kimi thinking (off, on or a declared tier) → reasoning effort for the other supported providers. Most current choices are preselected, but the Kimi tier-only case has a [known default-selection defect](#current-limitations). A blank key keeps an existing/default key. Back retains pending choices and revisits the preceding step; canceling discards the whole unfinished setup. Choices are saved together only after completing the flow.
 
 ```bash
 git-tools settings provider                     # Interactive provider selector and setup
@@ -36,7 +36,7 @@ The implementation classifies nonempty OpenAI-platform model IDs as reasoning-ca
 
 ACRC VPN access and Copilot proxy authentication are managed externally. Host-local proxies default to loopback addresses. CLIProxyAPI requires a separately running/authenticated proxy; its client key defaults to the placeholder `cliproxyapi`, overridden when your proxy requires another key. Its reasoning effort is unset by default.
 
-Saved provider choices are mirrored into per-provider profiles: model, reserved support model, effort, Kimi thinking, OpenRouter pin and custom endpoint (`GIT_TOOLS_OPENAI_MODEL_MAIN`, `GIT_TOOLS_KIMICLI_KIMI_THINKING`, `OPENAI_BASE_URL`, …). This also applies when OpenRouter is selected implicitly by default; API keys are already per provider. Switching reads the target profile into shared settings. This is not a lossless restoration guarantee: resetting to a provider default removes its user-file endpoint key, which can expose a lower-priority custom endpoint on a later switch. Verify destinations after switching; see [current limitations](#current-limitations).
+Saved provider choices are mirrored into per-provider profiles: model, effort, Kimi thinking, OpenRouter pin and custom endpoint (`GIT_TOOLS_OPENAI_MODEL_MAIN`, `GIT_TOOLS_KIMICLI_KIMI_THINKING`, `OPENAI_BASE_URL`, …). This also applies when OpenRouter is selected implicitly by default; API keys are already per provider. Switching reads the target profile into shared settings. This is not a lossless restoration guarantee: resetting to a provider default removes its user-file endpoint key, which can expose a lower-priority custom endpoint on a later switch. Verify destinations after switching; see [current limitations](#current-limitations).
 
 To configure through environment variables instead:
 
@@ -63,7 +63,7 @@ Do not commit real credentials. Ordinary AI commit/issue/PR generation needs a p
 
 For normal settings loading, exported environment variables override env files; `settings.env` overrides matching values in `git-tools.env`. CLI options override their corresponding generation defaults. A stale exported variable can therefore hide a newly saved setting.
 
-The application settings readers and credential prechecks use that order, resolving aliases within each source. An exported provider-specific endpoint therefore overrides a saved shared endpoint. Empty exported variables and empty saved credentials are treated as unset. In env files, an explicitly assigned blank for endpoint, model, support model, effort, routing, or thinking controls (including provider profiles) masks lower-priority file values; a bare variable name without `=` remains unset. A saved blank Qwen endpoint fails required configuration validation. **For other compatible providers a blank can instead become `None` and trigger an unrelated transport default; do not use blank endpoint controls.** See [current limitations](#current-limitations). The endpoint and credential rows show their application-resolved source without exposing keys; this display does not establish the actual transport destination when the endpoint is absent. After saving, an environment override remains authoritative. Endpoint lookup itself does not require valid credentials.
+The application settings readers and credential prechecks use that order, resolving aliases within each source. An exported provider-specific endpoint therefore overrides a saved shared endpoint. Empty exported variables and empty saved credentials are treated as unset. In env files, an explicitly assigned blank for endpoint, model, effort, routing, or thinking controls (including provider profiles) masks lower-priority file values; a bare variable name without `=` remains unset. A saved blank Qwen endpoint fails required configuration validation. **For other compatible providers a blank can instead become `None` and trigger an unrelated transport default; do not use blank endpoint controls.** See [current limitations](#current-limitations). The endpoint and credential rows show their application-resolved source without exposing keys; this display does not establish the actual transport destination when the endpoint is absent. After saving, an environment override remains authoritative. Endpoint lookup itself does not require valid credentials.
 
 When `settings.env` is absent, legacy `~/.git-tools/config.env` or `$XDG_CONFIG_HOME/git-tools/config.env` (default `~/.config/git-tools/config.env`) is migrated automatically. The `.git-tools` legacy location takes priority. A failed move remains readable as a fallback; legacy files are ignored once `settings.env` exists.
 
@@ -81,16 +81,15 @@ git-tools settings temperature 0.6
 git-tools settings effort xhigh
 ```
 
-### Main and Support Models
+### Main Model
 
 ```bash
 git-tools settings main-model vendor/model
-git-tools settings support-model follow-main
-# Or reserve a separate support ID (not invoked):
-git-tools settings sub-model vendor/smaller-model
 ```
 
-Main and support share the selected provider/account, as in the agent projects. **Only main is used today** for commit/issue/PR generation; configuring support never causes a second request. The reserved direct editors and environment names remain compatible, but support is not a normal setup choice. Support defaults to `follow-main`. `model` remains an alias for editing main. Resolution in both direct and interactive generation is explicit `--model` → effective main-model setting → provider fallback. `GIT_TOOLS_MODEL_MAIN` and legacy `GIT_TOOLS_DEFAULT_MODEL` are aliases: source precedence wins first, with `MODEL_MAIN` preferred within the same source. Temperature and maximum output tokens likewise use explicit CLI overrides before their saved global defaults. Provider-specific endpoint, routing, reasoning, and thinking settings are reused without additional configuration questions.
+The main model handles all commit/issue/PR generation. `model` remains an alias for editing main. Resolution in both direct and interactive generation is explicit `--model` → effective main-model setting → provider fallback. `GIT_TOOLS_MODEL_MAIN` and legacy `GIT_TOOLS_DEFAULT_MODEL` are aliases: source precedence wins first, with `MODEL_MAIN` preferred within the same source. Temperature and maximum output tokens likewise use explicit CLI overrides before their saved global defaults. Provider-specific endpoint, routing, reasoning, and thinking settings are reused without additional configuration questions.
+
+**Compatibility:** `support-model` and `sub-model` (including `support_model` and `sub_model`) are removed and treated as unknown settings, not deprecated no-ops. Obsolete `GIT_TOOLS_MODEL_SUPPORT`, `GIT_TOOLS_MODEL_SUB`, and `GIT_TOOLS_<PROVIDER>_MODEL_SUPPORT` keys are ignored. Existing entries are not automatically removed and cannot affect the main model.
 
 Catalogs depend on endpoint and credentials. A failed Kimi Code refresh may use a clearly warned last-known-good cache for that exact identity; changed credentials/endpoints do not reuse another account's cache. Without a suitable cache, saved/manual and fallback choices remain. Other HTTP client errors bypass the disk cache; authentication/payment/permission errors (401/402/403), server errors, network failures, and malformed responses may use a matching last-known-good catalog, with a warning. Listing or saving an ID does not guarantee your account can access it.
 
@@ -108,7 +107,7 @@ git-tools settings kimi-thinking enabled   # or disabled, or a tier such as high
 
 OpenRouter upstream choices come from `/models/<model>/endpoints`; manual slugs are also accepted. A pin uses `provider.only` and disables fallbacks. Upstream availability is per model, so changing the main model interactively re-asks the pin for the new model; the non-interactive `settings main-model <id>` keeps a pin the new model's upstream list still contains, clears one it verifiably does not (with a warning), and keeps an unverifiable one with a warning. On OpenRouter, `effort none` is a real wire value, not clearing the override; other providers handle it as described above. Use `effort unset` to clear the saved override. Kimi thinking/effort choices respect catalog capabilities where declared, and a direct `settings effort <value>` is checked against the same Kimi catalog tiers before it is saved. Kimi first honors the catalog's `only`/`no` thinking mode. Otherwise an explicit `kimi-thinking disabled` sends `thinking.type=disabled`, suppresses tier validation, and saving it clears the effort override; a real tier alone enables thinking when thinking is unset. With neither an explicit thinking choice nor a tier, catalog `only`/`no` still forces enabled/disabled respectively; other modes leave the service default in effect. Kimi treats effort `none` as no tier, not as a disable-thinking instruction. Qwen uses its provider-specific thinking parameters.
 
-Provider switching loads remembered choices where present, otherwise provider defaults (no default endpoint for Qwen), support `follow-main`, and no routing/thinking/effort overrides. General effort prompts preselect saved choices. Kimi's combined thinking picker can instead change a saved tier-only choice when Enter accepts the default; endpoint reset/roundtrip behavior also has a known gap. Neither should be assumed lossless; see [current limitations](#current-limitations). Noninteractive provider switches do not probe model catalogs. Exported variables still win over saved settings; unset stale exports when switching providers.
+Provider switching loads remembered choices where present, otherwise provider defaults (no default endpoint for Qwen) and no routing/thinking/effort overrides. General effort prompts preselect saved choices. Kimi's combined thinking picker can instead change a saved tier-only choice when Enter accepts the default; endpoint reset/roundtrip behavior also has a known gap. Neither should be assumed lossless; see [current limitations](#current-limitations). Noninteractive provider switches do not probe model catalogs. Exported variables still win over saved settings; unset stale exports when switching providers.
 
 ## Generation Preferences
 
@@ -139,9 +138,8 @@ Defaults below are application defaults; model/provider capabilities may constra
 | `GIT_TOOLS_PROVIDER` | `openrouter`; selects provider |
 | `GIT_TOOLS_API_BASE` | The current provider's endpoint |
 | `<PROVIDER>_BASE_URL` (e.g. `OPENAI_BASE_URL`) | Per-provider endpoint/profile input; verify after switches and explicit resets |
-| `GIT_TOOLS_<PROVIDER>_MODEL_MAIN`, `…_MODEL_SUPPORT`, `…_REASONING_EFFORT`, `…_KIMI_THINKING`, `…_OPENROUTER_PROVIDER` | The provider's remembered profile, written automatically and restored on a switch |
+| `GIT_TOOLS_<PROVIDER>_MODEL_MAIN`, `…_REASONING_EFFORT`, `…_KIMI_THINKING`, `…_OPENROUTER_PROVIDER` | The provider's remembered profile, written automatically and restored on a switch |
 | `GIT_TOOLS_MODEL_MAIN` | Main-model alias; preferred over the legacy alias within the same source |
-| `GIT_TOOLS_MODEL_SUPPORT` | Reserved support model; `follow-main` by default (`GIT_TOOLS_MODEL_SUB` alias) |
 | `GIT_TOOLS_DEFAULT_MODEL` | Legacy alias for the main-model setting |
 | `GIT_TOOLS_OPENROUTER_PROVIDER` | Upstream slug, or `any`/unset for unpinned routing |
 | `GIT_TOOLS_KIMI_THINKING` | Optional true/false override |

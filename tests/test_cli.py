@@ -154,13 +154,14 @@ class CliTests(unittest.TestCase):
                 "'GIT_TOOLS_PROVIDER': 'kimicli', "
                 "'GIT_TOOLS_DEFAULT_MODEL': 'kimi-k2.5', 'GIT_TOOLS_MODEL_MAIN': 'kimi-k2.5', "
                 "'GIT_TOOLS_API_BASE': 'https://api.kimi.com/coding/v1', "
-                "'GIT_TOOLS_MODEL_SUPPORT': 'follow-main', 'GIT_TOOLS_OPENROUTER_PROVIDER': '', "
+                "'GIT_TOOLS_OPENROUTER_PROVIDER': '', "
                 "'GIT_TOOLS_REASONING_EFFORT': '', 'GIT_TOOLS_KIMI_THINKING': ''}",
             ],
         )
         self.assertEqual(state["provider"], "kimicli")
         self.assertEqual(state["model"], "kimi-k2.5")
         self.assertTrue(state["api_configured"])
+        self.assertNotIn("support_model", state)
 
     def test_interactive_provider_flow_does_not_switch_when_model_is_cancelled(self) -> None:
         from git_tools.settings import settings as settings_module
@@ -249,6 +250,26 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertIn("Unknown setting: bogus", result.output)
         self.assertIn("provider", result.output)
+
+    def test_removed_support_model_aliases_are_unknown_without_saving_or_prompting(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with (
+            patch.object(settings_module, "save_setting") as save_one,
+            patch.object(settings_module, "save_settings") as save_all,
+            patch("git_tools.cli._ask_with_back") as ask,
+            patch("git_tools.cli._load_settings_state") as load,
+        ):
+            for name in ("support-model", "sub-model", "support_model", "sub_model"):
+                for values in ([], ["obsolete-model"]):
+                    with self.subTest(name=name, values=values):
+                        result = self.runner.invoke(app, ["settings", name, *values])
+                        self.assertEqual(result.exit_code, 1, result.output)
+                        self.assertIn(f"Unknown setting: {name}", result.output)
+        save_one.assert_not_called()
+        save_all.assert_not_called()
+        ask.assert_not_called()
+        load.assert_not_called()
 
     def test_init_uses_defaults_in_direct_mode(self) -> None:
         original_cwd = os.getcwd()

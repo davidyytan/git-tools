@@ -11,22 +11,11 @@ See the [Azure flow index](README.md) for all four flow policies and [CLI usage]
 ## Before You Start
 
 - This project uses `master`.
-- Choose classic or release-led (variant). Reviewed workflows use the same
-  adapter as their corresponding base flow; the extra review layer is a PR process.
-- You need permission to create an Azure pipeline and configure repository
-  security, or an administrator who can grant the required permissions.
-- In **Organization settings → Pipelines → Settings** or **Project settings →
-  Pipelines → Settings**, enable **Limit job authorization scope to current
-  project for non-release pipelines**. The YAML pipeline is a non-release
-  pipeline even when managing Git release branches. This runbook requires a
-  project-scoped job token; otherwise the collection-scoped identity may run
-  the job and grants to the project identity will not apply. Organization-level
-  enforcement cannot be relaxed at project level.
-- Install `git-tools` locally as described in [CLI usage](../usage.md), and
-  configure a provider/model for AI-generated commit and PR text. Fixed-title
-  helpers and the CI versioning engine do not require an Azure API token.
-- You do not need an Azure DevOps bot user, SSH key, or personal access token.
-  The pipeline pushes through Azure DevOps' automatic Build Service identity.
+- Choose classic or release-led (variant). Reviewed workflows use the same adapter as their corresponding base flow; the extra review layer is a PR process.
+- You need permission to create an Azure pipeline and configure repository security, or an administrator who can grant the required permissions.
+- In **Organization settings → Pipelines → Settings** or **Project settings → Pipelines → Settings**, enable **Limit job authorization scope to current project for non-release pipelines**. The YAML pipeline is a non-release pipeline even when managing Git release branches. This runbook requires a project-scoped job token; otherwise the collection-scoped identity may run the job and grants to the project identity will not apply. Organization-level enforcement cannot be relaxed at project level.
+- Install `git-tools` locally as described in [CLI usage](../usage.md), and configure a provider/model for AI-generated commit and PR text. Fixed-title helpers and the CI versioning engine do not require an Azure API token.
+- You do not need an Azure DevOps bot user, SSH key, or personal access token. The pipeline pushes through Azure DevOps' automatic Build Service identity.
 
 ## Naming Convention
 
@@ -197,8 +186,7 @@ After the first push:
 5. Select the `master` branch.
 6. Select `/.azure/workflows/version-bump-git-flow-classic.yml`.
 7. Select **Save**. Do not run the pipeline yet.
-8. Rename the pipeline to `<repo-slug>-version-bump-classic` so it is easy to
-   distinguish from pipelines for other repositories in the project.
+8. Rename the pipeline to `<repo-slug>-version-bump-classic` so it is easy to distinguish from pipelines for other repositories in the project.
 
 **Reuse scope:** create a separate Azure pipeline definition for each repository, even when every definition uses identical YAML contents. Do not create two active versioning pipelines for the same repository and branches, because both could try to create the same bump and tag.
 
@@ -360,13 +348,10 @@ The final commit subject on the target branch must represent the PR title. The r
 
 ### Subjects into `develop`
 
-- most feature and bugfix PRs into `develop` land with a Conventional Commit
-  subject
+- most feature and bugfix PRs into `develop` land with a Conventional Commit subject
 - the first PR on a fresh develop line may land with `Start X.Y.Z`
-- release backmerge PRs into `develop` must land with
-  `Backmerge Release X.Y.Z`
-- hotfix backmerge PRs into `develop` must land with
-  `Backmerge Hotfix X.Y.Z`
+- release backmerge PRs into `develop` must land with `Backmerge Release X.Y.Z`
+- hotfix backmerge PRs into `develop` must land with `Backmerge Hotfix X.Y.Z`
 
 ### Subjects into `master`
 
@@ -385,10 +370,8 @@ The [numbered walkthroughs](README.md#full-walkthroughs) use **Merge (no fast-fo
 ### Merge commit profile
 
 - complete the PR with **Merge (no fast-forward)**
-- customize the merge commit message when necessary so its subject is the PR
-  title
-- for the closest classic Git Flow feel, use merge commits for `feature/*`,
-  `bugfix/*`, `release/*`, and `hotfix/*` PRs
+- customize the merge commit message when necessary so its subject is the PR title
+- for the closest classic Git Flow feel, use merge commits for `feature/*`, `bugfix/*`, `release/*`, and `hotfix/*` PRs
 
 Azure DevOps' generated PR-ID prefix is safe when the code normalizer is present, but the remainder of the subject must still match the PR title.
 
@@ -397,8 +380,7 @@ Why:
 - `develop` bump decisions depend on the final merged subject
 - `master` release finalization depends on the merged prerelease state
 - backmerges into `develop` must be distinguishable from release promotion
-- squash and merge-commit styles both work when the final subject represents
-  the PR title
+- squash and merge-commit styles both work when the final subject represents the PR title
 
 ## After Setup
 

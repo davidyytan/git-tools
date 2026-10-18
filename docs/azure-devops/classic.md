@@ -142,8 +142,7 @@ On a freshly created `develop` branch that still matches the latest stable relea
 
 Classic flow has one key rule:
 
-- after cutting `release/X.Y.Z`, the first PR for the next `develop` cycle
-  must land as `Start A.B.C`
+- after cutting `release/X.Y.Z`, the first PR for the next `develop` cycle must land as `Start A.B.C`
 
 That means:
 

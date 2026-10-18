@@ -206,8 +206,7 @@ git commit -m "fix: greet blank names as friend"
 ```bash
 git push origin release/0.2.0
 ```
-**Transition:** direct stabilization commit on `release/0.2.0`, subject `fix: greet blank names as friend`; no hosted inner PR in this mode. Wait for the release-branch workflow.
-Expect **`0.2.0-rc.0`**, tag **`0.2.0-rc.0`**. This is alpha → RC on the same release line, not a patch release.
+**Transition:** direct stabilization commit on `release/0.2.0`, subject `fix: greet blank names as friend`; no hosted inner PR in this mode. Wait for the release-branch workflow. Expect **`0.2.0-rc.0`**, tag **`0.2.0-rc.0`**. This is alpha → RC on the same release line, not a patch release.
 
 ```bash
 git switch release/0.2.0
@@ -226,8 +225,7 @@ git commit -m "docs: describe greeting release"
 ```bash
 git push origin release/0.2.0
 ```
-**Transition:** direct `release/0.2.0` commit, subject `docs: describe greeting release`. Wait for release CI.
-Expect **`0.2.0-rc.1`**, tag **`0.2.0-rc.1`**. A Conventional Commit such as `docs:` is bump-eligible for RC continuation even though it does not normally select a semantic increment by itself.
+**Transition:** direct `release/0.2.0` commit, subject `docs: describe greeting release`. Wait for release CI. Expect **`0.2.0-rc.1`**, tag **`0.2.0-rc.1`**. A Conventional Commit such as `docs:` is bump-eligible for RC continuation even though it does not normally select a semantic increment by itself.
 
 ```bash
 git switch release/0.2.0
@@ -286,8 +284,7 @@ git commit -m "chore: merge develop for backmerge"
 ```bash
 git push origin release/0.2.0
 ```
-**Transition:** direct synchronization commit on `release/0.2.0`, exact subject `chore: merge develop for backmerge`. Wait for its CI.
-The engine recognizes this exact preparation subject **before** ordinary release-line validation. It continues the copied alpha to **`0.3.0-alpha.1`**, **without a tag**. An arbitrary `chore:` title here is not interchangeable: classic would reject an alpha on the wrong release line. The source is now an integration carrier, not a candidate to promote to master again.
+**Transition:** direct synchronization commit on `release/0.2.0`, exact subject `chore: merge develop for backmerge`. Wait for its CI. The engine recognizes this exact preparation subject **before** ordinary release-line validation. It continues the copied alpha to **`0.3.0-alpha.1`**, **without a tag**. An arbitrary `chore:` title here is not interchangeable: classic would reject an alpha on the wrong release line. The source is now an integration carrier, not a candidate to promote to master again.
 
 ```bash
 git switch release/0.2.0
@@ -369,8 +366,7 @@ git fetch origin --tags
 git switch -c hotfix/missing-name
 git push -u origin hotfix/missing-name
 ```
-**Transition:** stable master `0.2.0` → new `hotfix/missing-name`, no PR/title and no new human content. Wait for the workflow: no unique hotfix commit yet, so **`0.2.0`**, **no new tag**.
-Fix the production error for `None` input. On this hotfix branch `greet` should become:
+**Transition:** stable master `0.2.0` → new `hotfix/missing-name`, no PR/title and no new human content. Wait for the workflow: no unique hotfix commit yet, so **`0.2.0`**, **no new tag**. Fix the production error for `None` input. On this hotfix branch `greet` should become:
 
 ```python
 def greet(name):
@@ -390,8 +386,7 @@ git commit -m "fix: handle missing greeting names"
 ```bash
 git push origin hotfix/missing-name
 ```
-**Transition:** direct commit on `hotfix/missing-name`, subject `fix: handle missing greeting names`. Wait for hotfix CI.
-Expect **`0.2.1-rc.0`**, tag **`0.2.1-rc.0`**. The hotfix selects the next patch from stable master, not from develop's `0.3.0` line.
+**Transition:** direct commit on `hotfix/missing-name`, subject `fix: handle missing greeting names`. Wait for hotfix CI. Expect **`0.2.1-rc.0`**, tag **`0.2.1-rc.0`**. The hotfix selects the next patch from stable master, not from develop's `0.3.0` line.
 
 ```bash
 git switch hotfix/missing-name
@@ -444,8 +439,7 @@ git commit -m "chore: merge develop for backmerge"
 ```bash
 git push origin hotfix/missing-name
 ```
-**Transition:** direct synchronization on `hotfix/missing-name`, exact subject `chore: merge develop for backmerge`. Wait for its version job.
-Expect the copied alpha to continue to **`0.3.0-alpha.3`**, **no tag**, via the special prep rule. This rule is important: normal hotfix validation would reject a `0.3.0` version against stable `0.2.1`.
+**Transition:** direct synchronization on `hotfix/missing-name`, exact subject `chore: merge develop for backmerge`. Wait for its version job. Expect the copied alpha to continue to **`0.3.0-alpha.3`**, **no tag**, via the special prep rule. This rule is important: normal hotfix validation would reject a `0.3.0` version against stable `0.2.1`.
 
 ```bash
 git switch hotfix/missing-name

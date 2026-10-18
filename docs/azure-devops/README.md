@@ -40,16 +40,10 @@ The CLI generates PR text locally; it does not create or merge hosted PRs. `git-
 
 ## Start Here
 
-1. Follow [Azure DevOps setup](setup.md): choose one adapter, configure the
-   engine ref, signing Secure File, bot identity, project-scoped Build Service
-   permissions, and merge settings.
-2. Follow [bootstrap](setup.md#bootstrap-master-and-develop) once for a fresh
-   repository. Push `master`, create and authorize the pipeline, then run it
-   manually; the earlier push does not trigger a newly created pipeline
-   retroactively. Create `develop` only after stable publication on `master`.
+1. Follow [Azure DevOps setup](setup.md): choose one adapter, configure the engine ref, signing Secure File, bot identity, project-scoped Build Service permissions, and merge settings.
+2. Follow [bootstrap](setup.md#bootstrap-master-and-develop) once for a fresh repository. Push `master`, create and authorize the pipeline, then run it manually; the earlier push does not trigger a newly created pipeline retroactively. Create `develop` only after stable publication on `master`.
 3. Follow the selected mode's command recipes and policy sections.
-4. If publication fails, inspect remote refs and follow
-   [publication and recovery](../publication.md), not another bootstrap.
+4. If publication fails, inspect remote refs and follow [publication and recovery](../publication.md), not another bootstrap.
 
 ## Shared References
 

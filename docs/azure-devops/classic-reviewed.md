@@ -26,8 +26,7 @@ The merge commit subject on `release/X.Y.Z` or `hotfix/<name>` is the input to t
 Compatible Azure DevOps completion strategies for inner PRs:
 
 - **Squash commit** — set the final squash subject to the PR title.
-- **Merge (no fast-forward)** — customize the merge message so its first line
-  is the PR title.
+- **Merge (no fast-forward)** — customize the merge message so its first line is the PR title.
 - Prohibit rebase strategies through the target branch's merge-type policy.
 
 Do not leave an unrelated generated merge subject in the completion dialog. Azure may prefix the subject with `Merged PR 42:`; a supported engine ref normalizes that prefix, but the remaining subject must be a Conventional Commit. See [setup merge settings](setup.md#merge-settings).

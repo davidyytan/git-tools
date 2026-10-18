@@ -268,17 +268,34 @@ class StyledMenuTests(unittest.TestCase):
     def test_openai_effort_row_only_for_reasoning_models(self) -> None:
         from git_tools.cli import _build_settings_choices
 
-        base = {"provider": "openai", "api_configured": True, "support_model": "follow-main",
+        base = {"provider": "openai", "api_configured": True,
                 "temperature": 0.6, "max_tokens": 32000, "max_retries": 1, "reasoning_effort": None}
         values = lambda model: [c.value for c in _build_settings_choices({**base, "model": model})]
         self.assertIn("effort", values("gpt-6-astra"))
         self.assertNotIn("effort", values("gpt-4.1"))
 
+    def test_support_role_is_absent_from_every_providers_menu_and_editor_registry(self) -> None:
+        from git_tools import cli
+        from git_tools.generators.base import plain_title
+
+        obsolete_names = {"support-model", "sub-model", "support_model", "sub_model"}
+        self.assertTrue(obsolete_names.isdisjoint(cli._SETTINGS_EDITORS))
+        self.assertFalse(hasattr(cli, "_edit_support_model"))
+        for provider in mappings.PROVIDERS:
+            with self.subTest(provider=provider):
+                state = {"provider": provider, "model": "account-model", "api_configured": False,
+                         "temperature": 0.6, "max_tokens": 32000, "max_retries": 1}
+                choices = cli._build_settings_choices(state)
+                self.assertTrue(obsolete_names.isdisjoint(choice.value for choice in choices))
+                self.assertFalse(any("support model" in plain_title(choice.title).lower()
+                                     or "sub model" in plain_title(choice.title).lower()
+                                     for choice in choices))
+
     def test_settings_rows_show_routing_and_thinking_values(self) -> None:
         from git_tools.cli import _build_settings_choices
         from git_tools.generators.base import plain_title
 
-        base = {"api_configured": False, "support_model": "follow-main", "temperature": 0.6,
+        base = {"api_configured": False, "temperature": 0.6,
                 "max_tokens": 32000, "max_retries": 1, "reasoning_effort": None}
         rows = {c.value: plain_title(c.title) for c in _build_settings_choices(
             {**base, "provider": "openrouter", "model": "vendor/model", "openrouter_provider": "deepinfra"})}
@@ -566,6 +583,58 @@ class ProviderProfileTests(unittest.TestCase):
         self.assertIn('GIT_TOOLS_REASONING_EFFORT="low"', content)
         self.assertIn('GIT_TOOLS_API_BASE="http://127.0.0.1:8317/v1"', content)
 
+    def test_provider_switch_and_wizard_never_write_support_keys(self) -> None:
+        from git_tools import cli
+
+        for saved_obsolete in (False, True):
+            obsolete = ({
+                "GIT_TOOLS_MODEL_SUPPORT": "old-shared-support",
+                "GIT_TOOLS_MODEL_SUB": "old-shared-sub",
+                **{settings_module.provider_profile_key(provider, "MODEL_SUPPORT"): f"old-{provider}"
+                   for provider in mappings.PROVIDERS},
+            } if saved_obsolete else {})
+            obsolete_lines = [f'{key}="{value}"' for key, value in obsolete.items()]
+            for interactive in (False, True):
+                for provider in mappings.PROVIDERS:
+                    with self.subTest(saved_obsolete=saved_obsolete, interactive=interactive, provider=provider):
+                        current = "openai" if provider != "openai" else "anthropic"
+                        self.path.write_text(f'GIT_TOOLS_PROVIDER="{current}"\n'
+                                             + "\n".join(obsolete_lines) + "\n")
+                        state = cli._load_settings_state()
+                        answers = (["https://plan.invalid/v1", "low"]
+                                   if provider == "qwen" else ["low"])
+                        with (
+                            patch.object(settings_module, "save_settings", wraps=settings_module.save_settings) as save,
+                            patch("git_tools.cli._prompt_provider_api_key", return_value=(True, None)) as key,
+                            patch("git_tools.cli._choose_provider_model", return_value="account-model") as choose,
+                            patch("git_tools.cli._prompt_openrouter_upstream", return_value="route-slug"),
+                            patch("git_tools.cli._pick_kimi_thinking", return_value=(True, "high")),
+                            patch("git_tools.cli._ask_with_back", side_effect=answers) as ask,
+                        ):
+                            cli._edit_provider(state, provider, interactive=interactive)
+                        save.assert_called_once()
+                        updates = save.call_args.args[0]
+                        self.assertFalse(any(name.endswith(("_MODEL_SUPPORT", "_MODEL_SUB")) for name in updates))
+                        if interactive:
+                            key.assert_called_once_with(provider)
+                            choose.assert_called_once()
+                            self.assertEqual(updates["GIT_TOOLS_MODEL_MAIN"], "account-model")
+                        else:
+                            key.assert_not_called()
+                            choose.assert_not_called()
+                            ask.assert_not_called()
+                            self.assertEqual(updates["GIT_TOOLS_MODEL_MAIN"], cli._provider_default_model(provider))
+                        content = self.path.read_text()
+                        self.assertEqual([line for line in content.splitlines()
+                                          if line.split("=", 1)[0].endswith(("_MODEL_SUPPORT", "_MODEL_SUB"))],
+                                         obsolete_lines)
+                        self.assertEqual(state["provider"], provider)
+                        self.assertNotIn("support_model", state)
+                        self.assertNotIn("support_model", cli._load_settings_state())
+                        profile = settings_module.saved_provider_profile(provider)
+                        self.assertEqual(profile["model"], updates["GIT_TOOLS_MODEL_MAIN"])
+                        self.assertNotIn("support_model", profile)
+
     def test_profile_keys_mirroring_and_removal(self) -> None:
         from git_tools.settings.settings import (
             _mirror_profile,
@@ -587,6 +656,10 @@ class ProviderProfileTests(unittest.TestCase):
             "GIT_TOOLS_API_BASE": "https://api.anthropic.com/v1",
             "GIT_TOOLS_ANTHROPIC_MODEL_MAIN": "m", "ANTHROPIC_BASE_URL": None,
         })
+        # Obsolete shared names remain ordinary passthrough entries, not profile fields.
+        for key in ("GIT_TOOLS_MODEL_SUPPORT", "GIT_TOOLS_MODEL_SUB"):
+            updates = {"GIT_TOOLS_PROVIDER": "anthropic", key: "old-support"}
+            self.assertEqual(_mirror_profile(updates), updates)
         # Otherwise the saved current provider does.
         self.path.write_text('GIT_TOOLS_PROVIDER="qwen"\nGIT_TOOLS_QWEN_REASONING_EFFORT="high"\n')
         self.assertEqual(_mirror_profile({"GIT_TOOLS_API_BASE": "https://plan.invalid/v1"}),

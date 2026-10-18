@@ -212,8 +212,7 @@ git push -u origin release-fix/blank-name
 git fetch origin --tags
 git-tools pr --base release/0.2.0
 ```
-The example version adapter does not run on `release-fix/*`; no version/tag is produced on this source (separate PR tests still run). In GitHub create **`release-fix/blank-name` → `release/0.2.0`**, title **`fix: greet blank names as friend`**. Review the implementation and regression test, wait for checks, and squash-merge with that Conventional Commit subject. Wait for the release-branch version job.
-Expect **`0.2.0-rc.0`**, tag **`0.2.0-rc.0`**. This is alpha → RC on the same release line, not a patch release.
+The example version adapter does not run on `release-fix/*`; no version/tag is produced on this source (separate PR tests still run). In GitHub create **`release-fix/blank-name` → `release/0.2.0`**, title **`fix: greet blank names as friend`**. Review the implementation and regression test, wait for checks, and squash-merge with that Conventional Commit subject. Wait for the release-branch version job. Expect **`0.2.0-rc.0`**, tag **`0.2.0-rc.0`**. This is alpha → RC on the same release line, not a patch release.
 
 ```bash
 git switch release/0.2.0
@@ -238,8 +237,7 @@ git push -u origin release-fix/release-notes
 git fetch origin --tags
 git-tools pr --base release/0.2.0
 ```
-In GitHub create **`release-fix/release-notes` → `release/0.2.0`**, title **`docs: describe greeting release`**. The source is outside the version adapter triggers: **no tag**. Review the notes, wait for checks, and squash-merge with that subject; wait for release CI.
-Expect **`0.2.0-rc.1`**, tag **`0.2.0-rc.1`**. A Conventional Commit such as `docs:` is bump-eligible for RC continuation even though it does not normally select a semantic increment by itself.
+In GitHub create **`release-fix/release-notes` → `release/0.2.0`**, title **`docs: describe greeting release`**. The source is outside the version adapter triggers: **no tag**. Review the notes, wait for checks, and squash-merge with that subject; wait for release CI. Expect **`0.2.0-rc.1`**, tag **`0.2.0-rc.1`**. A Conventional Commit such as `docs:` is bump-eligible for RC continuation even though it does not normally select a semantic increment by itself.
 
 ```bash
 git switch release/0.2.0
@@ -304,8 +302,7 @@ git push -u origin release-fix/sync-develop
 git fetch origin --tags
 git-tools pr --base release/0.2.0
 ```
-In GitHub create **`release-fix/sync-develop` → `release/0.2.0`**, title **`chore: merge develop for backmerge`**. The source produces **no tag**. Review the actual farewell integration, version resolution, and retained stabilization fixes; pass checks and squash-merge with that exact subject. Wait for source-line CI.
-The engine recognizes this exact preparation subject **before** ordinary release-line validation. It continues the copied alpha to **`0.3.0-alpha.1`**, **without a tag**. An arbitrary `chore:` title here is not interchangeable: classic would reject an alpha on the wrong release line. The source is now an integration carrier, not a candidate to promote to master again.
+In GitHub create **`release-fix/sync-develop` → `release/0.2.0`**, title **`chore: merge develop for backmerge`**. The source produces **no tag**. Review the actual farewell integration, version resolution, and retained stabilization fixes; pass checks and squash-merge with that exact subject. Wait for source-line CI. The engine recognizes this exact preparation subject **before** ordinary release-line validation. It continues the copied alpha to **`0.3.0-alpha.1`**, **without a tag**. An arbitrary `chore:` title here is not interchangeable: classic would reject an alpha on the wrong release line. The source is now an integration carrier, not a candidate to promote to master again.
 
 ```bash
 git switch release/0.2.0
@@ -414,8 +411,7 @@ git push -u origin hotfix-fix/missing-name
 git fetch origin --tags
 git-tools pr --base hotfix/missing-name
 ```
-In GitHub create **`hotfix-fix/missing-name` → `hotfix/missing-name`**, title **`fix: handle missing greeting names`**. No source version/tag is produced (`hotfix-fix/*` is outside adapter triggers). Review the implementation/test, pass checks, and squash-merge with that subject; wait for hotfix CI.
-Expect **`0.2.1-rc.0`**, tag **`0.2.1-rc.0`**. The hotfix selects the next patch from stable master, not from develop's `0.3.0` line.
+In GitHub create **`hotfix-fix/missing-name` → `hotfix/missing-name`**, title **`fix: handle missing greeting names`**. No source version/tag is produced (`hotfix-fix/*` is outside adapter triggers). Review the implementation/test, pass checks, and squash-merge with that subject; wait for hotfix CI. Expect **`0.2.1-rc.0`**, tag **`0.2.1-rc.0`**. The hotfix selects the next patch from stable master, not from develop's `0.3.0` line.
 
 ```bash
 git switch hotfix/missing-name
@@ -474,8 +470,7 @@ git push -u origin hotfix-fix/sync-develop
 git fetch origin --tags
 git-tools pr --base hotfix/missing-name
 ```
-In GitHub create **`hotfix-fix/sync-develop` → `hotfix/missing-name`**, title **`chore: merge develop for backmerge`**. This is a real synchronization diff (including farewell), not an empty PR. No version/tag on the source. Review, pass checks, and squash-merge with that exact subject; wait for the hotfix-branch version job.
-Expect the copied alpha to continue to **`0.3.0-alpha.3`**, **no tag**, via the special prep rule. This rule is important: normal hotfix validation would reject a `0.3.0` version against stable `0.2.1`.
+In GitHub create **`hotfix-fix/sync-develop` → `hotfix/missing-name`**, title **`chore: merge develop for backmerge`**. This is a real synchronization diff (including farewell), not an empty PR. No version/tag on the source. Review, pass checks, and squash-merge with that exact subject; wait for the hotfix-branch version job. Expect the copied alpha to continue to **`0.3.0-alpha.3`**, **no tag**, via the special prep rule. This rule is important: normal hotfix validation would reject a `0.3.0` version against stable `0.2.1`.
 
 ```bash
 git switch hotfix/missing-name

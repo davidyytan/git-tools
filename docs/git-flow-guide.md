@@ -8,8 +8,7 @@ For a fresh repository, use the **[numbered end-to-end walkthroughs](walkthrough
 
 1. Open [GitHub guides](github/README.md) or [Azure DevOps guides](azure-devops/README.md).
 2. Complete that platform's setup and choose a flow below.
-3. Use [Direct CLI and Interactive Usage](usage.md) for command examples and
-   step-by-step terminal menu navigation.
+3. Use [Direct CLI and Interactive Usage](usage.md) for command examples and step-by-step terminal menu navigation.
 
 | Flow | Version policy | GitHub guide | Azure DevOps guide |
 | --- | --- | --- | --- |

@@ -6,10 +6,7 @@
 
 - Read this setup before running local bootstrap commands.
 - The checked-in adapters assume branches named `master` and `develop`.
-- Initialize the local repository on `master`. For an empty GitHub repository,
-  set its default branch to `master` after the first push, when that branch
-  exists. For an existing repository, plan migration separately; do not rerun
-  the fresh-repository bootstrap or overwrite its version configuration.
+- Initialize the local repository on `master`. For an empty GitHub repository, set its default branch to `master` after the first push, when that branch exists. For an existing repository, plan migration separately; do not rerun the fresh-repository bootstrap or overwrite its version configuration.
 
 ## Copy and Configure the Workflow
 
@@ -154,8 +151,7 @@ The rule that matters is the final commit subject on the target branch. GitHub m
 
 #### Subjects into `develop`
 
-- most feature and bugfix PRs into `develop` land with a Conventional Commit
-  subject
+- most feature and bugfix PRs into `develop` land with a Conventional Commit subject
 - the first PR on a fresh develop line may land with `Start X.Y.Z`
 - release backmerge PRs into `develop` must land with `Backmerge Release X.Y.Z`
 - hotfix backmerge PRs into `develop` must land with `Backmerge Hotfix X.Y.Z`
@@ -168,19 +164,16 @@ The rule that matters is the final commit subject on the target branch. GitHub m
 #### Squash merge profile
 
 - enable `Squash merge`
-- set the default squash commit message to use the PR title, ideally `Pull
-  request title and description`
+- set the default squash commit message to use the PR title, ideally `Pull request title and description`
 - disable `Rebase merge`
 - you may disable `Merge commit` if you want a strict squash-only repository
 
 #### Merge commit profile
 
 - enable `Merge commit`
-- set the default merge commit message to `Pull request title` or `Pull request
-  title and description`
+- set the default merge commit message to `Pull request title` or `Pull request title and description`
 - disable `Rebase merge`
-- for the closest classic Git Flow feel, use merge commits for `feature/*`,
-  `bugfix/*`, `release/*`, and `hotfix/*` PRs
+- for the closest classic Git Flow feel, use merge commits for `feature/*`, `bugfix/*`, `release/*`, and `hotfix/*` PRs
 
 GitHub's default merge-commit subject `Merge pull request #...` is not suitable for this flow because the version workflow reads the latest commit subject.
 
@@ -189,32 +182,17 @@ Why:
 - `develop` bump decisions depend on the final merged subject
 - `master` release finalization depends on the merged prerelease state
 - backmerges into `develop` must be distinguishable from release promotion
-- squash and merge-commit styles both work when that final subject is the PR
-  title
+- squash and merge-commit styles both work when that final subject is the PR title
 
 ## Operational Safety and Limitations
 
-- This is a **mutating push workflow**, not a read-only PR check. Use a separate
-  test workflow for PR validation. Never expose its write/signing credentials
-  to untrusted code or permit arbitrary changes to the adapter.
-- The examples trigger on `master`, `develop`, `release/**`, `hotfix/**`,
-  `feature/**`, and `bugfix/**`. Reviewed `release-fix/*` and `hotfix-fix/*`
-  branches are intentionally outside that list; merging their PRs triggers
-  the stabilization branch instead.
-- Full history and tags are required. The adapter evaluates remote branch
-  history as well as `.cz.toml`; shallow checkouts and stale refs can change
-  decisions. Pull bot commits and explicitly fetch tags between dependent steps.
-- The examples do not configure job concurrency. Coordinate version-producing
-  pushes on each branch and wait for publication before the next operation.
-  Concurrent runs can race; rejected publication is not permission to force-push
-  or repeat bootstrap. Inspect the remote refs and [recovery guide](../publication.md).
-- The bot's bump subject makes the next triggered run skip, preventing an
-  ordinary bump loop. This is not a general guarantee against competing
-  versioning workflows or manually changed versions.
+- This is a **mutating push workflow**, not a read-only PR check. Use a separate test workflow for PR validation. Never expose its write/signing credentials to untrusted code or permit arbitrary changes to the adapter.
+- The examples trigger on `master`, `develop`, `release/**`, `hotfix/**`, `feature/**`, and `bugfix/**`. Reviewed `release-fix/*` and `hotfix-fix/*` branches are intentionally outside that list; merging their PRs triggers the stabilization branch instead.
+- Full history and tags are required. The adapter evaluates remote branch history as well as `.cz.toml`; shallow checkouts and stale refs can change decisions. Pull bot commits and explicitly fetch tags between dependent steps.
+- The examples do not configure job concurrency. Coordinate version-producing pushes on each branch and wait for publication before the next operation. Concurrent runs can race; rejected publication is not permission to force-push or repeat bootstrap. Inspect the remote refs and [recovery guide](../publication.md).
+- The bot's bump subject makes the next triggered run skip, preventing an ordinary bump loop. This is not a general guarantee against competing versioning workflows or manually changed versions.
 - Before enabling version writes, read the engine's [current limitations](../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps. These are implementation caveats, not changes to the release policy.
-- Reviewed flow is a repository-policy choice, not a compliance certification.
-  Human changes require PRs; generated bot version commits need the approved
-  narrow exception described above.
+- Reviewed flow is a repository-policy choice, not a compliance certification. Human changes require PRs; generated bot version commits need the approved narrow exception described above.
 
 ## Bootstrap `master` and `develop`
 

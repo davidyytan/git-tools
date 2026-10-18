@@ -26,8 +26,7 @@ The merge commit subject on `release/X.Y.Z` or `hotfix/<name>` is the input to t
 Compatible GitHub merge settings for inner PRs:
 
 - **Squash and merge** — squash commit subject is the PR title.
-- **Create a merge commit** with the repo setting "Default to PR title and
-  description" — merge commit subject is the PR title.
+- **Create a merge commit** with the repo setting "Default to PR title and description" — merge commit subject is the PR title.
 
 Do not use the factory-default merge-commit subject (`Merge pull request #N from ...`). That is not a Conventional Commit and the rc bump will not advance.
 

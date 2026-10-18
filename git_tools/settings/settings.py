@@ -254,9 +254,8 @@ def saved_provider_base_url(provider: str) -> str | None:
     return value or None
 
 
-# Provider profiles. agent-cli keeps a profile per provider (model, support
-# model, reasoning tier, Kimi thinking, OpenRouter pin, endpoint); git-tools
-# keeps the same under provider-scoped keys. The plain keys always hold the
+# Provider profiles remember the model, reasoning tier, Kimi thinking,
+# OpenRouter pin, and endpoint under provider-scoped keys. The plain keys hold the
 # current provider's values, so generators and config classes never change:
 # every save of a plain key is mirrored into the current provider's profile
 # (``save_settings``), and a provider switch reads the target provider's
@@ -264,7 +263,6 @@ def saved_provider_base_url(provider: str) -> str | None:
 _PROFILE_FIELDS = {
     "GIT_TOOLS_MODEL_MAIN": "MODEL_MAIN",
     "GIT_TOOLS_DEFAULT_MODEL": "MODEL_MAIN",
-    "GIT_TOOLS_MODEL_SUPPORT": "MODEL_SUPPORT",
     "GIT_TOOLS_REASONING_EFFORT": "REASONING_EFFORT",
     "GIT_TOOLS_KIMI_THINKING": "KIMI_THINKING",
     "GIT_TOOLS_OPENROUTER_PROVIDER": "OPENROUTER_PROVIDER",
@@ -273,7 +271,7 @@ _PROFILE_FIELDS = {
 # An assigned blank for these file controls is an explicit reset, not absence.
 # Process-environment blanks and saved credentials still fall through normally.
 _FILE_CLEAR_KEYS = {
-    "GIT_TOOLS_API_BASE", "GIT_TOOLS_MODEL_SUB", *_PROFILE_FIELDS,
+    "GIT_TOOLS_API_BASE", *_PROFILE_FIELDS,
     *(f"{provider.upper()}_BASE_URL" for provider in PROVIDERS),
     *(f"GIT_TOOLS_{provider.upper()}_{field}"
       for provider in PROVIDERS for field in set(_PROFILE_FIELDS.values())),
@@ -289,7 +287,6 @@ def saved_provider_profile(provider: str) -> dict[str, str | None]:
     """A provider's remembered choices; ``None`` for anything never saved."""
     return {
         "model": _saved_value(provider_profile_key(provider, "MODEL_MAIN")),
-        "support_model": _saved_value(provider_profile_key(provider, "MODEL_SUPPORT")),
         "reasoning_effort": _saved_value(provider_profile_key(provider, "REASONING_EFFORT")),
         "kimi_thinking": _saved_value(provider_profile_key(provider, "KIMI_THINKING")),
         "openrouter_provider": _saved_value(provider_profile_key(provider, "OPENROUTER_PROVIDER")),
@@ -467,8 +464,6 @@ class GitToolsSettings(EffectiveSettings):
     default_model: Optional[str] = Field(default=None)
     main_model: Optional[str] = Field(default=None, validation_alias=AliasChoices(
         "GIT_TOOLS_MODEL_MAIN", "GIT_TOOLS_DEFAULT_MODEL"))
-    support_model: str = Field(default="follow-main", validation_alias=AliasChoices(
-        "GIT_TOOLS_MODEL_SUPPORT", "GIT_TOOLS_MODEL_SUB"))
     openrouter_provider: Optional[str] = Field(default=None)
     kimi_thinking: Optional[bool] = Field(default=None)
 
@@ -588,12 +583,12 @@ class GitToolsSettings(EffectiveSettings):
             return None
         return str(v).strip().lower() or None
 
-    @field_validator("main_model", "support_model", "openrouter_provider", mode="before")
+    @field_validator("main_model", "openrouter_provider", mode="before")
     @classmethod
-    def normalize_model_choice(cls, value: Any, info: ValidationInfo) -> Any:
+    def normalize_model_choice(cls, value: Any) -> Any:
         if isinstance(value, str):
             value = value.strip()
-        return value or ("follow-main" if info.field_name == "support_model" else None)
+        return value or None
 
     @property
     def effective_main_model(self) -> Optional[str]:

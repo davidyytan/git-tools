@@ -23,8 +23,7 @@ Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and
 
 This flow uses **squash merges**. The squashed commit subject on `release/X.Y.Z` or `hotfix/<name>` is the input to the rc-bump logic, so it must be the inner PR title and a Conventional Commit.
 
-- enable **Squash and merge**; set the default squash commit message to the PR
-  title (`Pull request title` or `Pull request title and description`)
+- enable **Squash and merge**; set the default squash commit message to the PR title (`Pull request title` or `Pull request title and description`)
 - disable `Rebase merge`
 - you may disable `Merge commit` for a strict squash-only repository
 

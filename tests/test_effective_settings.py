@@ -85,6 +85,75 @@ class IsolatedSettingsTests(SettingsTestCase):
             self.assertEqual(config.GitToolsSettings().effective_main_model, "env-model")
             self.assertEqual(config.GitToolsSettings(main_model="cli-model").effective_main_model, "cli-model")
 
+    def test_obsolete_shared_and_profile_model_keys_are_tolerated_and_inert(self):
+        obsolete = {
+            "GIT_TOOLS_MODEL_SUPPORT": "unused-support",
+            "GIT_TOOLS_MODEL_SUB": "unused-sub",
+            **{config.provider_profile_key(provider, "MODEL_SUPPORT"): f"unused-{provider}"
+               for provider in cli.PROVIDERS},
+        }
+        content = "".join(f'{key}="{value}"\n' for key, value in obsolete.items())
+        baseline = config.GitToolsSettings().model_dump()
+        baseline_state = cli._load_settings_state()
+        baseline_profiles = {provider: config.saved_provider_profile(provider) for provider in cli.PROVIDERS}
+        provider_env = {config.provider_api_key_env(provider): "test-key" for provider in cli.PROVIDERS}
+        provider_env["GIT_TOOLS_API_BASE"] = "https://test.invalid/v1"
+        for source in ("local file", "user file", "environment"):
+            with self.subTest(source=source):
+                self.local.write_text(content if source == "local file" else "")
+                self.user.write_text(content if source == "user file" else "")
+                with patch.dict(os.environ, obsolete if source == "environment" else {}):
+                    fresh = config.GitToolsSettings()
+                    self.assertEqual(fresh.model_dump(), baseline)
+                    self.assertFalse(hasattr(fresh, "support_model"))
+                    self.assertEqual(cli._load_settings_state(), baseline_state)
+                    for provider in cli.PROVIDERS:
+                        self.assertEqual(config.saved_provider_profile(provider), baseline_profiles[provider])
+                    with patch.dict(os.environ, provider_env):
+                        for provider in cli.PROVIDERS:
+                            with self.subTest(provider=provider):
+                                loaded = config.load_provider_config(provider)
+                                self.assertEqual(loaded.api_key, "test-key")
+                                self.assertEqual(loaded.base_url, "https://test.invalid/v1")
+                self.assertEqual(self.local.read_text(), content if source == "local file" else "")
+                self.assertEqual(self.user.read_text(), content if source == "user file" else "")
+
+    def test_support_role_is_absent_from_settings_schema_and_provider_profiles(self):
+        obsolete_names = {"support_model", "sub_model", "GIT_TOOLS_MODEL_SUPPORT", "GIT_TOOLS_MODEL_SUB"}
+        self.assertTrue(obsolete_names.isdisjoint(config.GitToolsSettings.model_fields))
+        for by_alias in (False, True):
+            schema = config.GitToolsSettings.model_json_schema(by_alias=by_alias)
+            self.assertTrue(obsolete_names.isdisjoint(schema["properties"]))
+            self.assertTrue(obsolete_names.isdisjoint(config.GitToolsSettings().model_dump(by_alias=by_alias)))
+        for provider in cli.PROVIDERS:
+            with self.subTest(provider=provider):
+                self.assertEqual(set(config.saved_provider_profile(provider)), {
+                    "model", "reasoning_effort", "kimi_thinking", "openrouter_provider", "api_base",
+                })
+
+    def test_unrelated_save_preserves_obsolete_entries_without_support_mirroring(self):
+        obsolete = {
+            "GIT_TOOLS_MODEL_SUPPORT": "saved-support",
+            "GIT_TOOLS_MODEL_SUB": "saved-sub",
+            config.provider_profile_key("anthropic", "MODEL_SUPPORT"): "saved-anthropic-support",
+        }
+        original = ('# Obsolete entries remain user-owned.\nGIT_TOOLS_PROVIDER="openai"\n'
+                    + "".join(f'{key}="{value}"\n' for key, value in obsolete.items()))
+        self.user.write_text(original)
+        for name, value in (("temperature", "0.7"), ("main-model", "remembered-main")):
+            result = self.runner.invoke(cli.app, ["settings", name, value])
+            self.assertEqual(result.exit_code, 0, result.output)
+        text = self.user.read_text()
+        self.assertTrue(text.startswith(original))
+        saved_obsolete = {line.split("=", 1)[0]: line.split("=", 1)[1]
+                          for line in text.splitlines()
+                          if line.split("=", 1)[0].endswith(("_MODEL_SUPPORT", "_MODEL_SUB"))}
+        self.assertEqual(saved_obsolete, {key: f'"{value}"' for key, value in obsolete.items()})
+        self.assertIn('GIT_TOOLS_DEFAULT_TEMPERATURE="0.7"', text)
+        self.assertIn('GIT_TOOLS_OPENAI_MODEL_MAIN="remembered-main"', text)
+        self.assertEqual(config.saved_provider_profile("openai")["model"], "remembered-main")
+        self.assertNotIn("support_model", cli._load_settings_state())
+
     def test_model_config_env_file_and_explicit_overrides_are_preserved(self):
         custom = self.root / "custom.env"
         custom.write_text('OPENAI_API_KEY="custom"\nOPENAI_BASE_URL="https://custom.invalid/v1"\n'
@@ -122,12 +191,11 @@ class IsolatedSettingsTests(SettingsTestCase):
         fields = {
             "GIT_TOOLS_MODEL_MAIN": "local-main",
             "GIT_TOOLS_DEFAULT_MODEL": "local-legacy",
-            "GIT_TOOLS_MODEL_SUPPORT": "local-support",
             "GIT_TOOLS_REASONING_EFFORT": "high",
             "GIT_TOOLS_OPENROUTER_PROVIDER": "old-pin",
             "GIT_TOOLS_KIMI_THINKING": "true",
             **{config.provider_profile_key("openai", field): value for field, value in (
-                ("MODEL_MAIN", "local-main"), ("MODEL_SUPPORT", "local-support"),
+                ("MODEL_MAIN", "local-main"),
                 ("REASONING_EFFORT", "high"), ("OPENROUTER_PROVIDER", "old-pin"),
                 ("KIMI_THINKING", "true"),
             )},
@@ -138,14 +206,13 @@ class IsolatedSettingsTests(SettingsTestCase):
             fresh = config.GitToolsSettings()
             self.assertIsNone(fresh.effective_main_model)
             self.assertIsNone(fresh.default_model)
-            self.assertEqual(fresh.support_model, "follow-main")
             self.assertIsNone(fresh.default_reasoning_effort)
             self.assertIsNone(fresh.openrouter_provider)
             self.assertIsNone(fresh.kimi_thinking)
             for key in fields:
                 self.assertEqual(config.effective_value(key), ("", f"user settings: {key}"))
             profile = config.saved_provider_profile("openai")
-            for key in ("model", "support_model", "reasoning_effort", "openrouter_provider", "kimi_thinking"):
+            for key in ("model", "reasoning_effort", "openrouter_provider", "kimi_thinking"):
                 self.assertEqual(profile[key], "")
 
     def test_endpoint_file_clears_obey_alias_order_for_every_provider(self):
@@ -175,15 +242,12 @@ class IsolatedSettingsTests(SettingsTestCase):
                         self.assertEqual(config.effective_provider_base_url(provider),
                                          ("https://env.invalid/v1", f"environment: {endpoint_env}"))
 
-    def test_saved_blank_main_and_support_mask_secondary_aliases_in_same_file(self):
-        self.local.write_text('GIT_TOOLS_MODEL_MAIN="local-main"\nGIT_TOOLS_MODEL_SUPPORT="local-support"\n')
-        self.user.write_text('GIT_TOOLS_MODEL_MAIN=""\nGIT_TOOLS_DEFAULT_MODEL="secondary-main"\n'
-                             'GIT_TOOLS_MODEL_SUPPORT=""\nGIT_TOOLS_MODEL_SUB="secondary-support"\n')
+    def test_saved_blank_main_masks_legacy_alias_in_same_file(self):
+        self.local.write_text('GIT_TOOLS_MODEL_MAIN="local-main"\n')
+        self.user.write_text('GIT_TOOLS_MODEL_MAIN=""\nGIT_TOOLS_DEFAULT_MODEL="secondary-main"\n')
         fresh = config.GitToolsSettings()
         self.assertIsNone(fresh.effective_main_model)
-        self.assertEqual(fresh.support_model, "follow-main")
         self.assertEqual(config.effective_value("GIT_TOOLS_MODEL_MAIN", "GIT_TOOLS_DEFAULT_MODEL")[0], "")
-        self.assertEqual(config.effective_value("GIT_TOOLS_MODEL_SUPPORT", "GIT_TOOLS_MODEL_SUB")[0], "")
 
     def test_bare_dotenv_names_do_not_clear_lower_settings(self):
         self.local.write_text('GIT_TOOLS_API_BASE="https://local.invalid/v1"\n'
@@ -298,7 +362,8 @@ class IsolatedSettingsTests(SettingsTestCase):
         self.assertEqual(rows["commit-input-budget"], "Commit input token budget: 1234")
         self.assertEqual(rows["issue-pr-input-budget"], "Issue/PR input token budget: 5678")
         self.assertNotIn("support-model", rows)
-        self.assertIn("support-model", cli._SETTINGS_EDITORS)  # CLI compatibility
+        self.assertNotIn("support-model", cli._SETTINGS_EDITORS)
+        self.assertNotIn("support_model", state)
 
     def test_invalid_new_editor_values_do_not_save(self):
         with patch.object(config, "save_setting") as save:

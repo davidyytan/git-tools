@@ -31,11 +31,12 @@ class ProviderParityTests(unittest.TestCase):
         self.assertEqual(normalize_provider_name("claude"), "anthropic")
         self.assertEqual(normalize_provider_name("dashscope"), "qwen")
 
-    def test_main_over_legacy_support_unused(self):
-        with patch.dict(os.environ, {"GIT_TOOLS_MODEL_MAIN": "main", "GIT_TOOLS_DEFAULT_MODEL": "old", "GIT_TOOLS_MODEL_SUPPORT": "sub"}):
+    def test_main_over_legacy_with_obsolete_model_keys_ignored(self):
+        with patch.dict(os.environ, {"GIT_TOOLS_MODEL_MAIN": "main", "GIT_TOOLS_DEFAULT_MODEL": "old",
+                                     "GIT_TOOLS_MODEL_SUPPORT": "support", "GIT_TOOLS_MODEL_SUB": "sub"}, clear=True):
             fresh = GitToolsSettings(_env_file=None)
         self.assertEqual(fresh.effective_main_model, "main")
-        with patch.object(settings, "main_model", "main"), patch.object(settings, "support_model", "sub"):
+        with patch.object(settings, "main_model", "main"):
             generator = BaseGenerator()
             self.assertEqual(generator._get_default_model(mappings.PROVIDERS["qwen"]["models"], "qwen"), "main")
         generator = BaseGenerator(model="explicit")
@@ -92,13 +93,16 @@ class ProviderParityTests(unittest.TestCase):
     def test_new_direct_settings_persist(self):
         from git_tools.settings import settings as module
         with tempfile.TemporaryDirectory() as tmp, patch.object(module, "DEFAULT_SETTINGS_PATH", Path(tmp)/"settings.env"):
-            for name, value in (("main-model", "main-test"), ("support-model", "follow-main"), ("api-base", "https://test.invalid/v1"), ("effort", "none")):
+            for name, value in (("main-model", "main-test"), ("api-base", "https://test.invalid/v1"), ("effort", "none")):
                 result = CliRunner().invoke(app, ["settings", name, value])
                 self.assertEqual(result.exit_code, 0, result.output)
             text = module.DEFAULT_SETTINGS_PATH.read_text()
             self.assertIn('GIT_TOOLS_MODEL_MAIN="main-test"', text)
-            self.assertIn('GIT_TOOLS_MODEL_SUPPORT="follow-main"', text)
+            self.assertIn('GIT_TOOLS_DEFAULT_MODEL="main-test"', text)
+            self.assertIn('GIT_TOOLS_API_BASE="https://test.invalid/v1"', text)
             self.assertIn('GIT_TOOLS_REASONING_EFFORT="none"', text)
+            self.assertNotIn("_MODEL_SUPPORT=", text)
+            self.assertNotIn("_MODEL_SUB=", text)
 
     def test_stale_cache_is_used_but_not_reported_live(self):
         provider = "kimicli"
@@ -216,7 +220,8 @@ class ProviderParityTests(unittest.TestCase):
         save.assert_called_once()
         updates = save.call_args.args[0]
         self.assertEqual(updates["GIT_TOOLS_MODEL_MAIN"], "vendor/model")
-        self.assertEqual(updates["GIT_TOOLS_MODEL_SUPPORT"], "follow-main")
+        self.assertFalse(any(key.endswith(("_MODEL_SUPPORT", "_MODEL_SUB")) for key in updates))
+        self.assertNotIn("support_model", state)
         self.assertEqual(updates["GIT_TOOLS_OPENROUTER_PROVIDER"], "route-slug")
         self.assertEqual(updates["GIT_TOOLS_REASONING_EFFORT"], "high")
         self.assertEqual(state["openrouter_provider"], "route-slug")
@@ -228,6 +233,8 @@ class ProviderParityTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, str(result.exception))
         ask.assert_not_called()
         save.assert_called_once()
+        self.assertFalse(any(key.endswith(("_MODEL_SUPPORT", "_MODEL_SUB"))
+                             for key in save.call_args.args[0]))
 
     def test_cancel_at_last_wizard_step_saves_nothing(self):
         from git_tools.cli import _edit_provider

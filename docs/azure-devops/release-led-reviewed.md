@@ -25,17 +25,10 @@ Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and
 
 Ordinary feature and stabilization PRs use **squash merges**. The squashed commit subject on `release/X.Y.Z` or `hotfix/<name>` is the input to the rc-bump logic, so it must be the inner PR title and a Conventional Commit.
 
-- Complete ordinary stabilization inner PRs using **Squash commit** and set the
-  final subject to the PR title.
-- The [numbered Azure walkthrough](release-led-reviewed-walkthrough.md) requires
-  **Merge (no fast-forward)** for its synchronization inner PRs and boundary
-  backmerges into `develop`. Retain the merge parents and untagged preparation
-  bump anchors; do not squash those steps.
-- Configure **Limit merge types** on the affected targets to permit both required
-  styles, and choose the method specified for each step. This Azure recipe is
-  **not a strict squash-only end-to-end flow**. Prohibit rebase completion.
-- Preserve the exact specified PR/completion subject; do not leave an unrelated
-  generated subject in the completion dialog.
+- Complete ordinary stabilization inner PRs using **Squash commit** and set the final subject to the PR title.
+- The [numbered Azure walkthrough](release-led-reviewed-walkthrough.md) requires **Merge (no fast-forward)** for its synchronization inner PRs and boundary backmerges into `develop`. Retain the merge parents and untagged preparation bump anchors; do not squash those steps.
+- Configure **Limit merge types** on the affected targets to permit both required styles, and choose the method specified for each step. This Azure recipe is **not a strict squash-only end-to-end flow**. Prohibit rebase completion.
+- Preserve the exact specified PR/completion subject; do not leave an unrelated generated subject in the completion dialog.
 
 Azure may prefix the subject with `Merged PR 42:`; the supported engine normalizes that prefix. The remaining subject must still be the Conventional Commit PR title. See [setup merge settings](setup.md#merge-settings).
 

@@ -2,6 +2,10 @@
 
 This guide covers contributor-facing console conventions. For CLI commands and interactive navigation, see [Usage](usage.md); for development setup, see [Contributing](contributing.md); for where code lives, see [Code layout](architecture.md).
 
+## Markdown Source Formatting
+
+Do not hard-wrap Markdown prose. Keep each paragraph on one source line, regardless of length, and use editor soft wrapping for readability. Keep each list item's prose paragraph on one source line too; retain line breaks only where Markdown structure or code examples require them (headings, separate list items, tables, and code blocks). Do not add forced prose line breaks with trailing spaces, backslashes, or `<br>` tags.
+
 ## Console Width
 
 Use the shared console in [git_tools/generators/base/terminal.py](../git_tools/generators/base/terminal.py). It detects terminal width and applies `settings.console_width_offset` (default: `-2`) to avoid border wrapping on some terminals. [git_tools/cli.py](../git_tools/cli.py) applies the same offset to Typer's help output.

@@ -1125,7 +1125,6 @@ def _load_settings_state() -> dict[str, Any]:
     return {
         "provider": provider,
         "model": _resolve_current_model(provider, fresh.effective_main_model),
-        "support_model": fresh.support_model,
         "api_base": endpoint or "",
         "api_base_source": endpoint_source,
         "api_key_source": key_source,
@@ -1205,7 +1204,6 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
         if selection != state["provider"]:
             model = profile["model"] or _provider_default_model(selection)
             updates.update({"GIT_TOOLS_DEFAULT_MODEL": model, "GIT_TOOLS_MODEL_MAIN": model,
-                            "GIT_TOOLS_MODEL_SUPPORT": profile["support_model"] or "follow-main",
                             "GIT_TOOLS_OPENROUTER_PROVIDER": profile["openrouter_provider"] or "",
                             "GIT_TOOLS_REASONING_EFFORT": profile["reasoning_effort"] or "",
                             "GIT_TOOLS_KIMI_THINKING": profile["kimi_thinking"] or ""})
@@ -1244,7 +1242,6 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
                     "endpoint": _provider_endpoint(selection) if changed else original_endpoint,
                     "key": None,
                     "model": (profile["model"] or _provider_default_model(selection)) if changed else state["model"],
-                    "support_model": (profile["support_model"] or "follow-main") if changed else state.get("support_model", "follow-main"),
                     "openrouter_provider": profile["openrouter_provider"] if changed else state.get("openrouter_provider"),
                     "reasoning_effort": profile["reasoning_effort"] if changed else state.get("reasoning_effort"),
                     "kimi_thinking": thinking,
@@ -1328,7 +1325,6 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
                 updates = {
                     "GIT_TOOLS_PROVIDER": selection, "GIT_TOOLS_DEFAULT_MODEL": draft["model"],
                     "GIT_TOOLS_MODEL_MAIN": draft["model"], "GIT_TOOLS_API_BASE": draft["endpoint"],
-                    "GIT_TOOLS_MODEL_SUPPORT": draft["support_model"],
                     "GIT_TOOLS_OPENROUTER_PROVIDER": draft["openrouter_provider"] or "",
                     "GIT_TOOLS_REASONING_EFFORT": draft["reasoning_effort"] or "",
                     "GIT_TOOLS_KIMI_THINKING": ("" if draft["kimi_thinking"] is None
@@ -1370,7 +1366,7 @@ def _apply_provider_updates(state: dict[str, Any], provider: str,
 
     state["provider"] = provider
     state["api_base"] = updates.get("GIT_TOOLS_API_BASE") or ""
-    for key, env in (("model", "GIT_TOOLS_MODEL_MAIN"), ("support_model", "GIT_TOOLS_MODEL_SUPPORT"),
+    for key, env in (("model", "GIT_TOOLS_MODEL_MAIN"),
                      ("openrouter_provider", "GIT_TOOLS_OPENROUTER_PROVIDER"),
                      ("reasoning_effort", "GIT_TOOLS_REASONING_EFFORT")):
         if env in updates:
@@ -2055,37 +2051,6 @@ def _edit_api_base(state: dict[str, Any], value: Optional[str] = None) -> None:
         warning(f"Effective endpoint still comes from {source}; unset it to use the saved value.")
 
 
-def _edit_support_model(state: dict[str, Any], value: Optional[str] = None) -> None:
-    from .settings.settings import save_setting
-
-    if value is None:
-        provider = state["provider"]
-        console.print()
-        live = refresh_live_models(provider, force=True)
-        _print_model_catalog_status(provider, live)
-        console.print()
-        value = _ask_with_back(questionary.select(
-            "Support model (reserved, unused):",
-            choices=[Choice("Follow main dynamically", value="follow-main"),
-                     *_build_model_choices(provider, current_model=state.get("support_model")
-                                           if state.get("support_model") != "follow-main" else None),
-                     _back_choice()], style=TYPER_STYLE, qmark="❯"))
-        if value in (None, _BACK):
-            return
-        if value == ADD_MODEL_SENTINEL:
-            value = _ask_with_back(questionary.text("Support model ID:", style=TYPER_STYLE, qmark="❯"))
-            if value is None:
-                return
-    model = value.strip()
-    if not model:
-        error("Support model cannot be empty; use follow-main.")
-        raise typer.Exit(1)
-    save_setting("GIT_TOOLS_MODEL_SUPPORT", model)
-    state["support_model"] = model
-    console.print()
-    success("Support model saved (not used for generation).")
-
-
 def _edit_openrouter_provider(state: dict[str, Any], value: Optional[str] = None) -> None:
     from .settings.settings import save_setting
 
@@ -2222,8 +2187,6 @@ _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
     "provider": _edit_provider,
     "model": _edit_model,
     "main-model": _edit_model,
-    "support-model": _edit_support_model,
-    "sub-model": _edit_support_model,
     "api-base": _edit_api_base,
     "endpoint": _edit_api_base,
     "openrouter-provider": _edit_openrouter_provider,

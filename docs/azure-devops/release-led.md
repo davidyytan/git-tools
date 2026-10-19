@@ -1,117 +1,38 @@
 # Git Flow Variant — Release-led
 
+[Azure DevOps guides](README.md) · [Setup](setup.md) · [CLI usage](../usage.md)
+
 Use this flow if you want the release branch to choose the final release line.
 
-Use this workflow example and activate it as
-`.azure/workflows/version-bump-git-flow-variant-release-led.yml`:
+Use this workflow example and activate it as `.azure/workflows/version-bump-git-flow-variant-release-led.yml`:
 
 ```text
 .azure/workflows/version-bump-git-flow-variant-release-led.yml.example
 ```
 
-This guide supports either squash merge or merge commits. In both styles, the
-final commit subject on the target branch must be the PR title.
+This is the direct-push variant: commits land directly on `release/*` and `hotfix/*`. If you want the same release-led model but with every change reviewed through inner PRs and squash merges, use [Variant — Reviewed](release-led-reviewed.md) instead.
 
-This is the direct-push variant: commits land directly on `release/*` and
-`hotfix/*`. If you want the same release-led model but with every change reviewed
-through inner PRs and squash merges, use
-[Variant — Reviewed](release-led-reviewed.md) instead.
+## Full Walkthrough
 
-## How this differs from the other flows
+Follow **[Release-led: start to finish](release-led-walkthrough.md)** for a numbered journey from Azure setup and `Release 0.1.0` through release, backmerge, hotfix, and the next cycle. This page remains the policy and recipe reference.
 
-| Aspect                          | Variant — Release-led (this doc)                          | [Classic](classic.md)               | [Classic — Reviewed](classic-reviewed.md)         |
-| ------------------------------- | --------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------- |
-| Who chooses the release line    | `release/X.Y.Z` itself (first real commit opens `rc.0`)   | `develop` (via `Start X.Y.Z` PR)             | `develop` (via `Start X.Y.Z` PR)                           |
-| `Start X.Y.Z` PR required       | **no** — cutting `release/X.Y.Z` is the decision          | yes — opens next `alpha` cycle               | yes — opens next `alpha` cycle                             |
-| `develop` after the cut         | continues current `alpha`; next line opens on next cut    | must stop the old `alpha`; next `Start` PR opens new line | same as classic                                            |
-| Commits on `release/*`          | direct push allowed                                       | direct push allowed                          | **inner PR only** (`release-fix/*` → release)              |
-| Commits on `hotfix/*`           | direct push allowed                                       | direct push allowed                          | **inner PR only** (`hotfix-fix/*` → hotfix)                |
-| Promotion / backmerge PR titles | `Release` / `Hotfix` / `Backmerge ...` (same as classic)  | `Release` / `Hotfix` / `Backmerge ...`       | same as classic                                            |
-| Workflow file                   | `version-bump-git-flow-variant-release-led.yml`           | `version-bump-git-flow-classic.yml`          | `version-bump-git-flow-classic.yml` (shared with classic)  |
-| Pick this when                  | release manager owns the version, not develop             | small team, light process                    | compliance / regulated industries                          |
+## Subjects and Commands
 
-The Azure adapter invokes the shared engine with `flow="variant"`.
-Reviewed flows share their base adapter; do not activate a second pipeline.
+Use the [shared subject protocol](../git-flow-guide.md#shared-naming-policy) and [platform setup](setup.md) before following these recipes. Replace placeholders with actual paths and versions; these are separate steps, not a single script. Direct `git-tools commit` commits by default; use `--no-commit` to review text only. `git-tools pr` generates text, not a hosted PR. Review staged files before committing. Wait for CI, pull bot commits, and fetch tags before dependent operations. Keep promotion branches until backmerge completes.
 
-## Using the CLI and Azure Repos PRs
+## Merge Strategy
 
-For direct commands and the actual interactive menu navigation, see
-[CLI usage](../usage.md). You can run `git-tools` without a subcommand as the
-interactive alternative to the direct commands below: at **Select command:**,
-choose `init`, `commit`, or `pr` respectively. Use the usage guide for the
-matching operation prompts and workflow options. Keep the same branch, target, and version
-requirements whichever entry point you use.
+Squash or merge commits are supported when the final subject is the PR title. Configure the [platform merge settings](setup.md#merge-settings); do not use rebase completion. This direct-change mode does not require inner PRs.
 
-`git-tools pr` generates title/description text locally; it does **not** create
-or complete an Azure DevOps PR. After pushing each source branch below:
+## Synchronization Policy
 
-1. Open **Repos → Pull requests → New pull request** in the target project.
-2. Select the documented source and target branches (do not assume `master`
-   for ordinary feature work).
-3. Paste the generated title and description; add required reviewers and
-   satisfy the target branch's policies.
-4. Complete the PR with the merge profile documented here and in
-   [setup](setup.md#merge-settings). Inspect the final commit subject before
-   completion: it must represent the PR title, not a generated merge summary.
-5. Wait for the target-branch versioning pipeline to succeed before starting
-   the next dependent operation. Pull its generated version commit and fetch
-   tags explicitly: `git pull origin <target>` and `git fetch origin --tags`.
+Not required in this mode. Synchronization changes may be pushed directly; use the reviewed sister guide if all human stabilization changes require PRs.
 
-The Azure description limit is 4,000 UTF-16 code units. It is detected from
-`origin`; use `git-tools pr --azure-limit --base <target>` to force it when
-using an unrecognized/custom remote, or `--no-azure-limit` for local output
-that is not intended for Azure. See [setup](setup.md#local-cli-and-pr-descriptions)
-for the regeneration and clipboard behavior. Fixed-title flags select the
-correct promotion/backmerge target; ordinary inner PRs require `--base`.
-
-## Naming
-
-- `Start X.Y.Z` opens `X.Y.Z-alpha.0` on `develop`
-- `Release X.Y.Z` is only for `release/* -> master`
-- `Hotfix X.Y.Z` is only for `hotfix/* -> master`
-- `Backmerge Release X.Y.Z` is only for `release/* -> develop`
-- `Backmerge Hotfix X.Y.Z` is only for `hotfix/* -> develop`
-
-Release and hotfix branch work stays normal Conventional Commits. If a release
-branch needs to open `rc.0` without a real stabilization change, use:
-
-```text
-chore: open release
-```
-
-## Automation Note
-
-Current CLI helper coverage matches this flow:
-
-- `git-tools commit --workflow-kind open-release`
-- `git-tools pr --start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, and `--backmerge-hotfix-pr`
-- pass `--workflow-version X.Y.Z` when Start or Backmerge inference is ambiguous
-
-Keep release and hotfix source branches until promotion **and** backmerge
-are complete; do not delete the source branch when completing promotion.
-
-## TL;DR
+## Command Recipes
 
 ### Bootstrap on `master`
 
-```bash
-git init -b master
-git remote add origin "https://dev.azure.com/<organization>/<project>/_git/<repository>"
-git-tools init
-git add -A
-git commit -m "Release 0.1.0"
-git push -u origin master
-```
-
-Follow [setup](setup.md#4-add-the-azure-pipeline) to create and authorize the pipeline after this initial push, then manually run it on `master` as described in [bootstrap](setup.md#8-run-the-bootstrap-pipeline). The push is not retroactive. Wait for the pipeline to turn the bootstrap baseline into `0.1.0`, then update local `master` and create `develop` from that bumped stable branch:
-
-```bash
-git checkout master
-git pull origin master
-git fetch origin --tags
-git checkout -b develop
-git push -u origin develop
-```
+Follow [platform bootstrap](setup.md#bootstrap-master-and-develop). For Azure, use the ordered setup runbook, including manual pipeline authorization/run.
 
 ### Feature or bugfix PR into `develop`
 
@@ -136,7 +57,7 @@ git checkout -b release/X.Y.Z
 git add -A
 git-tools commit
 
-# if you need to open rc.0 without a real stabilization change
+# ALTERNATIVE to a real stabilization commit: open rc.0
 git commit --allow-empty -m "chore: open release"
 
 # if master has moved since the release was cut (e.g. a hotfix landed)
@@ -154,7 +75,7 @@ git checkout release/X.Y.Z
 git pull origin release/X.Y.Z
 git fetch origin develop
 git merge origin/develop -m "chore: merge develop for backmerge"
-# resolve conflicts — for version files, keep the higher version
+# resolve conflicts — keep the intended target version consistent in version files
 git push origin release/X.Y.Z
 git-tools pr --backmerge-release-pr
 ```
@@ -183,56 +104,23 @@ git checkout hotfix/<name>
 git pull origin hotfix/<name>
 git fetch origin develop
 git merge origin/develop -m "chore: merge develop for backmerge"
-# resolve conflicts — for version files, keep the higher version
+# resolve conflicts — keep the intended target version consistent in version files
 git push origin hotfix/<name>
-git-tools pr --backmerge-hotfix-pr
+# Replace 1.6.1 with the hotfix version already promoted to master.
+git-tools pr --backmerge-hotfix-pr --workflow-version 1.6.1
 ```
 
-## 0. Set Up Azure DevOps First
+## Feature and Bugfix Policy
 
-Read [Azure DevOps setup](setup.md) first. This project uses `master`; set the
-Azure Repos default branch to `master` after the initial push. The setup guide
-covers the initial push, pipeline creation, signing key, project-scoped Build
-Service authorization, and manual bootstrap run. Do not repeat bootstrap in
-an already initialized repository.
+Most feature and bugfix work lands on `develop` with a normal Conventional Commit title. `develop` creates or continues tagged `alpha` prereleases.
 
-## 1. Bootstrap on `master`
+On a freshly created `develop` branch that still matches the latest stable release, the first develop PR may use the fixed title `Start X.Y.Z` while the branch commit itself stays Conventional Commit based.
 
-```bash
-git init -b master
-git remote add origin "https://dev.azure.com/<organization>/<project>/_git/<repository>"
-git-tools init
-git add -A
-git commit -m "Release 0.1.0"
-git push -u origin master
-```
+## Release-Line Policy
 
-Notes:
+The release branch selects the target; cutting it does not itself open `rc.0`. An optional `Start` PR opens a new develop line independently of this cut.
 
-- `Release 0.0.1` is also accepted for the first commit.
-- Direct `git-tools init` seeds `.cz.toml` with `0.0.1`.
-- After pipeline creation and authorization, the manual bootstrap run on `master` turns that baseline into `0.1.0`; the first push alone cannot trigger a pipeline that does not exist yet.
-
-After that bump lands, update local `master`, create `develop` from the bumped stable branch, and push it:
-
-```bash
-git checkout master
-git pull origin master
-git fetch origin --tags
-git checkout -b develop
-git push -u origin develop
-```
-
-## 2. Feature or bugfix PR into `develop`
-
-Most feature and bugfix work lands on `develop` with a normal Conventional
-Commit title. `develop` creates or continues tagged `alpha` prereleases.
-
-On a freshly created `develop` branch that still matches the latest stable
-release, the first develop PR may use the fixed title `Start X.Y.Z` while the
-branch commit itself stays Conventional Commit based.
-
-## 3. Release Branch Chooses the Line
+## Release Stabilization and Promotion
 
 Variant flow lets the release branch choose the final release line.
 
@@ -250,15 +138,14 @@ Promotion PR title into `master`:
 Release X.Y.Z
 ```
 
-If `master` has moved since the release was cut (for example a hotfix landed),
-pre-merge `master` into the release branch before opening the promotion PR:
+If `master` has moved since the release was cut (for example a hotfix landed), pre-merge `master` into the release branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
 git merge origin/master -m "chore: merge master for release"
 ```
 
-## 4. Release Backmerge into `develop`
+## Release Backmerge
 
 Release merge-back is backmerge-only.
 
@@ -270,39 +157,21 @@ Rules:
 - if `develop` is not ahead yet, the backmerge may catch `develop` up to stable `X.Y.Z` without tagging
 - after that stable catch-up, open a new `develop` cycle later with `Start A.B.C` when you are ready
 
-Before creating the backmerge PR, pre-merge `develop` into the release branch
-to resolve version-file divergence (develop's alpha line vs the release's stable
-line):
+Before creating the backmerge PR, pre-merge `develop` into the release branch to resolve version-file divergence (develop's alpha line vs the release's stable line):
+
+See the [command recipe](#release-backmerge-into-develop) for the synchronization commands.
+
+When version files conflict, preserve the intended develop line (the ahead alpha when present, otherwise the promoted stable target) consistently in `.cz.toml` and any project version field. Do not resolve by lexical string order.
+
+If you need to explicitly open a new `develop` cycle after a release, use the first real feature/bugfix branch for that cycle:
 
 ```bash
-git fetch origin develop
-git merge origin/develop -m "chore: merge develop for backmerge"
-# resolve conflicts — for version files, keep the higher version
-git push origin release/X.Y.Z
+git-tools pr --base develop --start-pr --workflow-version A.B.C
 ```
 
-When version files conflict, keep the higher version and still merge the
-branch code changes.
+Replace `A.B.C` with an exact valid next-cycle tuple, then complete the PR with final subject `Start A.B.C`. Do not use a Backmerge title to open a new cycle. Landing that Start title on `develop` must produce tagged `A.B.C-alpha.0`.
 
-If you need to explicitly open a new `develop` cycle after a release, use the
-fixed title on the first PR for that cycle:
-
-```bash
-git checkout develop
-git pull origin develop
-git checkout -b feature/<name>
-
-# make changes
-git add -A
-git-tools commit
-
-git push -u origin feature/<name>
-git-tools pr --start-pr --workflow-version A.B.C
-```
-
-Landing `Start A.B.C` on `develop` must produce tagged `A.B.C-alpha.0`.
-
-## 5. Hotfix Branch and Promotion
+## Hotfix Stabilization and Promotion
 
 Hotfix branch work also stays Conventional Commit based.
 
@@ -319,16 +188,14 @@ Promotion PR title into `master`:
 Hotfix X.Y.Z
 ```
 
-If `master` has moved since the hotfix was created (for example another hotfix
-landed), pre-merge `master` into the hotfix branch before opening the promotion
-PR:
+If `master` has moved since the hotfix was created (for example another hotfix landed), pre-merge `master` into the hotfix branch before opening the promotion PR:
 
 ```bash
 git fetch origin master
 git merge origin/master -m "chore: merge master for hotfix"
 ```
 
-## 6. Hotfix Backmerge into `develop`
+## Hotfix Backmerge
 
 Hotfix merge-back follows the same model as release merge-back.
 
@@ -340,21 +207,13 @@ Rules:
 - if `develop` is not ahead yet, the backmerge may catch `develop` up to stable patch `X.Y.Z` without tagging
 - after that stable catch-up, open a new `develop` cycle later with `Start A.B.C` when you are ready
 
-Before creating the backmerge PR, pre-merge `develop` into the hotfix branch
-to resolve version-file divergence (develop's alpha line vs the hotfix's patch
-line):
+Before creating the backmerge PR, pre-merge `develop` into the hotfix branch to resolve version-file divergence (develop's alpha line vs the hotfix's patch line):
 
-```bash
-git fetch origin develop
-git merge origin/develop -m "chore: merge develop for backmerge"
-# resolve conflicts — for version files, keep the higher version
-git push origin hotfix/<name>
-```
+See the [command recipe](#hotfix-backmerge-into-develop) for the synchronization commands.
 
-When version files conflict, keep the higher version and still merge the
-branch code changes.
+When version files conflict, preserve the intended develop line (the ahead alpha when present, otherwise the promoted stable target) consistently in `.cz.toml` and any project version field. Do not resolve by lexical string order.
 
-## 7. Summary
+## Summary
 
 ```text
 feature/* or bugfix/* -> develop -> tagged alpha

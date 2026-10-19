@@ -25,37 +25,14 @@ class ProviderConfigTests(unittest.TestCase):
             "CLIPROXYAPI_API_KEY",
         )
 
-    def test_openrouter_defaults_to_claude_sonnet(self) -> None:
-        from git_tools.settings.mappings import DEFAULT_OPENROUTER_MODEL
+    def test_openrouter_default_is_agent_clis_and_the_catalog_is_live(self) -> None:
+        from git_tools.providers import openrouter
+        from git_tools.settings.mappings import DEFAULT_OPENROUTER_MODEL, _BUILTIN_PROVIDERS
 
-        self.assertEqual(DEFAULT_OPENROUTER_MODEL, "anthropic/claude-sonnet-4.6")
-        models = PROVIDERS["openrouter"]["models"]
-        # The default is the first (and, out of the box, only) OpenRouter model.
-        first = next(iter(models.values()))
-        self.assertEqual(first["model_name"], "anthropic/claude-sonnet-4.6")
-
-    def test_add_user_openrouter_model_persists_and_merges(self) -> None:
-        from git_tools.settings import mappings as mappings_module
-
-        slug = "vendor/test-model-x"
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "models.json"
-            with patch.object(mappings_module, "USER_MODELS_PATH", path):
-                try:
-                    # First insert is new and written to disk under "openrouter".
-                    self.assertTrue(mappings_module.add_user_openrouter_model(slug))
-                    saved = json.loads(path.read_text())
-                    self.assertIn(slug, saved["openrouter"])
-                    # A duplicate is a no-op that reports False.
-                    self.assertFalse(mappings_module.add_user_openrouter_model(slug))
-                    # Blank input is rejected.
-                    self.assertFalse(mappings_module.add_user_openrouter_model("  "))
-                    # It is mirrored into the live PROVIDERS map with a deny default.
-                    entry = mappings_module.PROVIDERS["openrouter"]["models"][slug]
-                    self.assertEqual(entry["model_name"], slug)
-                    self.assertEqual(entry["data_collection"], "deny")
-                finally:
-                    mappings_module.PROVIDERS["openrouter"]["models"].pop(slug, None)
+        self.assertEqual(DEFAULT_OPENROUTER_MODEL, openrouter.DEFAULT_MODEL)
+        self.assertEqual(PROVIDERS["openrouter"]["default_model"], openrouter.DEFAULT_MODEL)
+        # No static list: the live catalog (plus manually saved ids) is the picker.
+        self.assertEqual(_BUILTIN_PROVIDERS["openrouter"]["models"], {})
 
     def test_provider_api_key_env_must_be_declared(self) -> None:
         from git_tools.settings import settings as settings_module
@@ -100,7 +77,10 @@ class ProviderConfigTests(unittest.TestCase):
         with patch("git_tools.generators.base.console.print") as print_mock:
             generator.display_token_usage(response)
 
-        panel = print_mock.call_args.args[0]
+        panel_calls = [call for call in print_mock.call_args_list if call.args]
+        self.assertEqual(len(panel_calls), 1)
+        self.assertEqual(print_mock.call_args.args, ())  # panel-owned trailing blank
+        panel = panel_calls[0].args[0]
         rendered = str(panel.renderable)
         self.assertIn("120", rendered)
         self.assertIn("30", rendered)
@@ -119,13 +99,20 @@ class ProviderConfigTests(unittest.TestCase):
         print_mock.assert_not_called()
 
     def test_create_kimicli_client_sets_headers_and_extra_body(self) -> None:
+        from git_tools.settings import settings as settings_module
+
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = KimiCLIConfig(
             KIMICODE_API_KEY="sk-kimi-test",
             GIT_TOOLS_API_BASE="https://api.kimi.com/coding/v1",
         )
 
-        with patch("langchain_openai.ChatOpenAI") as chat_openai:
+        # The settings singleton reads ~/.git-tools/settings.env at import, so
+        # a saved tier or thinking choice must be patched out for "nothing
+        # configured" to hold on every machine.
+        with (patch("langchain_openai.ChatOpenAI") as chat_openai,
+              patch.object(settings_module.settings, "default_reasoning_effort", None),
+              patch.object(settings_module.settings, "kimi_thinking", None)):
             generator._create_kimicli_client(
                 "kimi-k2.5",
                 provider_config,
@@ -138,10 +125,10 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(kwargs["api_key"], "sk-kimi-test")
         self.assertEqual(kwargs["base_url"], "https://api.kimi.com/coding/v1")
         self.assertEqual(kwargs["default_headers"], {"User-Agent": "KimiCLI/1.3"})
-        self.assertEqual(kwargs["extra_body"], {"thinking": {"type": "disabled"}})
-        # Kimi Code rejects every other value, so an explicit stale override is
-        # normalized to the provider-required temperature.
-        self.assertEqual(kwargs["temperature"], 0.6)
+        # Nothing configured: nothing thinking-related is sent (agent-core).
+        self.assertEqual(kwargs["extra_body"], {})
+        # The configured temperature goes through, as for every provider.
+        self.assertEqual(kwargs["temperature"], 0.2)
 
     @patch.dict(os.environ, {"CLIPROXYAPI_API_KEY": "cliproxyapi"}, clear=False)
     def test_check_api_key_configured_supports_cliproxyapi_env(self) -> None:
@@ -160,7 +147,7 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertIsInstance(config, CLIProxyAPIConfig)
         self.assertEqual(config.api_key, "cliproxyapi")
-        self.assertEqual(config.base_url, "http://localhost:8317/v1")
+        self.assertEqual(config.base_url, "http://127.0.0.1:8317/v1")
 
     def test_cliproxyapi_api_key_defaults_without_env(self) -> None:
         # The CLIProxyAPI client key is a fixed placeholder, so it need not be set.
@@ -191,10 +178,13 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertIsNone(value)
 
     def test_create_cliproxy_client_sets_session_header_and_reasoning_effort(self) -> None:
+        from git_tools.settings import settings as settings_module
+
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = CLIProxyAPIConfig(CLIPROXYAPI_API_KEY="cliproxyapi")
 
-        with patch("langchain_openai.ChatOpenAI") as chat_openai:
+        with (patch("langchain_openai.ChatOpenAI") as chat_openai,
+              patch.object(settings_module.settings, "default_reasoning_effort", "xhigh")):
             generator._create_cliproxy_client(
                 "gpt-5.5",
                 provider_config,
@@ -205,20 +195,20 @@ class ProviderConfigTests(unittest.TestCase):
         kwargs = chat_openai.call_args.kwargs
         self.assertEqual(kwargs["model"], "gpt-5.5")
         self.assertEqual(kwargs["api_key"], "cliproxyapi")
-        self.assertEqual(kwargs["base_url"], "http://localhost:8317/v1")
+        self.assertEqual(kwargs["base_url"], "http://127.0.0.1:8317/v1")
         self.assertIn("Session_id", kwargs["default_headers"])
         self.assertTrue(kwargs["default_headers"]["Session_id"].startswith("git-tools-"))
-        # gpt-5 family rejects a custom temperature, so it must be omitted.
-        self.assertNotIn("temperature", kwargs)
+        # The configured temperature is sent through the proxy (it accepts it).
+        self.assertEqual(kwargs["temperature"], 0.2)
         # The completion cap is forwarded (relies on the 32k global default for headroom).
         self.assertEqual(kwargs["max_tokens"], 8000)
-        # gpt-5.5 carries reasoning_effort=xhigh in its provider definition.
+        # The configured tier is forwarded to a reasoning model.
         self.assertEqual(kwargs["reasoning_effort"], "xhigh")
 
-    def test_cliproxy_client_override_beats_per_model_reasoning_effort(self) -> None:
+    def test_cliproxy_client_forwards_the_configured_tier(self) -> None:
         # settings is a singleton loaded at import; patch the resolved value to
-        # emulate GIT_TOOLS_REASONING_EFFORT being set, and confirm it wins over
-        # the per-model xhigh default from the provider definition.
+        # emulate GIT_TOOLS_REASONING_EFFORT being set. There is no per-model
+        # default to beat any more: as in agent-core, unset means nothing is sent.
         from git_tools.settings import settings as settings_module
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
@@ -236,15 +226,18 @@ class ProviderConfigTests(unittest.TestCase):
         kwargs = chat_openai.call_args.kwargs
         self.assertEqual(kwargs["reasoning_effort"], "low")
 
-    def test_reasoning_effort_override_requires_model_effort(self) -> None:
+    def test_reasoning_effort_needs_a_reasoning_model(self) -> None:
         from git_tools.settings import settings as settings_module
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
         with patch.object(settings_module.settings, "default_reasoning_effort", "low"):
-            effort = generator._resolve_reasoning_effort({"model_name": "plain-model"})
-
-        self.assertIsNone(effort)
+            self.assertIsNone(generator._resolve_reasoning_effort("plain-model"))
+            self.assertEqual(generator._resolve_reasoning_effort("gpt-6-astra"), "low")
+        with patch.object(settings_module.settings, "default_reasoning_effort", "none"):
+            self.assertIsNone(generator._resolve_reasoning_effort("gpt-6-astra"))
+        with patch.object(settings_module.settings, "default_reasoning_effort", None):
+            self.assertIsNone(generator._resolve_reasoning_effort("gpt-6-astra"))
 
     @patch.dict(os.environ, {"GIT_TOOLS_REASONING_EFFORT": "MEDIUM"}, clear=False)
     def test_settings_reads_and_normalizes_reasoning_effort_env(self) -> None:

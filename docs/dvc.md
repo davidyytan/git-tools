@@ -1,6 +1,10 @@
 # DVC Workflow Guide
 
-This guide describes a neutral DVC workflow for repos that use Git, PRs, and optional DVC experiments.
+[Git Flow guide](git-flow-guide.md) · [GitHub](github/README.md) · [Azure DevOps](azure-devops/README.md) · [CLI usage](usage.md)
+
+This is an **optional, manual workflow** for target repositories using Git, PRs, and DVC experiments. DVC is not a dependency of git-tools, and neither `git-tools init` nor the checked-in versioning adapters install DVC, run its pipelines, or upload its data. The examples assume a uv-managed Python project; use your project's dependency manager otherwise. Install the appropriate DVC storage extra (for example `dvc[s3]`) for your chosen remote.
+
+Replace `<placeholders>` with real paths/names. Start checkout or experiment apply operations from a clean workspace, or commit/stash valuable changes first. Direct `git-tools commit` generates and commits a message by default; use `--no-commit` to review text before committing yourself. `git-tools pr` generates text, not a hosted PR. Data upload and Git publication are separate steps.
 
 ## Mental Model
 
@@ -47,11 +51,11 @@ uv run dvc init
 Commit DVC repo setup:
 
 ```bash
-git add .dvc/config .dvcignore
+git add .dvc .dvcignore pyproject.toml uv.lock
 git-tools commit
 ```
 
-Use a Conventional Commit subject such as `chore: initialize DVC`.
+Use a Conventional Commit subject such as `chore: initialize DVC`. Review `git status` and include the `.dvc/.gitignore` created by initialization. Never stage `.dvc/config.local`, cache objects, or remote credentials.
 
 ## Add Data
 
@@ -65,13 +69,13 @@ Commit the DVC pointer file and Git ignore file created by DVC:
 
 ```bash
 git add <data-path>.dvc
-git add <data-parent>/.gitignore
+git add <ignore-file-created-by-dvc>
 git-tools commit
 ```
 
 Use a Conventional Commit subject such as `chore: track data with DVC`.
 
-The real data is not committed to Git. The `.dvc` file records the expected data version.
+For a top-level data directory, the ignore file is usually the root `.gitignore`; inspect `git status` for the actual path. The real data is not committed to Git. The `.dvc` file records the expected data version.
 
 ## Without A DVC Remote
 
@@ -165,7 +169,7 @@ stages:
     deps:
       - <dependency-path>
     params:
-      - <param-key>
+      - <group>.<param-key>
     metrics:
       - <metrics-file>:
           cache: false
@@ -253,7 +257,7 @@ Override params:
 ```bash
 uv run dvc exp run -f \
   --name "<name>-$(date +%Y%m%d-%H%M%S)" \
-  -S <param-key>=<value>
+  -S <group>.<param-key>=<value>
 ```
 
 Compare:
@@ -263,14 +267,14 @@ uv run dvc exp show
 uv run dvc exp diff
 ```
 
-Delete:
+Inspect and remove a selected experiment only when no longer needed:
 
 ```bash
 uv run dvc exp list --all
 uv run dvc exp remove <experiment-name-or-hash>
-uv run dvc exp remove --all-commits
-uv run dvc exp clean
 ```
+
+`dvc exp remove --all-commits` removes **all local experiment refs**, not just one trial. Inspect and share experiments before any bulk deletion; keep those commands out of normal run recipes. Check `uv run dvc exp --help` for your installed version's queue-cleanup commands. Removing refs does not imply that cached data is reclaimed; cache garbage collection is a separate destructive operation.
 
 ## Reproduce Runs
 
@@ -305,18 +309,14 @@ uv run dvc exp show
 uv run dvc exp push origin <experiment-name-or-hash>
 ```
 
-If `origin` is GitHub, this pushes the DVC experiment Git ref to GitHub. It does not push raw data bytes.
+The first argument is the **Git remote**, whether GitHub or another Git host. DVC experiment sharing publishes experiment refs; supported DVC versions also transfer experiment cache through the configured DVC remote by default. Use `--no-cache` only when intentionally sharing refs without data, and check `uv run dvc exp push --help` for your installed version.
 
-If a DVC remote exists, also upload the data/cache needed to reproduce:
-
-```bash
-uv run dvc push
-```
+Without accessible experiment data/cache, a teammate may be able to fetch the ref but not reproduce its outputs. Plain `dvc push` uploads cache referenced by the current workspace; do not assume it includes every saved experiment.
 
 The reviewer or teammate can then fetch and apply the experiment:
 
 ```bash
-git fetch origin --all --tags
+git fetch origin --tags
 git checkout develop
 git pull origin develop
 uv run dvc exp pull origin <experiment-name-or-hash>
@@ -326,7 +326,7 @@ uv run dvc exp apply <experiment-name-or-hash>
 To pull every experiment ref from the Git remote:
 
 ```bash
-git fetch origin --all --tags
+git fetch origin --tags
 uv run dvc exp pull origin --all-commits
 uv run dvc exp show -A
 ```
@@ -417,8 +417,10 @@ Treat those as experiment refs, not normal feature commits. Do not merge them in
 Only promote an experiment intentionally:
 
 ```bash
-uv run dvc exp branch <experiment-name-or-hash>
+uv run dvc exp branch <experiment-name-or-hash> experiment/<branch-name>
 ```
+
+This creates a normal branch; it does not review, merge, or publish it. Inspect the resulting code, params, lock state, and artifacts before opening a PR. For Conventional Commit history, another option is to apply the experiment on a feature branch and deliberately commit only the reviewed baseline files.
 
 ## Commit Checklist
 

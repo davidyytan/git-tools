@@ -21,6 +21,8 @@ on:
   workflow_dispatch:
 
 env:
+  # Set to 'false' here to bump only .cz.toml (default enabled).
+  GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'true'
   GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
   GIT_TOOLS_REF: develop
   GIT_BOT_NAME: David Tan (Bot)

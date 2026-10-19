@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
+from git_tools.generators.base import plain_title
 from git_tools.settings import mappings
 
 from git_tools.cli import (
@@ -151,12 +152,16 @@ class CliTests(unittest.TestCase):
                 "discover:kimicli:True",
                 "save:{'KIMICODE_API_KEY': 'new-kimi-key', "
                 "'GIT_TOOLS_PROVIDER': 'kimicli', "
-                "'GIT_TOOLS_DEFAULT_MODEL': 'kimi-k2.5'}",
+                "'GIT_TOOLS_DEFAULT_MODEL': 'kimi-k2.5', 'GIT_TOOLS_MODEL_MAIN': 'kimi-k2.5', "
+                "'GIT_TOOLS_API_BASE': 'https://api.kimi.com/coding/v1', "
+                "'GIT_TOOLS_OPENROUTER_PROVIDER': '', "
+                "'GIT_TOOLS_REASONING_EFFORT': '', 'GIT_TOOLS_KIMI_THINKING': ''}",
             ],
         )
         self.assertEqual(state["provider"], "kimicli")
         self.assertEqual(state["model"], "kimi-k2.5")
         self.assertTrue(state["api_configured"])
+        self.assertNotIn("support_model", state)
 
     def test_interactive_provider_flow_does_not_switch_when_model_is_cancelled(self) -> None:
         from git_tools.settings import settings as settings_module
@@ -166,7 +171,7 @@ class CliTests(unittest.TestCase):
             "model": "anthropic/claude-sonnet-4.6",
             "api_configured": True,
         }
-        answers = iter(["kimicli", "new-kimi-key", None])
+        answers = iter(["kimicli", "new-kimi-key", None, None, None])
         original_key = os.environ.get("KIMICODE_API_KEY")
         original_models = mappings.PROVIDERS["kimicli"]["models"].copy()
 
@@ -246,6 +251,26 @@ class CliTests(unittest.TestCase):
         self.assertIn("Unknown setting: bogus", result.output)
         self.assertIn("provider", result.output)
 
+    def test_removed_support_model_aliases_are_unknown_without_saving_or_prompting(self) -> None:
+        from git_tools.settings import settings as settings_module
+
+        with (
+            patch.object(settings_module, "save_setting") as save_one,
+            patch.object(settings_module, "save_settings") as save_all,
+            patch("git_tools.cli._ask_with_back") as ask,
+            patch("git_tools.cli._load_settings_state") as load,
+        ):
+            for name in ("support-model", "sub-model", "support_model", "sub_model"):
+                for values in ([], ["obsolete-model"]):
+                    with self.subTest(name=name, values=values):
+                        result = self.runner.invoke(app, ["settings", name, *values])
+                        self.assertEqual(result.exit_code, 1, result.output)
+                        self.assertIn(f"Unknown setting: {name}", result.output)
+        save_one.assert_not_called()
+        save_all.assert_not_called()
+        ask.assert_not_called()
+        load.assert_not_called()
+
     def test_init_uses_defaults_in_direct_mode(self) -> None:
         original_cwd = os.getcwd()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -293,6 +318,54 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertNotIn("--version-source", result.output)
 
+    def test_commit_body_flags_preserve_tristate_and_forward_enum_values(self) -> None:
+        cases = [([], None, None), (["--body"], True, None), (["--no-body"], False, None),
+                 (["--body-style", "bullets"], None, "bullets"),
+                 (["--body-style", "prose"], None, "prose"),
+                 (["--no-body", "--body-style", "prose"], False, "prose")]
+        for arguments, body, style in cases:
+            with self.subTest(arguments=arguments), \
+                 patch("git_tools.generators.commitgen.CommitGenerator") as generator:
+                result = self.runner.invoke(app, ["commit", *arguments])
+                self.assertEqual(result.exit_code, 0, result.output)
+                options = generator.call_args.kwargs
+                self.assertIs(options["include_body"], body)
+                self.assertEqual(options["body_style"], style)
+                self.assertIsNone(options["include_scope"])
+                self.assertIsNone(options["include_footer"])
+                generator.return_value.generate_commit.assert_called_once_with()
+
+    def test_commit_rejects_invalid_body_style_before_generator_construction(self) -> None:
+        with patch("git_tools.generators.commitgen.CommitGenerator") as generator:
+            result = self.runner.invoke(app, ["commit", "--body-style", "paragraphs"])
+        self.assertNotEqual(result.exit_code, 0)
+        generator.assert_not_called()
+
+    def test_commit_and_settings_help_explain_body_and_grouped_keys(self) -> None:
+        import re
+
+        commit_help = re.sub(r"\x1b\[[0-9;]*m", "", self.runner.invoke(app, ["commit", "--help"]).output)
+        compact = " ".join(commit_help.replace("│", " ").split())
+        self.assertIn("--body", compact)
+        self.assertIn("--no-body", compact)
+        self.assertIn("--body-style", compact)
+        self.assertIn("multiline description", compact)
+        self.assertIn("summary is always required", compact)
+        settings_help = self.runner.invoke(app, ["settings", "--help"]).output
+        for key in ("commit-format", "commit-scope", "commit-body", "commit-body-style", "commit-footer"):
+            self.assertIn(key, settings_help)
+
+    def test_settings_choices_group_commit_format_and_keep_direct_aliases(self) -> None:
+        from git_tools.cli import _SETTINGS_EDITORS
+
+        state = {"provider": "openai", "model": "gpt-4.1", "temperature": 0.6,
+                 "max_tokens": 32000, "max_retries": 1, "api_configured": False}
+        rows = {row.value: plain_title(row.title) for row in _build_settings_choices(state)}
+        self.assertEqual(rows["commit-format"], "Commit format: scope off · body on · Point form · footer off")
+        for key in ("commit-scope", "commit-body", "commit-body-style", "commit-footer"):
+            self.assertNotIn(key, rows)
+            self.assertIn(key, _SETTINGS_EDITORS)
+
     def test_settings_choices_show_provider_model_effort_then_api_key(self) -> None:
         state = {
             "provider": "cliproxyapi",
@@ -304,15 +377,14 @@ class CliTests(unittest.TestCase):
             "api_configured": False,
         }
 
-        titles = [choice.title for choice in _build_settings_choices(state)]
+        titles = [plain_title(choice.title) for choice in _build_settings_choices(state)]
 
         self.assertEqual(
-            titles[:4],
+            titles[:3],
             [
                 "Provider: cliproxyapi",
-                "Model: gpt-5.5",
-                "Effort: xhigh (model default)",
-                "API Key (cliproxyapi): not set",
+                "Main Model: gpt-5.5",
+                "API Endpoint: not configured (provider default)",
             ],
         )
         self.assertEqual(titles[-1], "Done")
@@ -328,15 +400,18 @@ class CliTests(unittest.TestCase):
             "api_configured": True,
         }
 
-        titles = [choice.title for choice in _build_settings_choices(state)]
+        titles = [plain_title(choice.title) for choice in _build_settings_choices(state)]
 
-        self.assertNotIn("Effort:", "\n".join(titles))
+        # Kimi's tier lives in the combined thinking row (agent-cli's picker);
+        # there is no separate effort row for it.
+        self.assertIn("Kimi thinking: high", titles)
+        self.assertFalse([title for title in titles if title.startswith("Effort:")])
         self.assertEqual(
             titles[:3],
             [
                 "Provider: kimicli",
-                "Model: kimi-k2.5",
-                "API Key (kimicli): configured",
+                "Main Model: kimi-k2.5",
+                "API Endpoint: not configured (provider default)",
             ],
         )
 
@@ -352,7 +427,7 @@ class CliTests(unittest.TestCase):
         }
 
         titles = [
-            choice.title
+            plain_title(choice.title)
             for choice in _build_settings_choices(state, done_label="← Back")
         ]
 
@@ -360,16 +435,16 @@ class CliTests(unittest.TestCase):
 
     def test_provider_choices_are_built_from_registry_metadata(self) -> None:
         choices = _build_provider_choices("kimicli")
-        titles = [choice.title for choice in choices]
+        titles = [plain_title(choice.title) for choice in choices]
         values = [choice.value for choice in choices]
 
-        self.assertEqual(values, ["openrouter", "kimicli", "cliproxyapi"])
+        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic"})
         self.assertIn(
             "OpenRouter [openrouter] — https://openrouter.ai/api/v1", titles[0]
         )
-        self.assertIn("Kimi Code [kimicli]", titles[1])
-        self.assertIn("(current)", titles[1])
-        self.assertIn("CLIProxyAPI [cliproxyapi]", titles[2])
+        self.assertIn("Kimi Code [kimicli]", titles[values.index("kimicli")])
+        self.assertIn("(current)", titles[values.index("kimicli")])
+        self.assertIn("CLIProxyAPI [cliproxyapi]", titles[values.index("cliproxyapi")])
 
     def test_model_choices_mark_and_reorder_listed_current_model(self) -> None:
         choices = _build_model_choices(
@@ -381,14 +456,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(choices[0].value, "kimi-k2.5")
 
     def test_model_choices_insert_unlisted_current_model_above_fallbacks(self) -> None:
+        # A provider with a curated list (Kimi's catalog is live-only now).
         choices = _build_model_choices(
-            "kimicode",
-            current_model="account-only-kimi",
+            "anthropic",
+            current_model="account-only-claude",
         )
 
-        self.assertEqual(choices[0].title, "account-only-kimi (current)")
-        self.assertEqual(choices[0].value, "account-only-kimi")
-        self.assertEqual(choices[1].title, "kimi-k2.5")
+        self.assertEqual(choices[0].title, "account-only-claude (current)")
+        self.assertEqual(choices[0].value, "account-only-claude")
+        self.assertEqual(choices[1].title, "Claude Opus 5.5 (claude-opus-5-5)")
 
     def test_model_catalog_auth_failure_names_the_key_to_fix(self) -> None:
         from git_tools.settings.mappings import LiveModelRefreshError
@@ -439,10 +515,14 @@ class CliTests(unittest.TestCase):
             choice.title for choice in _build_model_choices("openrouter")
         ]
 
-        self.assertIn("gpt-5.5 (effort: xhigh)", cliproxy_titles)
+        # Live-only providers (as in agent-cli) ship no static rows; the saved
+        # model leads and manual entry closes every list.
         for titles in (cliproxy_titles, kimi_titles, openrouter_titles):
             self.assertEqual(titles[-1], "Enter a model ID manually…")
-        self.assertEqual(kimi_titles[0], "kimi-k2.5")
+        self.assertEqual(
+            _build_model_choices("cliproxyapi", current_model="gpt-6-astra")[0].title,
+            "gpt-6-astra (current)",
+        )
 
 
 if __name__ == "__main__":

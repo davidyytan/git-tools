@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from git_tools.generators.issueprgen import (
     AZURE_PR_DESCRIPTION_INSTRUCTION,
@@ -36,10 +36,10 @@ class IssuePullRequestPromptTests(unittest.TestCase):
         )
 
         with patch(
-            "git_tools.generators.issueprgen.subprocess.check_output",
+            "subprocess.check_output",
             return_value=raw_messages,
         ) as check_output:
-            messages = generator.get_commit_messages(2)
+            messages = generator.get_commit_messages({"commit_range": "base-sha..head-sha"})
 
         self.assertEqual(
             messages,
@@ -54,14 +54,14 @@ class IssuePullRequestPromptTests(unittest.TestCase):
         )
         self.assertEqual(
             check_output.call_args.args[0],
-            ["git", "log", "-2", "--pretty=format:%B%x1e"],
+            ["git", "log", "--pretty=format:%B%x1e", "base-sha..head-sha", "--"],
         )
 
     def test_load_version_from_ref_reads_only_dot_cz_toml(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
         with patch(
-            "git_tools.generators.issueprgen.subprocess.check_output",
+            "subprocess.check_output",
             return_value="[tool.commitizen]\nversion = \"1.6.0\"\n",
         ) as check_output:
             version = generator._load_version_from_ref("origin/develop")
@@ -72,21 +72,21 @@ class IssuePullRequestPromptTests(unittest.TestCase):
             ["git", "show", "origin/develop:.cz.toml"],
         )
 
-    def test_pr_commit_log_prefers_origin_base_branch(self) -> None:
+    def test_pr_commit_log_uses_resolved_remote_only_base_branch(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
         def fake_run(*args, **kwargs):
             cmd = args[0]
-            ref = cmd[-1]
-            if ref == "origin/develop":
-                return subprocess.CompletedProcess(cmd, 0)
+            ref = cmd[-1].removesuffix("^{commit}")
+            if ref in {"origin/develop", "refs/remotes/origin/develop"}:
+                return subprocess.CompletedProcess(cmd, 0, stdout="base-sha\n")
             raise subprocess.CalledProcessError(1, cmd)
 
         with patch(
-            "git_tools.generators.issueprgen.subprocess.run",
+            "subprocess.run",
             side_effect=fake_run,
         ), patch(
-            "git_tools.generators.issueprgen.subprocess.check_output",
+            "subprocess.check_output",
             return_value="## abc123 feat: test\n",
         ) as check_output:
             commit_log = generator.get_pr_commit_log("develop")
@@ -106,16 +106,16 @@ class IssuePullRequestPromptTests(unittest.TestCase):
 
         def fake_run(*args, **kwargs):
             cmd = args[0]
-            ref = cmd[-1]
-            if ref == "origin/master":
-                return subprocess.CompletedProcess(cmd, 0)
+            ref = cmd[-1].removesuffix("^{commit}")
+            if ref in {"origin/master", "refs/remotes/origin/master"}:
+                return subprocess.CompletedProcess(cmd, 0, stdout="base-sha\n")
             raise subprocess.CalledProcessError(1, cmd)
 
         with patch(
-            "git_tools.generators.issueprgen.subprocess.run",
+            "subprocess.run",
             side_effect=fake_run,
         ), patch(
-            "git_tools.generators.issueprgen.subprocess.check_output",
+            "subprocess.check_output",
             return_value="## abc123 feat: test\n\n## def456 fix: next\n",
         ) as check_output:
             commit_log = generator.get_pr_commit_log("master")
@@ -238,15 +238,11 @@ class IssuePullRequestPromptTests(unittest.TestCase):
         generator = IssuePullRequestGenerator(
             generation_type="pr",
             backmerge_hotfix_pr=True,
+            workflow_version="1.6.1",
             interactive=False,
         )
 
-        with patch.object(
-            generator,
-            "_infer_hotfix_target_version",
-            return_value="1.6.1",
-        ):
-            system_message = generator._build_system_message("", "b")
+        system_message = generator._build_system_message("", "b")
 
         self.assertIn("The Pull Request title is fixed for this mode.", system_message)
         self.assertIn("## Title: Backmerge Hotfix 1.6.1", system_message)
@@ -600,6 +596,7 @@ Issue: #123
             generation_type="pr",
             release_pr=True,
             interactive=False,
+            copy_clipboard=True,
         )
         release_context = PromotionPrContext(
             current_branch="release/1.0.0",
@@ -648,6 +645,7 @@ Issue: #123
             generation_type="pr",
             start_pr=True,
             interactive=False,
+            copy_clipboard=True,
         )
         workflow_context = WorkflowPrContext(
             workflow_kind="develop-start",
@@ -896,7 +894,7 @@ Issue: #123
             "get_branch_diffs",
             return_value=("", []),
         ), patch(
-            "git_tools.generators.issueprgen.warning",
+            "git_tools.generators.issueprgen.content.warning",
         ) as warning_mock, patch.object(
             generator,
             "select_provider",
@@ -1150,7 +1148,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
         with patch(
-            "git_tools.generators.issueprgen.subprocess.check_output",
+            "subprocess.check_output",
             return_value="https://dev.azure.com/org/proj/_git/repo\n",
         ) as check_output:
             origin_url = generator._get_origin_url()
@@ -1165,7 +1163,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
         with patch(
-            "git_tools.generators.issueprgen.subprocess.check_output",
+            "subprocess.check_output",
             side_effect=subprocess.CalledProcessError(128, ["git"]),
         ):
             self.assertIsNone(generator._get_origin_url())
@@ -1174,7 +1172,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
         with patch(
-            "git_tools.generators.issueprgen.subprocess.check_output",
+            "subprocess.check_output",
             return_value="\n",
         ):
             self.assertIsNone(generator._get_origin_url())
@@ -1221,7 +1219,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             self.assertFalse(generator._should_apply_azure_limit())
         prompt_confirm.assert_not_called()
 
-    def test_interactive_prompt_defaults_follow_detection(self) -> None:
+    def test_interactive_saved_auto_applies_detection_without_prompt(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
         with patch.object(
             generator,
@@ -1231,7 +1229,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             generator, "prompt_confirm", return_value=True
         ) as prompt_confirm:
             self.assertTrue(generator._should_apply_azure_limit())
-        self.assertEqual(prompt_confirm.call_args.kwargs["default"], True)
+        prompt_confirm.assert_not_called()
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
         with patch.object(
@@ -1242,14 +1240,14 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             generator, "prompt_confirm", return_value=False
         ) as prompt_confirm:
             self.assertFalse(generator._should_apply_azure_limit())
-        self.assertEqual(prompt_confirm.call_args.kwargs["default"], False)
+        prompt_confirm.assert_not_called()
 
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)
         with patch.object(generator, "_get_origin_url", return_value=None), patch.object(
             generator, "prompt_confirm", return_value=False
         ) as prompt_confirm:
             self.assertFalse(generator._should_apply_azure_limit())
-        self.assertEqual(prompt_confirm.call_args.kwargs["default"], False)
+        prompt_confirm.assert_not_called()
 
     def test_interactive_detection_prints_origin_remote_line(self) -> None:
         cases = [
@@ -1272,7 +1270,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
                     generator, "_get_origin_url", return_value=origin_url
                 ), patch.object(
                     generator, "prompt_confirm", return_value=True
-                ), patch("git_tools.generators.issueprgen.info") as info:
+                ), patch("git_tools.generators.issueprgen.azure.info") as info:
                     generator._should_apply_azure_limit()
                 info.assert_called_once_with(expected_message)
 
@@ -1344,9 +1342,12 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             mocks["copy_to_clipboard_auto"] = stack.enter_context(
                 patch.object(generator, "copy_to_clipboard_auto")
             )
-            mocks["warning"] = stack.enter_context(
-                patch("git_tools.generators.issueprgen.warning")
-            )
+            # The flow warns from several modules; one mock observes them all.
+            mocks["warning"] = MagicMock()
+            for module in ("azure", "content", "generator"):
+                stack.enter_context(
+                    patch(f"git_tools.generators.issueprgen.{module}.warning", mocks["warning"])
+                )
             mocks["should_apply"] = stack.enter_context(
                 patch.object(
                     generator, "_should_apply_azure_limit", return_value=apply_limit
@@ -1354,6 +1355,25 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             )
             generator.generate_issue_pullrequest()
         return mocks
+
+    def test_generation_omits_raw_response_panel_for_all_output_types(self) -> None:
+        for generation_type, title in (
+            ("issue", "Issue Description"),
+            ("pr", "PR Description"),
+            ("both", "Combined Output"),
+        ):
+            with self.subTest(generation_type=generation_type):
+                generator = self._make_generator(generation_type=generation_type)
+                response = {"content": "```\n## Title: fix: avoid duplicate output\n\nBody\n```"}
+                with patch("git_tools.generators.issueprgen.generator.console") as console:
+                    self._run_flow(generator, [response], apply_limit=False)
+
+                titles = [
+                    call.args[0].title
+                    for call in console.print.call_args_list
+                    if call.args and hasattr(call.args[0], "title")
+                ]
+                self.assertEqual(titles, [f"[bold]{title}[/bold]"])
 
     def test_enabled_limit_adds_instruction_to_system_message(self) -> None:
         generator = self._make_generator()
@@ -1406,7 +1426,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
         mocks["warning"].assert_called_once()
         warning_message = mocks["warning"].call_args[0][0]
         self.assertIn("exceeds the configured PR limit", warning_message)
-        self.assertIn("Copied anyway", warning_message)
+        self.assertIn("Keeping the content without truncation", warning_message)
 
         copied = mocks["copy_to_clipboard_auto"].call_args[0][0]
         self.assertIn("y" * 100, copied)

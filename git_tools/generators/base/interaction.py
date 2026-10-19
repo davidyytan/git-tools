@@ -1,0 +1,149 @@
+"""Questionary prompts and clipboard handoff shared by all generators."""
+
+from typing import List, Optional
+
+import questionary
+from rich.markup import escape
+from rich.panel import Panel
+
+from .terminal import ALIGN_PANEL, STYLE_BORDER, TYPER_STYLE, console, error, success, warning
+
+
+def _prompt_label(message: str) -> str:
+    """Keep one terminal mark, preserving questions before appended colons."""
+    label = message.rstrip()
+    punctuation = ":"
+    while label.endswith(("?", "!", ":")):
+        punctuation = label[-1]
+        label = label[:-1].rstrip()
+    return f"{label}{punctuation}"
+
+
+class InteractionMixin:
+    """Prompt helpers styled to match Typer, plus clipboard output."""
+
+    def prompt_text(self, message: str, default: str = "") -> str:
+        """Prompt for text; cancellation aborts rather than accepting the default."""
+        result = questionary.text(
+            _prompt_label(message),
+            default=default,
+            style=TYPER_STYLE,
+            qmark="❯",
+            instruction="",
+        ).ask()
+        if result is None:
+            raise KeyboardInterrupt
+        return result
+
+    def prompt_confirm(self, message: str, default: bool = True) -> bool:
+        """Prompt for yes/no confirmation; cancellation never implies consent."""
+        # Order choices so desired default is first (cursor starts there naturally)
+        if default:
+            choices = ["Yes", "No"]
+        else:
+            choices = ["No", "Yes"]
+        result = self.prompt_select(message, choices)
+        return result == "Yes"
+
+    def prompt_select(self, message: str, choices: List[str], default: str = None) -> str:
+        """Prompt for selection from choices with questionary (arrow-key navigation).
+
+        If default is specified, reorders choices so default appears first
+        (cursor naturally starts at first item, avoiding questionary's default styling issue).
+        Cancellation aborts the operation; it is not a selection of the first choice.
+        """
+        # Reorder choices so default is first if specified
+        if default and default in choices:
+            choices = [default] + [c for c in choices if c != default]
+
+        result = questionary.select(
+            _prompt_label(message),
+            choices=choices,
+            style=TYPER_STYLE,
+            qmark="❯",
+            pointer="›",
+            instruction="",
+        ).ask()
+        if result is None:
+            raise KeyboardInterrupt
+        return result
+
+    def get_user_input(self, prompt: str, default: Optional[str] = None) -> str:
+        """Get input from user with default value support (legacy wrapper)."""
+        # Handle yes/no prompts
+        if "yes/no" in prompt.lower() or "[y]" in prompt.lower():
+            result = self.prompt_confirm(prompt.replace(" [yes/no]", "").replace("[yes/no]", ""), default == "yes")
+            return "yes" if result else "no"
+
+        return self.prompt_text(prompt, default or "")
+
+    def handoff_to_clipboard(
+        self, content: str, *, allow_auto: bool = True, leading_space: bool = True
+    ) -> None:
+        """Apply explicit copy policy, then the interactive/direct-mode default.
+
+        Credential failures may offer local output, but must not create an
+        unrequested automatic clipboard side effect in non-interactive mode.
+        An explicit copy request still applies to that fallback.
+        """
+        # Panel callers already own the separator before an automatic result.
+        copy_kwargs = {} if leading_space else {"leading_space": False}
+        copy_clipboard = getattr(self, "_cli_copy_clipboard", None)
+        if copy_clipboard is False:
+            return
+        if copy_clipboard is True:
+            self.copy_to_clipboard_auto(content, **copy_kwargs)
+        elif self._interactive:
+            self.ask_to_copy_to_clipboard(content)
+        elif allow_auto:
+            self.copy_to_clipboard_auto(content, **copy_kwargs)
+
+    def handoff_local_prompt(self, content: str, *, allow_auto: bool = True) -> None:
+        """Always show usable local output, independently of clipboard access."""
+        console.print(Panel(
+            escape(content),
+            title="[bold]Prompt[/bold]",
+            border_style=STYLE_BORDER,
+            title_align=ALIGN_PANEL,
+        ), soft_wrap=False)
+        console.print()
+        self.handoff_to_clipboard(content, allow_auto=allow_auto, leading_space=False)
+
+    def ask_to_copy_to_clipboard(self, content: str) -> None:
+        """Ask user to copy parsed content to clipboard."""
+        try:
+            import pyperclip
+        except ImportError:
+            self.logger.warning(
+                "pyperclip not installed. Clipboard functionality unavailable."
+            )
+            warning("Install pyperclip for clipboard support: uv add pyperclip")
+            return
+
+        if self.prompt_confirm("Copy to clipboard?", default=True):
+            try:
+                pyperclip.copy(content)
+                console.print()
+                success("Copied to clipboard!")
+            except Exception as e:
+                self.logger.error(f"Clipboard error: {e}")
+                console.print()
+                error("Failed to copy content.")
+        else:
+            console.print()
+            success("Generation complete.")
+
+    def copy_to_clipboard_auto(self, content: str, *, leading_space: bool = True) -> None:
+        """Copy without prompting; panel callers can omit the leading separator."""
+        if leading_space:
+            console.print()
+        try:
+            import pyperclip
+            pyperclip.copy(content)
+            success("Copied to clipboard!")
+        except ImportError:
+            self.logger.warning("pyperclip not installed. Clipboard functionality unavailable.")
+            warning("Install pyperclip for clipboard support: uv add pyperclip")
+        except Exception as e:
+            self.logger.error(f"Clipboard error: {e}")
+            error("Failed to copy content.")

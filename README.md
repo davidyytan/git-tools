@@ -1,365 +1,60 @@
 # git-tools
 
-AI-powered CLI tool for conventional commit generation, issue/PR documentation, version bumping, and Commitizen-style init.
+CLI for AI-assisted Conventional Commits, issue/PR text, and Git Flow versioning. Supports GitHub and Azure DevOps, with classic and release-led workflows and reviewed variants. LLM providers: OpenRouter, Kimi Code, CLIProxyAPI, ACRC, Copilot proxy, Qwen, OpenAI, and Anthropic. Model pickers use endpoint discovery where supported; the main model handles all generation.
 
-## Installation
+## Install
 
-With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed,
-run from this checkout:
+Requires **Python 3.12**, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/). From this checkout:
 
 ```bash
 ./install.sh
-# Refresh the tool environment when needed:
+# Refresh dependencies/tool environment when needed:
 ./install.sh --reinstall
 ```
 
-The script installs this checkout in editable mode and enables shell completion.
-Restart your shell afterward. Alternatively, run the commands directly:
+The installer creates an editable tool installation, then enables shell completion if `git-tools` is on PATH. Restart your shell afterward. If the command is not on PATH, completion setup is skipped and the installer exits with an error: run `uv tool update-shell`, restart your shell, then run `git-tools --install-completion` and restart again (or rerun the installer after fixing PATH). Source changes are picked up without reinstalling; dependency changes or changes to project-version metadata may require `./install.sh --reinstall`.
+
+## Quick Start
+
+After installing, run from your new project directory. Replace `YOUR_GPG_KEY_ID` and the SSH key path:
 
 ```bash
-uv tool install -e . && git-tools --install-completion
-```
+# Optional: retrieve existing bot keys for your CI secret store.
+gpg --list-secret-keys --keyid-format=long
+gpg --export-secret-key -a YOUR_GPG_KEY_ID
+cat ~/.ssh/key
 
-If the tool is already installed and you want to refresh the installed tool environment:
-
-```bash
-uv tool install -e . --reinstall
-```
-
-Because the tool is installed in editable mode, normal source changes are picked up without reinstalling. Use `--reinstall` when you want to refresh the tool environment itself, such as after dependency changes.
-
-After install, the main entrypoints are:
-
-```bash
-# Configure provider, API key, and defaults
-git-tools settings
-
-# Interactive menu
-git-tools
-
-# Direct commands
-git-tools commit
-git-tools issue
-git-tools pr
-git-tools bump
+git init
 git-tools init
+git add -A
+git commit -m "Release 0.1.0"
 ```
 
-Configuration and local state live here:
+**The key commands print private keys. Copy them only into your CI secret store, never into the repository; review staged files before committing.**
 
-- `~/.git-tools/settings.env`
-  Written by `git-tools settings`. Stores user-level provider, API key, and default overrides. To reset user settings, remove `~/.git-tools/` and any remaining legacy files listed below; otherwise a legacy file can migrate again. Also unset environment overrides. (Legacy `~/.git-tools/config.env` or `$XDG_CONFIG_HOME/git-tools/config.env`, defaulting to `~/.config/git-tools/config.env`, migrates automatically when `settings.env` does not exist. The `.git-tools` legacy location takes priority if both exist; a failed move remains readable as a fallback.)
-- `~/.git-tools/models.json`
-  Written by `git-tools settings` when you enter a model ID manually. Holds saved model IDs grouped by provider so they reappear in the picker. Created at runtime; never committed.
-- `./git-tools.env`
-  Optional repo-local env override file for the current working directory.
+CI setup: [GitHub](docs/github/setup.md) · [Azure DevOps](docs/azure-devops/setup.md). `init` does not install automation. Full release flows: [walkthroughs](docs/walkthroughs.md). Tool version: `git-tools --version` (or `-V`).
 
-## Documentation: Choose Your Path
+## Documentation
 
-- **[Direct CLI and Interactive Usage](docs/usage.md)** — commands plus arrow-key,
-  Enter, and prompt-by-prompt walkthroughs.
-- **[GitHub](docs/github/README.md)** — GitHub Actions setup and all four flow guides.
-- **[Azure DevOps](docs/azure-devops/README.md)** — Azure Pipelines setup and all four flow guides.
-- **[Flow comparison](docs/git-flow-guide.md)** — classic vs release-led, reviewed
-  variants, and shared title/version policy.
-- **[DVC](docs/dvc.md)** — hosting-neutral data and experiment workflow.
+Start with the **[documentation index](docs/README.md)**.
 
-Each platform supplies two example adapters; reviewed flows share their base
-adapter. Copy and configure only one adapter in the target repository.
+| Topic | Guide |
+| --- | --- |
+| Commands, defaults, safety, and interactive usage | [CLI usage](docs/usage.md) |
+| Providers, credentials, models, and settings | [Configuration](docs/configuration.md) |
+| Version authority and optional Python/Node/Rust sync | [Versioning](docs/versioning.md) |
+| Choosing classic/release-led and reviewed modes | [Flow comparison](docs/git-flow-guide.md) |
+| GitHub setup and four workflow guides | [GitHub](docs/github/README.md) |
+| Azure DevOps setup and four workflow guides | [Azure DevOps](docs/azure-devops/README.md) |
+| CI publication and recovery | [Publication](docs/publication.md) |
+| Optional data and experiment workflow | [DVC](docs/dvc.md) |
 
-## Configuration
+`.cz.toml` is the **sole version and Git-tag authority**. During bump, other version files are best-effort sync targets: sync failures warn and skip rather than block the core bump. By default, every supported eligible location at the root and one immediate child level syncs to the computed release version, even when multiple locations use the same ecosystem. This includes child tools such as `smoke_runs`; limit targets with the optional replacement allowlist `auxiliary_directories` (for example, `["."]` for root only). Structured Python/uv, npm, and standalone Cargo handlers target each project's own version fields, not dependency versions; no package-manager commands run. This structured-handler scope is **not a safety guarantee for arbitrary custom `version_files` regexes** outside the selected directories; the current selector gap can rewrite dependency versions. See [versioning](docs/versioning.md) for exact targets and [current versioning limitations](docs/versioning.md#current-limitations) for that unresolved gap and the planning FIFO/file-mode defects.
 
-Run the settings command to configure the provider, API key, and model defaults:
+Known configuration defects can also route a cleared endpoint to an unintended host, revive a reset endpoint after switching providers, or change Kimi's effective effort when accepting a picker default. Read [current configuration limitations](docs/configuration.md#current-limitations) before using provider generation. These are implementation gaps, not supported policy.
 
-```bash
-git-tools settings
-```
+Workflow adapters are examples to copy and configure in the target repository; `init` does not install CI automation. Activate one adapter for your selected mode.
 
-This opens an interactive picker (press Esc or choose ← Back to go up a level) and saves settings to `~/.git-tools/settings.env`. Choosing a provider prompts for its key first, then detects and offers that provider's models. You can also edit a single setting directly:
+## Contribute
 
-```bash
-git-tools settings provider openrouter
-git-tools settings temperature 0.6
-git-tools settings model anthropic/claude-sonnet-4.6
-```
-
-Alternatively, copy the example env file and choose a provider:
-
-```bash
-cp git-tools.env.example git-tools.env
-```
-
-Supported providers:
-
-- `openrouter` with `OPENROUTER_API_KEY`
-- `kimicli` with `KIMICODE_API_KEY` (`kimicode` and `kimi` are accepted aliases)
-- `cliproxyapi` — local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) proxy for Codex/GPT-5; defaults to `gpt-5.6-sol` at `xhigh` reasoning. `CLIPROXYAPI_API_KEY` is optional (defaults to the `cliproxyapi` placeholder the proxy ships with); set it only if your proxy uses a different key.
-
-The active provider is selected with `GIT_TOOLS_PROVIDER`. Provider choices, labels, endpoints, and model-catalog capabilities come from the provider registry. For every provider, the model picker attempts live OpenAI-compatible `/models` discovery using that provider's endpoint and key, keeps static models as an offline fallback, and offers manual model-ID entry. Large catalogs use searchable autocomplete.
-
-You can also export the variables directly, for example:
-
-```bash
-export GIT_TOOLS_PROVIDER="kimicli"
-export KIMICODE_API_KEY="your-kimi-api-key"
-```
-
-For a local CLIProxyAPI proxy (Codex/GPT-5), just point at the proxy — the client key defaults to `cliproxyapi`, so you only need to select the provider. The default model is `gpt-5.6-sol` at `xhigh` reasoning; override the effort with `GIT_TOOLS_REASONING_EFFORT` for effort-capable models if desired:
-
-```bash
-export GIT_TOOLS_PROVIDER="cliproxyapi"
-export GIT_TOOLS_API_BASE="http://localhost:8317/v1"   # default
-# export CLIPROXYAPI_API_KEY="my-key"   # only if your proxy uses a non-default key
-```
-
-Provider metadata and static fallback models are defined in code (`git_tools/settings/mappings.py`); there is no `mappings.json` to copy or maintain. Live catalogs are endpoint- and credential-specific, so changing either causes a fresh discovery. A failed refresh may retain the last successful catalog for the same endpoint/key; changed or invalid configuration resets safely to saved/manual and static fallback choices.
-
-Every provider supports manual model IDs: run `git-tools settings`, choose **Model → Enter a model ID manually…**, and type the exact ID. Manual IDs are saved under that provider in `~/.git-tools/models.json` so they remain available even when a live catalog does not list them. OpenRouter defaults to `anthropic/claude-sonnet-4.6` when nothing is configured. You can also set a model directly with `git-tools settings model <id>`, `--model <id>`, or `GIT_TOOLS_DEFAULT_MODEL`.
-
-`git-tools settings` writes provider, model, and default overrides to `~/.git-tools/settings.env`, and manually entered model IDs to `~/.git-tools/models.json`.
-
-For release workflow and branch policy details, choose [GitHub](docs/github/README.md)
-or [Azure DevOps](docs/azure-devops/README.md), then select one of the four flows.
-See the [flow comparison](docs/git-flow-guide.md) for shared policy.
-
-This repo uses `.cz.toml` as the authoritative Commitizen config and version source. `cz.toml` is not supported. `pyproject.toml` and `uv.lock` are auxiliary sync targets during bumps when they already expose matching version fields, but they are never treated as the source of truth.
-
-## Usage
-
-Choose **direct commands** below or follow the [interactive walkthrough](docs/usage.md).
-Run `git-tools` without a subcommand, use Up/Down and Enter at **Select command:**,
-and choose `commit`, `issue`, `pr`, `bump`, `init`, or `settings`. Git operations
-such as staging, checkout, and push still run in the shell.
-
-### Generate commit message
-
-```bash
-# Stage changes first, then run the direct command
-git add .
-
-# Direct command mode
-git-tools commit
-
-# With options
-git-tools commit --model anthropic/claude-sonnet-4 --no-scope --no-footer --commit
-
-# Fixed workflow subject
-git-tools commit --workflow-kind open-release
-```
-
-`git-tools commit --workflow-kind ...` bypasses the LLM and writes the exact workflow subject directly. Use normal `git-tools commit` for ordinary Conventional Commits on feature, release, and hotfix branch work.
-
-### Configure provider and defaults
-
-```bash
-git-tools settings
-```
-
-`git-tools settings` is interactive. Choosing **Provider** now runs the complete setup in order: provider → API key (blank keeps an existing/default key) → live model detection → model choice. The standalone **API Key** and **Model** entries remain available for later changes. Press Esc (or pick ← Back) to go up one menu level. `git-tools settings <name> [value]` edits a single setting directly, e.g. `git-tools settings temperature 0.6`.
-
-### Generate issue documentation
-
-```bash
-# Direct command mode
-git-tools issue
-
-# With options
-git-tools issue --base develop --source b
-```
-
-### Generate pull request documentation
-
-```bash
-# Direct command mode
-git-tools pr
-
-# With options
-git-tools pr --base develop --source b
-git-tools pr --start-pr --workflow-version 1.7.0
-git-tools pr --release-pr
-git-tools pr --hotfix-pr
-git-tools pr --backmerge-release-pr
-git-tools pr --backmerge-hotfix-pr --workflow-version 1.6.1
-```
-
-`git-tools pr` stays in the ordinary PR mode by default (Conventional Commit title; base branch auto-detected). Fixed-title PR helpers (`--start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, `--backmerge-hotfix-pr`) generate the correct workflow titles automatically. When repo state alone cannot safely infer the tuple, pass `--workflow-version X.Y.Z`.
-
-For step-by-step branch and PR procedures, use the [GitHub](docs/github/README.md)
-or [Azure DevOps](docs/azure-devops/README.md) guides. For the same operations
-through terminal selections, see [interactive usage](docs/usage.md#generate-a-pull-request-or-issue).
-PR/issue generation creates text locally; it does not submit or complete PRs.
-
-### Bump version
-
-```bash
-# Preview the next bump from Conventional Commits
-git-tools bump --dry-run
-
-# Signed prerelease example
-git-tools bump --yes --increment MINOR --prerelease alpha --gpg-sign
-
-# CI-friendly prerelease example: treat other conventional types as PATCH, without tagging
-git-tools bump --yes --prerelease alpha --default-increment PATCH --no-tag
-
-# Print only the next version
-git-tools bump --get-next
-```
-
-The bump flow follows Conventional Commits increment detection and preserves whichever Commitizen version scheme the repo declares in `.cz.toml`: semver2 (`1.2.0-alpha.0`) or semver (`1.2.0-a0`). When `version_scheme = "semver2" | "semver"` is set in `[tool.commitizen]`, that scheme is always honored, including when the current version is stable and otherwise ambiguous. Bare `git-tools bump` uses the normal bump defaults: auto-detect increment, stable release, no explicit `--yes`, and no explicit `--gpg-sign`. `git-tools bump` always reads the current version from `.cz.toml`; when present, `pyproject.toml` and `uv.lock` are synced as auxiliary targets without becoming the source of truth. By default it respects `tag.gpgSign`; when that is enabled, it makes the signed-tag path explicit so Git does not block on opening an editor for the tag message. Use `--ignore-git-config` if you want the older signed-commit plus lightweight-tag shape, or `--gpg-sign` if you want an explicit signed tag.
-
-`--default-increment` is an opt-in fallback for conventional commit types outside the built-in bump rules. The built-in rules remain:
-
-- `type!` or `BREAKING CHANGE:` -> `MAJOR`
-- `feat` -> `MINOR`
-- `fix`, `refactor`, `perf` -> `PATCH`
-
-If you pass `--default-increment PATCH`, other conventional headers such as `style`, `docs`, `test`, `ci`, `build`, `chore`, or `revert` also advance versions as `PATCH`. This is mainly useful in CI workflows where every merged PR should produce a new referenceable build.
-
-When you launch bump from the interactive `git-tools` menu, it prompts for the increment, release channel, initial-tag behavior, and tag signing before running the same bump engine.
-
-### Initialize Commitizen config
-
-```bash
-# Write a Commitizen config using detected defaults
-git-tools init
-
-# Explicit alias for the same direct-mode behavior
-git-tools init --defaults
-```
-
-The init flow writes a Commitizen-compatible config to `.cz.toml`. For a new repo, the primary branch must already be `master` before you run `git-tools init`. Direct `git-tools init` defaults to `.cz.toml` and writes the primary managed version there. `pyproject.toml` and `uv.lock` remain auxiliary synced targets during bumps, not alternate version sources. This repo uses `.cz.toml`; `cz.toml` and Commitizen config embedded in `pyproject.toml` are intentionally unsupported. When you launch `init` from the interactive `git-tools` menu, it prompts for the supported settings instead. The generated section follows Commitizen's config layout so you can hand the repo back to `cz` later.
-
-### Interactive menu
-
-```bash
-git-tools
-```
-
-## Options
-
-### Commit
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--model` | `-m` | Model name (e.g., 'anthropic/claude-sonnet-4') |
-| `--temp` | `-t` | Temperature (0.0-2.0) |
-| `--max-tokens` | | Maximum tokens for completion |
-| `--token-limit` | `-l` | Token limit for diff processing |
-| `--scope/--no-scope` | | Include conventional commit scope |
-| `--footer/--no-footer` | | Include conventional commit footer |
-| `--commit/--no-commit` | | Commit changes directly |
-| `--copy/--no-copy` | | Copy to clipboard |
-| `--force-sensitive` | | Allow committing sensitive files |
-| `--workflow-kind` | | Create the `chore: open release` helper commit instead of using the LLM |
-
-### Issue
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--base` | `-b` | Base branch to compare against |
-| `--source` | `-s` | Input source: 'd' (diffs), 'c' (commits), 'b' (both) |
-| `--context` | `-c` | Additional context for generation |
-| `--model` | `-m` | Model name |
-| `--temp` | `-t` | Temperature (0.0-2.0) |
-| `--max-tokens` | | Maximum tokens for completion |
-| `--token-limit` | `-l` | Token limit for diff processing |
-
-### Pull Request
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--base` | `-b` | Base branch to compare against |
-| `--source` | `-s` | Input source: 'd' (diffs), 'c' (commits), 'b' (both) |
-| `--context` | `-c` | Additional context for generation |
-| `--release-pr/--no-release-pr` | | Use fixed-title release-promotion PR guidance for `release/* -> master` |
-| `--hotfix-pr/--no-hotfix-pr` | | Use fixed-title hotfix-promotion PR guidance for `hotfix/* -> master` |
-| `--start-pr/--no-start-pr` | | Use fixed-title develop PR guidance for the PR that must land as `Start X.Y.Z` into `develop` |
-| `--backmerge-release-pr/--no-backmerge-release-pr` | | Use fixed-title backmerge guidance for `release/* -> develop` |
-| `--backmerge-hotfix-pr/--no-backmerge-hotfix-pr` | | Use fixed-title backmerge guidance for `hotfix/* -> develop` |
-| `--workflow-version` | | Provide the exact `X.Y.Z` tuple for Start or Backmerge PR modes when inference is ambiguous |
-| `--pr-limit/--no-pr-limit` | | Force/disable the configured PR length target on any host; auto defaults to Azure on, GitHub/unknown off. Legacy `--azure-limit/--no-azure-limit` aliases remain supported |
-| `--model` | `-m` | Model name |
-| `--temp` | `-t` | Temperature (0.0-2.0) |
-| `--max-tokens` | | Maximum tokens for completion |
-| `--token-limit` | `-l` | Token limit for diff processing |
-
-### Settings
-
-`git-tools settings` is interactive when run bare. It also accepts direct arguments: `git-tools settings <name> [value]` where `<name>` is one of `provider`, `model`, `effort`, `api-key`, `temperature`, `max-tokens`, `max-retries`.
-
-### Bump
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--increment` | | Explicit MAJOR, MINOR, or PATCH increment |
-| `--default-increment` | | Fallback MAJOR, MINOR, or PATCH increment for other conventional commit types |
-| `--prerelease` | | Create or continue an alpha, beta, or rc prerelease |
-| `--increment-mode` | | Choose `linear` or `exact` prerelease bump behavior |
-| `--allow-no-commit` | | Allow bumping even when no new commits are found |
-| `--dry-run` | | Print the computed bump without changing files or git state |
-| `--get-next` | | Print only the next version |
-| `--yes` | `-y` | Treat a missing current-version tag as an initial tag only when the repository has no existing tags |
-| `--tag/--no-tag` | | Create or skip the git tag for this bump |
-| `--annotated-tag` | | Create an annotated tag |
-| `--gpg-sign` | | Create a signed tag |
-| `--annotated-tag-message` | | Custom tag message for annotated or signed tags |
-| `--respect-git-config/--ignore-git-config` | | Respect or ignore `git config tag.gpgSign` during tag creation |
-| `--check-consistency/--no-check-consistency` | | Require managed version fields to match before writing |
-| `--major-version-zero/--no-major-version-zero` | | Override major-version-zero behavior for this run |
-
-### Init
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--config-file` | | Choose `.cz.toml` |
-| `--version` | | Set the initial version; scheme is auto-detected as semver2 (`1.0.0-alpha.0`) or semver (`1.0.0-a0`) |
-| `--tag-format` | | Set the tag format, for example `$version` or `v$version` |
-| `--major-version-zero/--no-major-version-zero` | | Control breaking-change behavior while major is zero |
-| `--defaults` | | Write config using detected defaults without prompting |
-| `--force` | | Update an existing Commitizen config in place |
-
-Provider metadata, live-catalog capabilities, and static fallback models are defined in `git_tools/settings/mappings.py`. Manually entered model IDs for any provider are managed via `git-tools settings` and saved to `~/.git-tools/models.json`.
-
-## Useful Git Commands
-
-Raw git commands for manually replicating the commit logs used by the CLI.
-
-### Develop-style PR log
-
-```bash
-git log --reverse -n 1 --pretty=format:'## %h %s%n%n%b%n' origin/develop..HEAD
-```
-
-### Release PR log
-
-```bash
-git log --reverse -n 1 --pretty=format:'## %h %s%n%n' origin/master..HEAD
-```
-
-### Cherry-pick commit log
-
-```bash
-git log --no-walk --reverse --pretty=format:'## %h %s%n%n%b%n' 2539dec 31cae4e
-```
-
-## Contributing
-
-For development setup, branch naming, validation steps, and contribution expectations, see [Contributing](CONTRIBUTING.md).
-
-## Code of Conduct
-
-Community expectations and reporting guidance are in [Code of Conduct](CODE_OF_CONDUCT.md).
-
-### Saved Azure PR Preferences
-
-Use `git-tools settings pr-limit auto` (detect Azure origin) or
-`git-tools settings pr-limit false` (disable automatic limiting).
-Set the preferred size with `git-tools settings pr-max-chars 2000` or
-`4000` (allowed range 1–4000 UTF-16 units). Defaults are `auto` and `4000`.
-Both persist in the existing `~/.git-tools/settings.env`. There is no saved
-always-on mode; CLI `--pr-limit/--no-pr-limit` is a one-run override on any host, including GitHub.
-Automatic defaults are Azure on, GitHub/unknown off. Old Azure flag/setting
-names remain aliases; the existing stored keys are unchanged.
-
-Interactive path: `git-tools` → **settings** → **PR Limit** or
-**PR Max Chars**. See the [complete walkthrough](docs/usage.md#save-azure-pr-preferences).
+See [contributing](docs/contributing.md), [code layout](docs/architecture.md), [style conventions](docs/style.md), and [code of conduct](docs/code-of-conduct.md). Licensed under [MIT](LICENSE).

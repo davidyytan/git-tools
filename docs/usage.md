@@ -7,8 +7,11 @@ Run `git-tools` in the repository you want to work on. See the [project README](
 ```bash
 git-tools                  # Interactive menu in a terminal
 git-tools --help            # Command overview
+git-tools --version         # Installed git-tools version (also -V)
 git-tools commit --help     # Options for one command
 ```
+
+Top-level `git-tools --version` (or `git-tools -V`) prints `git-tools VERSION` and exits. This is the tool's own installed package version from `importlib.metadata.version("git-tools")`, using metadata built from `pyproject.toml`, not the current repository's release version. Package metadata may normalize `0.2.0-alpha.1` to `0.2.0a1`; when package metadata is unavailable (for example, in an uninstalled checkout), the display is `git-tools unknown`. This display does not change `.cz.toml`'s sole authority for bumps and tags.
 
 Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. The `settings` command has its own terminal-dependent setup/edit behavior described below.
 
@@ -216,6 +219,8 @@ Supported names: `provider`, `main-model` (`model` alias), `api-base` (`endpoint
 For provider choices, credential handling, model discovery, validation, defaults, and setting precedence, use [configuration](configuration.md). Prefer the masked API-key prompt over passing secrets as command arguments (which may enter shell history/process listings).
 
 ## Practical interactive walkthrough
+
+The interactive root menu shows the same `git-tools VERSION` in a dim header once per invocation. Direct subcommand output has no added version header.
 
 Use **Up/Down** and **Enter** for selections, and type into text prompts/searchable model lists. Yes/No questions are selections too. **Ctrl+C** cancels. In settings, **Esc** or **← Back** returns to the prior level; standalone settings ends with **Done**. Settings opened from the main menu returns to that menu, with saved values reloaded. A content command finishes the invocation; run `git-tools` again for the next operation.
 

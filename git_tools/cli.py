@@ -16,6 +16,7 @@ import typer.rich_utils
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from questionary import Choice
 from rich.console import Console
+from git_tools import __version__
 from git_tools.settings.settings import (
     GitToolsSettings,
     normalize_provider_name,
@@ -477,8 +478,21 @@ def _build_settings_choices(
 # ============================================================================
 
 
+def _version_callback(value: bool) -> None:
+    """Report the installed tool version without running a command."""
+    if value:
+        typer.echo(f"git-tools {__version__}")
+        raise typer.Exit()
+
+
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context) -> None:
+def main(
+    ctx: typer.Context,
+    show_version: Annotated[
+        bool,
+        typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help="Show the installed git-tools version and exit"),
+    ] = False,
+) -> None:
     """Show interactive menu when no subcommand is provided."""
     _setup_logging()
 
@@ -488,6 +502,7 @@ def main(ctx: typer.Context) -> None:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
 
+    console.print(f"git-tools {__version__}", style="dim", markup=False)
     while True:
         try:
             choice = questionary.select(

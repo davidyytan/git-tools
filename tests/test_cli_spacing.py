@@ -379,6 +379,9 @@ class SettingsSpacingTests(unittest.TestCase):
                 reload.assert_called_once_with()
                 ctx.invoke.assert_called_once_with(cli.commit, interactive=True)
                 text = output.getvalue()
+                header = f"git-tools {cli.__version__}"
+                self.assertTrue(text.startswith(f"{header}\n❯ Select command: settings\n"), text)
+                self.assertEqual(text.splitlines().count(header), 1, text)
                 self.assertIn("settings\n\n❯ Select setting to edit:", text)
                 self.assertIn("← Back\n\n❯ Select command: commit\n\n❯ Select commit mode:", text)
                 self.assertNotIn("\n\n\n", text)

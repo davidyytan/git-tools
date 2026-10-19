@@ -12,35 +12,27 @@ Requires **Python 3.12**, Git, and [uv](https://docs.astral.sh/uv/getting-starte
 ./install.sh --reinstall
 ```
 
-The installer creates an editable tool installation, then enables shell completion if `git-tools` is on PATH. Restart your shell afterward. If the command is not on PATH, completion setup is skipped and the installer exits with an error: run `uv tool update-shell`, restart your shell, then run `git-tools --install-completion` and restart again (or rerun the installer after fixing PATH). Source changes are picked up without reinstalling; dependency changes may require `--reinstall`.
+The installer creates an editable tool installation, then enables shell completion if `git-tools` is on PATH. Restart your shell afterward. If the command is not on PATH, completion setup is skipped and the installer exits with an error: run `uv tool update-shell`, restart your shell, then run `git-tools --install-completion` and restart again (or rerun the installer after fixing PATH). Source changes are picked up without reinstalling; dependency changes or changes to project-version metadata may require `./install.sh --reinstall`.
 
-## Start a repository and ship a release
+## Quick Start
 
-Follow a **[full workflow walkthrough](docs/walkthroughs.md)** for your platform and mode. Each numbered guide takes a fresh repository from the initial **`Release 0.1.0`** commit through features, alpha/RC versions, stable release, backmerge, hotfix, and the next development cycle—with exact PR titles and CI checkpoints.
-
-Choose [GitHub](docs/github/README.md#full-walkthroughs) or [Azure DevOps](docs/azure-devops/README.md#full-walkthroughs). The walkthrough includes setup; `git-tools init` alone does not install automation. Existing release histories need a migration plan, not another bootstrap.
-
-## Quick Start — individual commands
-
-For an already configured repository, or text generation without release automation (the examples below still use the configured provider):
-
-Run commands from the repository you want to work on:
+After installing, run from your new project directory. Replace `YOUR_GPG_KEY_ID` and the SSH key path:
 
 ```bash
-git-tools settings           # Choose provider, credentials, and model
-git-tools                    # Interactive command menu
+# Optional: retrieve existing bot keys for your CI secret store.
+gpg --list-secret-keys --keyid-format=long
+gpg --export-secret-key -a YOUR_GPG_KEY_ID
+cat ~/.ssh/key
 
-# Generate a message for deliberately staged changes without committing/copying:
-git-tools commit --no-commit --no-copy
-
-# Generate PR text via the configured provider; inspect and paste the output:
-git-tools pr --base develop --no-copy
-
-# Preview a version bump without changing files or Git state:
-git-tools bump --dry-run
+git init
+git-tools init
+git add -A
+git commit -m "Release 0.1.0"
 ```
 
-**Direct `git-tools commit` creates a commit by default.** Stage only intended files first. PR/issue commands generate text; they do not submit or merge hosted requests. Actual bumps require an empty index and reject pre-staged content before writing. Use `bump --dry-run` to review planned files/diffs; interactive bump offers Preview / Apply / Cancel.
+**The key commands print private keys. Copy them only into your CI secret store, never into the repository; review staged files before committing.**
+
+CI setup: [GitHub](docs/github/setup.md) · [Azure DevOps](docs/azure-devops/setup.md). `init` does not install automation. Full release flows: [walkthroughs](docs/walkthroughs.md). Tool version: `git-tools --version` (or `-V`).
 
 ## Documentation
 

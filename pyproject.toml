@@ -1,6 +1,6 @@
 [project]
 name = "git-tools"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 description = "AI-powered development automation tool for conventional commits, issue/PR documentation, and version bumping"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

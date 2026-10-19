@@ -47,7 +47,7 @@ GIT_TOOLS_BUMP_SYNC_AUXILIARY=false uv run git-tools bump --yes
 
 Precedence is **environment variable > `.cz.toml` `sync_auxiliary` > `true`**. The TOML setting must be a boolean, not a quoted string; invalid TOML setting types fail even when an environment override is present. Environment values are case-insensitive and trimmed: `true`/`false`, `1`/`0`, `yes`/`no`, or `on`/`off`. An empty or unrecognized environment value raises `ConfigError` rather than silently enabling or disabling sync.
 
-Disabled means **all auxiliary targets**: `pyproject.toml`, `uv.lock`, npm JSON files, root and `src-tauri/` Cargo files, and every custom `version_files` entry. Auxiliary files are not parsed or registered as sync targets, and auxiliary selectors are not validated or resolved; even unsafe custom selectors are inactive while sync is disabled. The reviewed-plan snapshot still inspects known metadata paths, independently of target selection. It currently attempts to read any existing non-symlink metadata path without first requiring a regular file: a FIFO can hang planning even with sync disabled. Concurrent metadata byte changes can also require a fresh plan. See [current limitations](#current-limitations). No auxiliary version updates are planned. `.cz.toml` remains the source of truth and is still bumped. Version calculation, branch/history rules, commits, tagging, and publication are not disabled by this switch.
+Disabled means **all auxiliary targets**: `pyproject.toml`, `uv.lock`, npm JSON files, Cargo files at the root and eligible immediate-child locations, and every custom `version_files` entry. Auxiliary files are not parsed or registered as sync targets, and auxiliary selectors are not validated or resolved; even unsafe custom selectors are inactive while sync is disabled. The reviewed-plan snapshot still inspects known metadata paths, independently of target selection. It currently attempts to read any existing non-symlink metadata path without first requiring a regular file: a FIFO can hang planning even with sync disabled. Concurrent metadata byte changes can also require a fresh plan. See [current limitations](#current-limitations). No auxiliary version updates are planned. `.cz.toml` remains the source of truth and is still bumped. Version calculation, branch/history rules, commits, tagging, and publication are not disabled by this switch.
 
 ### CI deployment configuration
 
@@ -73,21 +73,23 @@ The Azure templates explicitly map this variable into the strategy and bump step
 
 Automatic discovery checks the repository root and its immediate child directories only, consistently for Python/uv, npm, and Cargo. It never descends into grandchildren or recursively walks workspace members. Hidden directories and `node_modules`, `target`, `build`, `dist`, `vendor`, `venv`, and `__pycache__` are excluded. Symlink directories and symlink target files are skipped.
 
-Selection is independent per ecosystem. If only one candidate directory contains that ecosystem's supported files, it is selected automatically. If multiple candidate directories contain them, that ecosystem warns and skips synchronization rather than assuming the projects share a release version. Other unambiguous ecosystems can still sync. Each Python or Cargo lockfile is paired only with the manifest in the same directory; a manifest can be synced without a lockfile.
+By default, supported targets at **every eligible location** sync to the release version computed from `.cz.toml`, even when multiple locations contain the same ecosystem. A malformed or unsupported target warns and skips independently; other supported targets and locations can still sync. Each Python or Cargo lockfile is paired only with the manifest in the same directory; a manifest can be synced without a lockfile.
 
-### Explicit release-sharing directories
+Immediate-child tools such as `smoke_runs` participate by default when they contain supported files; they are not implicitly excluded as development-only projects. To keep a child tool on an independent version, exclude it by listing only the desired directories in the allowlist below.
 
-When multiple projects intentionally share `.cz.toml`'s release version, select their directories explicitly:
+### Optional directory allowlist
+
+To limit automatic sync, set `auxiliary_directories` as a **replacement allowlist**, not an addition to the default discovery. For root-only sync:
 
 ```toml
 [tool.commitizen]
 version = "1.2.3"
-auxiliary_directories = [".", "backend", "frontend", "src-tauri"]
+auxiliary_directories = ["."]
 ```
 
-This is an allowlist across all supported ecosystems: only the listed directories participate in automatic synchronization, and every selected project's own version is synced to the computed release version. `"."` means the repository root. Each other entry must name an existing, non-hidden immediate child directory that is not a symlink or an excluded tool directory. Absolute paths, parent traversal, deeper paths such as `services/api`, and invalid selector types raise `ConfigError` before updates. Explicit selection does not enable recursion or Cargo workspace inheritance.
+To include selected release-sharing children, use, for example, `auxiliary_directories = [".", "backend", "frontend", "src-tauri"]`. This applies across all supported ecosystems: only the listed directories participate, and every selected project's own version syncs to the computed release version on a best-effort basis. `"."` means the repository root; omit it to exclude root targets. Each other entry must name an existing, non-hidden immediate child directory that is not a symlink or an excluded tool directory. Absolute paths, parent traversal, deeper paths such as `services/api`, and invalid selector types raise `ConfigError` before updates. Explicit selection does not enable recursion or Cargo workspace inheritance.
 
-Use `auxiliary_directories = []` to disable automatic targets while keeping explicit `version_files` targets active. **Do not use that combination to bypass structured npm/Cargo handling:** the current implementation can instead select a generic regex target and rewrite dependency versions. The same gap exists when the allowlist excludes a directory; see [current limitations](#current-limitations). By contrast, `sync_auxiliary = false` disables both automatic and custom auxiliary updates and bypasses directory-selector validation, but does not avoid the snapshot hang described above. Omit `auxiliary_directories` to use the bounded discovery and ambiguity rules above.
+Use `auxiliary_directories = []` to disable automatic targets while keeping explicit `version_files` targets active. **Do not use that combination to bypass structured npm/Cargo handling:** the current implementation can instead select a generic regex target and rewrite dependency versions. The same gap exists when the allowlist excludes a directory; see [current limitations](#current-limitations). By contrast, `sync_auxiliary = false` disables both automatic and custom auxiliary updates and bypasses directory-selector validation, but does not avoid the snapshot hang described above. Omit `auxiliary_directories` to sync all supported targets within the bounded discovery rules above.
 
 ### Supported files in each selected directory
 
@@ -115,15 +117,15 @@ Cargo sync is another **best-effort try during the normal bump**, not a separate
 
 Registry/git package versions, dependency requirements, lockfile format versions, and unrelated workspace crates are untouched. A stale, ambiguous, malformed, or unsupported lockfile warns and skips independently of its manifest. Version-qualified lockfile dependency references are not rewritten; that lockfile is skipped with a warning so it can be regenerated with Cargo. A skipped lockfile may need repair before `cargo build --locked` or packaging.
 
-Virtual workspaces, `[workspace.package].version`, and `version.workspace = true` are **not** automatically rewritten: changing a shared version can affect many crates. They warn and skip rather than guessing. Immediate child crate directories use the same bounded discovery rules as root crates. Deeper crate locations are outside automatic support; there is no automatic workspace recursion. Do not treat a custom regex as an equivalent safe Cargo manifest/lockfile handler.
+Virtual workspaces, `[workspace.package].version`, and `version.workspace = true` are **not** automatically rewritten: changing a shared version can affect many crates. They warn and skip rather than guessing. Every eligible immediate-child standalone crate participates by default alongside root crates, unless excluded through `auxiliary_directories`. Deeper crate locations are outside automatic support; there is no automatic workspace recursion. Do not treat a custom regex as an equivalent safe Cargo manifest/lockfile handler.
 
 ### Tauri
 
-If Tauri's version already references `package.json`, **leave that reference intact**. The bump attempts to update `package.json`, not replace the reference with a literal version. The conventional `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` are within the one-level discovery boundary and use the Cargo rules above. If another Cargo location also exists, select the release-sharing directories with `auxiliary_directories`. Tauri configuration itself is not rewritten. Other immediate child backend directories work the same way. Deeper ecosystem manifests/lockfiles are outside automatic support; custom selectors are not a substitute for their structured safety checks.
+If Tauri's version already references `package.json`, **leave that reference intact**. The bump attempts to update `package.json`, not replace the reference with a literal version. The conventional `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` are within the one-level discovery boundary and use the Cargo rules above. They participate by default alongside any other eligible Cargo locations; use `auxiliary_directories` only to limit that selection. Tauri configuration itself is not rewritten. Other immediate child backend directories work the same way. Deeper ecosystem manifests/lockfiles are outside automatic support; custom selectors are not a substitute for their structured safety checks.
 
 ### Monorepos and Other Lockfiles
 
-There is no automatic recursion into workspaces: independent packages must not all receive the root app's version accidentally. Multiple immediate project locations require an explicit `auxiliary_directories` selection per the rules above. Use `version_files` for deeper custom version files only when they genuinely share a release version and their content can be selected safely; see the ecosystem-selector limitation below. Yarn and pnpm lockfiles are not automatically rewritten or regenerated.
+There is no automatic recursion into workspaces. Supported files at the root and every eligible immediate-child location share the release version by default; use the replacement `auxiliary_directories` allowlist to exclude independently versioned projects. Nested workspace members and deeper package locations remain outside automatic support. Use `version_files` for deeper custom version files only when they genuinely share a release version and their content can be selected safely; see the ecosystem-selector limitation below. Yarn and pnpm lockfiles are not automatically rewritten or regenerated.
 
 ## Explicit Extra Targets
 

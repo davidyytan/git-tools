@@ -108,23 +108,13 @@ def load_bump_config(root: Path) -> BumpConfig:
     }
     for directory in directories:
         for ecosystem, names in filenames.items():
-            # Reserve even absent, invalid, or ambiguous ecosystem paths so a
-            # broad version_files regex cannot bypass structured handling.
+            # Reserve even absent or invalid ecosystem paths so a broad
+            # version_files regex cannot bypass structured handling.
             auto_managed_paths.update(directory / name for name in names)
             if any(_is_auxiliary_file(directory / name) for name in names):
                 locations[ecosystem].append(directory)
 
-    explicit = "auxiliary_directories" in cz_settings
     for ecosystem, found in locations.items():
-        if not explicit and len(found) > 1:
-            names = ", ".join(str(path.relative_to(root)) for path in found)
-            _warn_auxiliary(
-                ecosystem,
-                f"multiple auxiliary locations ({names}); skipping {ecosystem} sync. "
-                "Set [tool.commitizen].auxiliary_directories to select directories "
-                "that share this release",
-            )
-            continue
         for directory in found:
             if ecosystem == "Python":
                 data = pyprojects[directory]
@@ -200,14 +190,13 @@ _AUXILIARY_EXCLUDED_DIRECTORIES = frozenset({
 
 
 def _auxiliary_directories(root: Path, settings: dict) -> list[Path]:
-    """Select release-sharing roots without traversing grandchildren.
+    """Select automatic sync locations without traversing grandchildren.
 
-    ``[tool.commitizen].auxiliary_directories = [".", "app", "src-tauri"]``
-    explicitly opts those directories into the same release across all supported
-    ecosystems. An empty list disables automatic auxiliaries. When omitted,
-    root and immediate non-hidden, non-tool children are candidates; ambiguity
-    is handled independently per ecosystem by the caller. Validation is only
-    reached when auxiliary synchronization is enabled.
+    By default, sync supported files at the root and every eligible immediate
+    child directory. ``[tool.commitizen].auxiliary_directories`` replaces that
+    default with an explicit allowlist across all supported ecosystems; an empty
+    list disables automatic auxiliaries. Validation is only reached when
+    auxiliary synchronization is enabled.
     """
     if "auxiliary_directories" in settings:
         raw = settings["auxiliary_directories"]

@@ -1,5 +1,53 @@
-# Example workflow for classic Git Flow:
-# See docs/git-flow-guide.md for setup, branch policy, PR flow, and merge settings.
+# Example workflow for classic Git Flow.
+#
+# SETUP — do this in YOUR GitHub application repository.
+# Copy this file to .github/workflows/version-bump-git-flow-classic.yml.
+# Enable only ONE versioning workflow; reviewed Classic uses this same file.
+#
+# ALREADY HAVE KEYS? Run these locally, ONE AT A TIME, then paste each output:
+# Destination: your repo > Settings > Secrets and variables > Actions > New repository secret.
+# Select your dedicated automation key from the first command, then replace
+# YOUR_GPG_KEY_ID with its long ID/full fingerprint and use your own SSH filename.
+#
+#   gpg --list-secret-keys --keyid-format=long
+#   gpg --export-secret-key -a YOUR_GPG_KEY_ID  # -> secret BOT_GPG_SECRETKEY
+#   cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY"   # -> secret BOT_SSH_SECRETKEY (NOT .pub)
+#
+# Paste the COMPLETE private-key blocks, including BEGIN/END markers.
+# No export file needed. Use a private, unrecorded terminal; never paste keys into
+# YAML, source files, chat, or logs. Terminal/clipboard history can retain them.
+# These steps have no GPG/SSH passphrase configured; protected keys need adaptation.
+# Already registered the public keys and write access? Skip the optional steps below.
+#
+# NEED A KEY? Create ONLY the missing key locally, with your own automation identity:
+#   gpg --full-generate-key
+#     Choose a signing-capable key, expiry, and YOUR automation name/email.
+#   mkdir -p "$HOME/.ssh"
+#   ssh-keygen -t ed25519 -C 'YOUR_AUTOMATION_EMAIL' -f "$HOME/.ssh/git_tools_bot_ed25519"
+#     Never overwrite an existing key; choose another filename if needed.
+# Only if your policy permits unattended keys, leave the NEW automation keys'
+# passphrases empty (SSH: Enter twice). Never strip protection from a personal key.
+# Then use the SAME list/export/cat block above with the new key ID/SSH filename.
+#
+# PUBLIC KEYS — register only if not already configured (these are NOT secrets):
+#   gpg --export -a YOUR_GPG_KEY_ID
+#     -> signing account > Settings > SSH and GPG keys > New GPG key.
+#   cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY.pub"
+#     -> your repo > Settings > Deploy keys > Add deploy key > Allow write access,
+#        OR your own bot account's SSH authentication keys with repo write access.
+# Never put a private key on a public-key registration screen.
+#
+# EDIT env BELOW: use YOUR automation GIT_BOT_NAME / GIT_BOT_EMAIL, not David's.
+# The email must match the GPG identity and a verified email on the signing account.
+# Use your own GitHub owner/repo for the APPLICATION remote; keep GIT_TOOLS_REPO
+# as the upstream tool source unless intentionally using your own git-tools fork.
+# Verify GIT_TOOLS_REF is a supported branch/tag; local CLI updates do not update it.
+# Allow this SSH identity to push signed commits/tags through your branch rules.
+# For PR merges, use the PR title as the final commit subject; disable rebase merge.
+# Full process, branch policy, bootstrap, and recovery: docs/github/setup.md and
+# docs/github/classic-walkthrough.md in the git-tools source repository.
+#
+# VERSION POLICY:
 # - develop -> tagged alpha prereleases on the upcoming release line
 # - release/<x.y.z> stabilizes that same line as rc prereleases
 # - master -> stable releases

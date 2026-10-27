@@ -15,8 +15,10 @@ Read these first:
 
 ## Development Setup
 
+Fork git-tools on your own GitHub account, then replace `YOUR_GITHUB_USERNAME` with **your username** below. Configure Git with your own name/email for contributions; the upstream maintainer's identity is not a sample to copy.
+
 ```bash
-git clone https://github.com/<your-user>/git-tools.git
+git clone https://github.com/YOUR_GITHUB_USERNAME/git-tools.git
 cd git-tools
 
 uv sync

@@ -1,38 +1,58 @@
-# GitHub quickstart
+# GitHub quickstart — returning-user checklist
 
-**Fresh repository → first Classic release.** Requires [git-tools installed](../../README.md#install), Git author configured, and an empty GitHub repository. Existing release history needs a migration plan, not this bootstrap. No LLM account is needed.
+Use this page to reconnect existing automation keys or repeat a familiar Classic flow. **First time?** Use the [complete Classic guide](classic-walkthrough.md), which includes installation, key-creation checkpoints, and the end-to-end release journey. The fixed commands and CI need no LLM account.
+
+## Already have keys? Copy these into CI
+
+**Destination: your application repository → Settings → Secrets and variables → Actions → New repository secret.** Use your own dedicated automation keys, not personal private keys. Run one command at a time: replace `YOUR_GPG_KEY_ID` with the selected bot key's full fingerprint (preferred) or long key ID after listing, and replace the SSH filename before reading it:
+
+```bash
+gpg --list-secret-keys --keyid-format=long
+# Actions secret BOT_GPG_SECRETKEY: paste the complete private-key block printed next.
+gpg --export-secret-key -a YOUR_GPG_KEY_ID
+# Actions secret BOT_SSH_SECRETKEY: paste the complete SSH private key printed next.
+cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY"
+```
+
+Paste each complete BEGIN/END block into its named secret in a private, unrecorded local terminal. Do not save an extra export file or expose output in chat/logs/source. Keep correct existing public-key registration; [register only if needed](setup.md#register-public-keys-only-if-needed). Missing a key? Use the [optional creation steps](setup.md#prepare-keys-and-set-the-exact-secrets), then return here. The supplied workflows have no GPG/SSH passphrase configured; protected keys need an approved adaptation.
+
+For an **existing application**, [configure the workflow](setup.md#copy-and-configure-the-workflow) and resume from its actual branch/version. Do not rerun initialization or bootstrap. The checklist below is only for a **fresh repository** under your own GitHub account/org, with [git-tools installed](../../README.md#install) and GnuPG available.
 
 ## 1. Prepare the repository and Actions
 
-Replace the checkout path and remote:
+This example keeps the tool checkout at `$HOME/projects/git-tools` and creates your application at `$HOME/projects/my-app`. Use your actual chosen paths if different; keep the tool checkout because installation is editable.
+
+Replace `YOUR_NAME` / `YOUR_EMAIL` with **your human Git identity** and `YOUR_USERNAME_OR_ORG` / `YOUR_REPOSITORY` with your application's GitHub owner/name. Keep the SSH user `git@` unchanged:
 
 ```bash
-GIT_TOOLS_DIR=/path/to/git-tools
-mkdir my-app && cd my-app
+mkdir -p "$HOME/projects"
+cd "$HOME/projects"
+mkdir my-app
+cd my-app
 git init -b master
-git remote add origin git@github.com:OWNER/REPO.git
+git config user.name 'YOUR_NAME'
+git config user.email 'YOUR_EMAIL'
+git remote add origin git@github.com:YOUR_USERNAME_OR_ORG/YOUR_REPOSITORY.git
 git-tools init --version 0.0.1 --tag-format '$version'
 mkdir -p .github/workflows
-cp "$GIT_TOOLS_DIR/.github/workflows/version-bump-git-flow-classic.yml.example" \
+cp "$HOME/projects/git-tools/.github/workflows/version-bump-git-flow-classic.yml.example" \
   .github/workflows/version-bump-git-flow-classic.yml
 ```
 
 Before pushing, complete [GitHub setup](setup.md):
 
-- In the YAML, set `GIT_TOOLS_REPO`, a **supported engine branch/tag** in `GIT_TOOLS_REF`, and `GIT_BOT_NAME` / `GIT_BOT_EMAIL`. A bare SHA is not supported by the example clone.
-- Store the bot's private keys in Actions secrets **`BOT_SSH_SECRETKEY`** and **`BOT_GPG_SECRETKEY`**; register their public keys. Keep private keys outside the checkout.
-- Allow that SSH identity to push signed version commits/tags; scope protection exceptions to automation. Enable squash with **PR title as final subject**, disable rebase, and use separate PR validation checks.
+- **Copied YAML `env:`:** keep the upstream `GIT_TOOLS_REPO`; choose a supported branch/tag in `GIT_TOOLS_REF` (not a bare SHA). Set `GIT_BOT_NAME` / `GIT_BOT_EMAIL` to **your dedicated automation identity**, not your human identity or David's.
+- **Actions secrets:** follow [key setup](setup.md#prepare-keys-and-set-the-exact-secrets). Print the dedicated GPG private key and paste it into **`BOT_GPG_SECRETKEY`**; read the dedicated SSH private key into **`BOT_SSH_SECRETKEY`**. Use existing automation keys or create only the missing key first; no extra private-key export file is needed. Register matching public keys separately only if not already configured.
+- **Repository settings:** allow that SSH identity to push signed version commits/tags with narrowly scoped protection exceptions. Enable PR-title squash messages, disable rebase, and use separate read-only PR tests.
 
 Activate **one** version workflow. Protect `master`/`develop`; this Classic path permits human stabilization commits on `release/*` and `hotfix/*`. `init` does not install Actions.
 
 ## 2. Bootstrap once
 
-Ensure credentials/private keys are ignored, then choose **one** staging command:
+Keep credentials/private keys outside the checkout. Stage the bootstrap files; add other application files only after reviewing them:
 
 ```bash
-git add -A  # If application files are already present.
-# Otherwise, stage only the bootstrap files instead:
-# git add .cz.toml .github/workflows/version-bump-git-flow-classic.yml
+git add .cz.toml .github/workflows/version-bump-git-flow-classic.yml
 git diff --cached
 git commit -m "Release 0.1.0"
 git push -u origin master
@@ -54,7 +74,7 @@ The branch-creation run skips; `develop` starts at `0.1.0`.
 ```bash
 git switch -c feature/first
 # Make and test a real application change; replace the path placeholder.
-git add -- <reviewed-paths>
+git add -- path/to/changed-file
 git commit -m "feat: add first feature"
 git push -u origin feature/first
 ```

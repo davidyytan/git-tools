@@ -1,18 +1,35 @@
 # Azure DevOps: Release-led end-to-end walkthrough
 
-Start with an **empty Azure Repo**, not the git-tools source checkout. This is one continuous example, from the first commit through a release, hotfix, and next development cycle. Commands assume Bash (or Git Bash), an authenticated Git connection to Azure Repos, and one person coordinating these operations without concurrent merges. Replace the organization/project/repository URL and your Git identity; keep the example branch names, titles, and versions unchanged.
+The numbered journey below assumes an **empty Azure Repo**, not the git-tools source checkout. If you enter mid-flow, use the existing-key block and mode policy instead of repeating bootstrap. The full example runs from the first commit through a release, hotfix, and next development cycle. Commands assume Bash (or Git Bash), an authenticated Git connection to Azure Repos, and one person coordinating these operations without concurrent merges. Replace the organization/project/repository URL and your Git identity; keep the example branch names, titles, and versions unchanged.
 
 These are expected results derived from the engine and local Git checks, **not a claim that these instructions were executed against hosted Azure DevOps**. Stop on errors or unexpected versions instead of running later steps blindly.
 
-## 1. Install the CLI and prepare the Azure project
+## Already Have a Signing Key or Pipeline?
 
-Install Git, **Python 3.12**, uv, and GnuPG. See the [installation instructions](../../README.md#install) and [provider configuration](../configuration.md). Clone the tool into a separate directory, not into the application repository:
+**Destination: Azure DevOps → Pipelines → your pipeline → Edit → Variables → New variable → `BOT_GPG_SECRETKEY` → enable “Keep this value secret”.** Select your existing **dedicated automation signing key**, not your personal key. Replace `YOUR_GPG_KEY_ID` with its long ID or full fingerprint from the first command before running the second:
 
 ```bash
-git clone https://github.com/davidyytan/git-tools.git git-tools-cli
-cd git-tools-cli
+gpg --list-secret-keys --keyid-format=long
+gpg --export-secret-key -a YOUR_GPG_KEY_ID  # → BOT_GPG_SECRETKEY (secret pipeline variable)
+```
+
+Paste the full armored block with original line breaks. Existing pipeline users can paste now; for this fresh example, run the block after creating the pipeline in step 4. No export file, SSH key, PAT, or bot user is needed. Already configured the key? Do not recreate/register it. [Need a new key? Follow the optional create-first path](setup.md#2-choose-an-automation-signing-key), then return to this block.
+
+The template has **no passphrase input**: use only an approved unattended automation key. Never log/trace the key or paste it into YAML/chat; multiline masking does not protect its individual lines. Already have release history? Use the [mode policy](#mode-policy-and-edge-cases) and the relevant later step; do not repeat fresh-repository bootstrap.
+
+## 1. Install the CLI and prepare the Azure project
+
+Install Git, **Python 3.12**, uv, and GnuPG. This example keeps the tool and application under **`$HOME/projects`**; choose another location if preferred and adjust the later absolute copy path. This is the **upstream tool source**, not your application origin. If you already have the checkout, use it instead of cloning again:
+
+```bash
+mkdir -p "$HOME/projects"
+cd "$HOME/projects"
+git clone https://github.com/davidyytan/git-tools.git
+cd git-tools
 ./install.sh
 ```
+
+Keep the tool checkout in place: installation is editable. See [installation](../../README.md#install) for PATH/completion help.
 
 Restart the shell after installation (`uv tool update-shell` if needed), then run:
 
@@ -21,68 +38,69 @@ git-tools --help
 git-tools settings
 ```
 
-Choose a provider, credentials, and model if you want generated commit/PR prose. `init` and the CI engine do not need an LLM. Fixed workflow titles are deterministic, but `git-tools pr` still uses your configured provider to generate the description. The fixed Git messages below are deliberate: use them to reproduce the version sequence. As an alternative after staging a real change, preview with `git-tools commit --no-commit --no-copy`, then `git-tools commit` to generate and **create** a commit. Do not run both that command and the example `git commit` for the same change. Review the generated Conventional Commit subject.
+Configure a [provider](../configuration.md) for local generated commit/PR prose; `init` and versioning CI need no LLM. `git-tools pr` uses the provider for descriptions even with a fixed title. The explicit Git messages below keep the version sequence reproducible. If using `git-tools commit` instead, remember it creates a commit by default: do not also run the example `git commit` for that change. See [CLI usage](../usage.md) for preview options.
 
-In Azure DevOps create a project/repository with **no initial README**. Ensure you can push branches, create/complete PRs, create a YAML pipeline, and administer its permissions (or enlist an administrator). Configure Git authentication using your organization's approved Azure Repos method. The pipeline itself needs no bot account, PAT, or SSH key: it uses the automatic Build Service identity. Read [platform setup](setup.md) for credential/key-generation details. In organization/project **Pipelines → Settings**, enable **Limit job authorization scope to current project for non-release pipelines** before granting service permissions.
+In Azure DevOps create a project/repository with **no initial README**. Ensure you can push branches, create/complete PRs, create a YAML pipeline, and administer its permissions (or enlist an administrator). Configure Git authentication using your organization's approved Azure Repos method. The pipeline itself needs no bot account, PAT, or SSH key: it uses the automatic Build Service identity. Use [platform setup](setup.md) for the full credential and permission reference. In organization/project **Pipelines → Settings**, enable **Limit job authorization scope to current project for non-release pipelines** before granting service permissions.
 
 ## 2. Create the local repository and copy exactly one adapter
 
-From the `git-tools-cli` checkout, return to its parent so the two repositories are siblings:
+After restarting your shell, explicitly return to the chosen parent. Use **your own human name/email** for commits and **your own Azure organization/project/repository** for the origin below, not the upstream author's identity:
 
 ```bash
-cd ..
+cd "$HOME/projects"
 mkdir azure-flow-demo
 cd azure-flow-demo
 git init -b master
-git config user.name "Your Name"
-git config user.email "you@example.com"
-git remote add origin https://dev.azure.com/ORG/PROJECT/_git/REPOSITORY
+git config user.name "YOUR_NAME"
+git config user.email "YOUR_EMAIL"
+git remote add origin "https://dev.azure.com/YOUR_ORG/YOUR_PROJECT/_git/YOUR_REPOSITORY"
 git-tools init --version 0.0.1 --tag-format '$version'
 mkdir -p .azure/workflows
 ```
 
-Copy `.azure/workflows/version-bump-git-flow-variant-release-led.yml.example` from the separate git-tools checkout to `.azure/workflows/version-bump-git-flow-variant-release-led.yml` here (remove `.example`). Use your actual source-checkout path, for example:
+Copy the release-led adapter into this application. If you chose a different tool-checkout location, replace the absolute source path:
 
 ```bash
-cp ../git-tools-cli/.azure/workflows/version-bump-git-flow-variant-release-led.yml.example .azure/workflows/version-bump-git-flow-variant-release-led.yml
+cp "$HOME/projects/git-tools/.azure/workflows/version-bump-git-flow-variant-release-led.yml.example" \
+  .azure/workflows/version-bump-git-flow-variant-release-led.yml
 ```
 
 In that YAML set `GIT_TOOLS_REPO` to the public git-tools repository and `GIT_TOOLS_REF` to a supported branch or tag containing Azure subject normalization and the selected flow. The example uses `develop`; verify its support, or use an immutable supported tag for reproducible engine code. The adapter uses `git clone --branch`, so a bare commit SHA is not accepted. Do not activate a second adapter.
 
-Keep full history, tag fetching, and `persistCredentials: true`. Set:
+Keep full history, tag fetching, and `persistCredentials: true`. Replace these with **your own dedicated automation name/email**, matching the signing key used in step 4 (not your human author identity):
 
 ```yaml
-GIT_BOT_NAME: MyProject Versioning Automation
-GIT_BOT_EMAIL: myproject-versioning@automation.invalid
-GPG_SECURE_FILE: myproject-versioning-gpg-private.asc
+GIT_BOT_NAME: YOUR_AUTOMATION_NAME
+GIT_BOT_EMAIL: YOUR_AUTOMATION_EMAIL
 ```
 
-Create `README.md` containing `# Azure flow demo` and `.gitignore` containing `*-gpg-private.asc` on its own line. This deliberately minimal repository has no package manifests: `.cz.toml` is the only managed version file. `git-tools init` writes that file; it does not install pipelines, create branches, push, or tag. Confirm `.cz.toml` contains `version = "0.0.1"` and `tag_format = "$version"`.
+Create `README.md` containing `# Azure flow demo`. This deliberately minimal repository has no package manifests: `.cz.toml` is the only managed version file. `git-tools init` writes that file; it does not install pipelines, create branches, push, or tag. Confirm `.cz.toml` contains `version = "0.0.1"` and `tag_format = "$version"`.
 
-## 3. Generate the signing key, bootstrap, and push before pipeline creation
+## 3. Bootstrap and push before pipeline creation
 
-Follow [Generate the GPG Secure File](setup.md#2-generate-the-gpg-secure-file): generate a dedicated non-interactive signing key with the matching bot email, and export its armored private key to `myproject-versioning-gpg-private.asc`. Keep the key out of source control; verify the ignore rule before staging:
+Review the files and staged diff; no credentials belong in this commit. Configure the signing secret in step 4, after the pipeline exists:
 
 ```bash
-git check-ignore myproject-versioning-gpg-private.asc
 git status --short
-git add README.md .gitignore .cz.toml .azure/workflows
+git add README.md .cz.toml .azure/workflows
 git diff --cached
 git commit -m "Release 0.1.0"
 git push -u origin master
 ```
 
-The check-ignore command must print the private filename. The staged diff must contain no key or credentials. **Do not add another commit after `Release 0.1.0` before bootstrap runs.** At this point `master` still contains version `0.0.1`, and there is **no tag**. Push now: an empty Azure Repo cannot supply the branch/YAML needed by the pipeline picker. No PR is involved in this one-time bootstrap.
+**Do not add another commit after `Release 0.1.0` before bootstrap runs.** At this point `master` still contains version `0.0.1`, and there is **no tag**. Push now: an empty Azure Repo cannot supply the branch/YAML needed by the pipeline picker. No PR is involved in this one-time bootstrap.
 
-## 4. Create and authorize the Azure pipeline, then manually bootstrap
+## 4. Configure the Azure pipeline and run bootstrap
 
-Perform these Azure actions in order; detailed permission/key screens are in [platform setup](setup.md#4-add-the-azure-pipeline):
+Perform these Azure actions in order; see [platform setup](setup.md#4-create-the-azure-pipeline) for details:
 
 1. Open **Pipelines → New pipeline → Azure Repos Git**, select this repository, then **Existing Azure Pipelines YAML file**. Choose `master` and `.azure/workflows/version-bump-git-flow-variant-release-led.yml`. Save the definition (do not use a generated starter YAML or create a competing pipeline).
-2. Open **Pipelines → Library → Secure files → + Secure file** and upload `myproject-versioning-gpg-private.asc`. Its name must exactly match the YAML. Open its **Pipeline permissions** and authorize this pipeline specifically.
-3. Under **Project settings → Repositories → this repository → Security**, grant `<Project> Build Service (<Organization>)` **Read**, **Contribute**, **Create branch**, and **Create tag**. This is the project identity, not the collection-wide Build Service Accounts group. Resolve any inherited denies.
+2. In this pipeline's **Edit → Variables**, create **`BOT_GPG_SECRETKEY`** and enable **Keep this value secret**. Use the [copy block above](#already-have-a-signing-key-or-pipeline) for an existing key, or its linked optional create-first path. Paste its complete printed armored private key here with original line breaks; save. Do not put the key in YAML or a local export file.
+3. Under **Project settings → Repositories → this repository → Security**, grant `<Your Project> Build Service (<Your Organization>)` **Read**, **Contribute**, **Create branch**, and **Create tag**. Use the project identity, not the collection-wide group. If it is missing, follow the [initial-run identity caveat](setup.md#6-grant-build-service-permissions); inspect any partial publication before retrying.
 4. If repository access protection is enabled, approve this pipeline's access to this repository when prompted. Do not replace the job token with a PAT.
-5. Open the saved pipeline, choose **Run pipeline**, select **master**, and **Run**. If approvals pause it, authorize the Secure File/repository resources and resume. Wait for the complete run, including publication, to succeed.
+5. Open the saved pipeline, choose **Run pipeline → master → Run**. Approve repository access if prompted and wait for the complete run, including publication, to succeed.
+
+The adapter has **no passphrase input**: use only an approved unattended automation key, never your personal key. Use a fresh disposable hosted agent and restrict YAML/secret access. Never log the multiline key or enable tracing; masking does not reliably hide its individual lines. No export file is needed, but GPG stores the imported key in the agent keyring. See [operational safety](setup.md#operational-safety-and-limitations).
 
 The first push is not retroactively triggered by creating a pipeline. A manual run of the latest bootstrap commit is required. Expected result: a signed bot bump commit changes `.cz.toml` from `0.0.1` to stable **`0.1.0`**, and signed tag **`0.1.0`** is published. Pull and fetch before doing anything else:
 
@@ -479,3 +497,43 @@ Final expected checkpoints for this exact serial example:
 | Ordinary next-cycle feature | `0.3.0-alpha.5` | yes |
 
 All tags in this example use the bare version, with no `v` prefix. If using a real application with auxiliary version files, preserve the intended version consistently in those files during conflict resolution too. `.cz.toml` remains the authority; see [versioning](../versioning.md) and [publication/recovery](../publication.md) before repairing partial failures.
+
+## Mode Policy and Edge Cases
+
+Release-led lets `release/X.Y.Z` select the final release line; human stabilization changes are direct pushes. Use [Release-led — Reviewed](release-led-reviewed-walkthrough.md) for required inner PRs. These rules generalize the concrete journey; optional alternatives are not extra steps to run in that sequence.
+
+### Feature and Bugfix Policy
+
+Most feature/bugfix PRs into develop use Conventional Commit titles and create/continue tagged alphas. On a fresh develop branch matching stable, the first real PR may instead use `Start X.Y.Z` while its source commit remains Conventional Commit based. An ordinary `feat` from stable also selects the next minor alpha, as demonstrated above.
+
+### Release-Line Policy
+
+The **release branch name selects the target tuple**. Creation alone does not open RC. Unlike classic, cutting a release does **not require** a next-cycle Start on develop: develop can continue its current alpha line independently. To explicitly isolate the next cycle, use a real develop PR with `git-tools pr --base develop --start-pr --workflow-version A.B.C`, where `A.B.C` is an exact valid forward tuple. Complete it as `Start A.B.C` to obtain tagged `A.B.C-alpha.0`; a Backmerge title must not be used to open a cycle.
+
+### Release Stabilization and Promotion
+
+The first meaningful Conventional Commit on `release/X.Y.Z` opens `X.Y.Z-rc.0`; later meaningful commits continue RC on that locked line. With no real stabilization change, an **alternative** empty opener is `git commit --allow-empty -m "chore: open release"`; do not run it in addition to a real fix just to imitate the example.
+
+Promote the expected RC with `Release X.Y.Z`. Integrate any newer master before promotion as described in step 17, retaining real fixes and the intended candidate version. Stop if the candidate target has already shipped rather than forcing a stale line.
+
+### Release Backmerge
+
+Use `Backmerge Release X.Y.Z`. If develop already has an ahead alpha, preserve that line; meaningful unique release fixes advance it once. Version-only/no-op integration can leave the version unchanged. If develop is not ahead, a backmerge may catch it up to stable `X.Y.Z` without tagging. A later `Start A.B.C` opens a new develop cycle when wanted.
+
+Follow steps 11–12 to synchronize the retained source and preserve its untagged preparation bump/ancestry. Resolve `.cz.toml` and all managed project version fields consistently by intended develop policy, not lexical string order. Do not promote a backmerge-prepared source to master again.
+
+### Hotfix Stabilization and Promotion
+
+Create `hotfix/<name>` from updated stable master. Branch creation alone opens no RC. The first meaningful Conventional Commit selects the next patch RC; later fixes advance that same line. If no real fix is needed, an empty `chore: open release` is accepted as an optional opener. Integrate newer master before promotion and use final subject `Hotfix X.Y.Z`.
+
+### Hotfix Backmerge
+
+Use `Backmerge Hotfix X.Y.Z`, where `X.Y.Z` is the historical promoted patch. After preparation use `git-tools pr --backmerge-hotfix-pr --workflow-version X.Y.Z` explicitly; its source may now carry an alpha instead. The same ahead-alpha, stable-catch-up, no-op, and no-tag rules as release backmerge apply. Keep the source until integration completes.
+
+### Merge Strategy
+
+Ordinary PRs support squash or merge commits with their final subject equal to the PR title. Prohibit rebase. The synchronization and boundary-backmerge steps here specifically require **Merge (no fast-forward)**; do not squash their parents or untagged version anchors. A supported engine normalizes Azure's optional `Merged PR <id>:` prefix.
+
+### Synchronization Policy
+
+Human synchronization/stabilization changes can be pushed directly in this mode. Preserve exact preparation subjects where specified, particularly `chore: merge develop for backmerge`, which selects special no-tag behavior before normal release/hotfix line checks. Wait for source CI and pull/fetch before generating promotion/backmerge text. Use the reviewed guide if those human changes must all pass through inner PRs.

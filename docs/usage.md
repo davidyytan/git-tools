@@ -11,7 +11,14 @@ git-tools --version         # Installed git-tools version (also -V)
 git-tools commit --help     # Options for one command
 ```
 
-Top-level `git-tools --version` (or `git-tools -V`) prints `git-tools VERSION` and exits. This is the tool's own installed package version from `importlib.metadata.version("git-tools")`, using metadata built from `pyproject.toml`, not the current repository's release version. Package metadata may normalize `0.2.0-alpha.1` to `0.2.0a1`; when package metadata is unavailable (for example, in an uninstalled checkout), the display is `git-tools unknown`. This display does not change `.cz.toml`'s sole authority for bumps and tags.
+`git-tools --version` prints the installed **tool version**, not your application's release version. Your application version comes from `.cz.toml`.
+
+<details>
+<summary>How the tool version is displayed</summary>
+
+The value comes from `importlib.metadata.version("git-tools")`, using metadata built from `pyproject.toml`. Package metadata may normalize `0.2.0-alpha.1` to `0.2.0a1`. An uninstalled checkout without package metadata shows `git-tools unknown`.
+
+</details>
 
 Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. The `settings` command has its own terminal-dependent setup/edit behavior described below.
 
@@ -25,6 +32,23 @@ Bare `git-tools` requires both stdin and stdout to be terminals to open the menu
 | `settings` | Edits saved user settings | Writes `~/.git-tools/settings.env`; model discovery can contact the provider |
 
 Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first, and check the [current destination/profile limitations](configuration.md#current-limitations) before sending it. Initialization and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
+
+## Everyday commands
+
+Run these in the application repository. Stage only the changes you intend to describe:
+
+```bash
+git status --short
+git add path/to/reviewed-file             # Replace with your actual reviewed path.
+git-tools commit --no-commit --no-copy    # Preview; still sends content to your provider.
+git-tools commit                         # Generate again and CREATE a commit.
+git-tools pr --base develop               # Generate PR text; create the hosted PR yourself.
+git-tools bump --dry-run                  # Preview version changes without writing.
+```
+
+Configure a provider with `git-tools settings` before AI generation. Do not run both `git-tools commit` and a separate `git commit` for the same change. AI generation may send repository content to the provider; init and bump do not need a provider.
+
+The sections below are reference material: go directly to [`commit`](#commit), [`issue` / `pr`](#issue-and-pr), [`bump`](#bump), [`init`](#init), or [`settings`](#settings-name-value).
 
 ## Shared generation options
 

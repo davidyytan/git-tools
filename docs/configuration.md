@@ -8,7 +8,17 @@
 git-tools settings
 ```
 
-Choose **Provider** for a continuous setup: provider → credentials/endpoint → main model → OpenRouter upstream (with available price, context, quantization, caching and uptime metadata, cheapest first) or Kimi thinking (off, on or a declared tier) → reasoning effort for the other supported providers. Most current choices are preselected, but the Kimi tier-only case has a [known default-selection defect](#current-limitations). A blank key keeps an existing/default key. Back retains pending choices and revisits the preceding step; canceling discards the whole unfinished setup. Choices are saved together only after completing the flow.
+Choose **Provider** and follow the prompts:
+
+1. Select your provider.
+2. Enter its API key using the masked prompt and confirm its endpoint.
+3. Choose the main model.
+4. Choose routing or thinking/reasoning options when offered.
+5. Complete the flow to save.
+
+**Before generation:** keep the intended endpoint explicitly nonblank. Known [destination/profile defects](#current-limitations) can otherwise route content to an unintended host. Check the endpoint again after switching providers. For a saved Kimi tier, explicitly select the intended tier rather than blindly accepting the picker's default.
+
+A blank API-key prompt keeps an existing/default key. **Back** revisits the previous step; canceling discards the unfinished setup. The full wizard saves only when completed. The sections below explain provider-specific options and advanced configuration.
 
 ```bash
 git-tools settings provider                     # Interactive provider selector and setup
@@ -31,6 +41,10 @@ Named-provider commands automatically use the wizard in a terminal and retain no
 | `anthropic` (`claude`) | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | `claude-opus-5-5` |
 
 `kimi` and `kimicode` are aliases for the retained `kimicli` storage key; `router`, `proxy`, `claude`, and `dashscope`/`alibaba` are also accepted. The table records repository defaults, not current model availability or account access. All generation clients use OpenAI-compatible chat completions; Anthropic is also called through that compatibility interface, not its native Messages API. Confirm endpoint support and parameter acceptance with your service.
+
+### Provider-specific request behavior
+
+You can skip this section for ordinary setup. It explains which request parameters the clients send; model availability and parameter support still depend on your service.
 
 The implementation classifies nonempty OpenAI-platform model IDs as reasoning-capable except IDs beginning with `gpt-3`, `gpt-4`, `chatgpt-`, `o1-mini` or `o1-preview`, or containing `-chat` (case-insensitive). For models classified as reasoning-capable, it omits temperature and sends a configured effort other than `none`. Unlisted OpenAI-platform IDs therefore receive a configured tier unless excluded; this is a client policy, not a guarantee that every server/model accepts it. CLIProxyAPI sends configured temperature and only an explicitly configured reasoning tier for IDs classified as OpenAI-family reasoning models by the repository's non-reasoning exclusions. ACRC and Copilot use the same OpenAI-family reasoning classification before forwarding a configured `reasoning_effort`; acceptance is endpoint/model-dependent. `none` omits the tier for OpenAI, CLIProxyAPI, Copilot, ACRC, Qwen and Kimi; OpenRouter forwards `none` as a tier. The Anthropic client omits temperature, sends `thinking.type=disabled` for `none`, and otherwise forwards a configured effort. Whether the service applies those fields is outside local validation. See the Kimi catalog precedence below.
 

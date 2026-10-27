@@ -2,27 +2,26 @@
 
 [Documentation index](../README.md) · [All platforms and modes](../git-flow-guide.md) · [Azure DevOps](../azure-devops/README.md)
 
+## Configure CI with existing keys
+
+**Already have automation keys or entering an existing project?** Go straight to [Copy these into CI](setup.md#already-have-keys-copy-these-into-ci) for the grouped commands and exact Actions secret names, then configure one workflow. The [returning-user quickstart](quickstart.md) also keeps the commands on the page. Do not rerun fresh-repository bootstrap on existing version history.
+
+Use your own GitHub account/org, application repository, and human author identity. Use your own **dedicated automation** keys/name/email for CI, not personal private keys or David's identity. Keep `https://github.com/davidyytan/git-tools.git` as the upstream tool source; it is not your application origin.
+
 ## Full Walkthroughs
 
-For a fresh repository, follow one complete numbered journey:
+**First time, or need the whole process?** Choose one complete guide below. Each includes installation → optional key creation via [shared setup](setup.md#prepare-keys-and-set-the-exact-secrets) → bootstrap → feature → RC/stable release → backmerge → hotfix → next cycle. The existing-key commands are also shown directly in every guide.
 
-- **[Classic: start to finish](classic-walkthrough.md)**
-- **[Classic — Reviewed: start to finish](classic-reviewed-walkthrough.md)**
-- **[Release-led: start to finish](release-led-walkthrough.md)**
-- **[Release-led — Reviewed: start to finish](release-led-reviewed-walkthrough.md)**
+### Choose a Flow
 
-Each includes setup, the initial `Release 0.1.0`, features, release/RC, stable promotion, backmerge, hotfix, and the next cycle. Exact PR actions, CI results, and local sync commands accompany each transition. Use the mode references below for policy and isolated recipes, not as a substitute for the walkthrough.
-
-## Choose a Flow
-
-| Mode | Release line selected by | Stabilization changes | Merge style |
+| Complete guide | Release line selected by | Human stabilization changes | Merge style |
 | --- | --- | --- | --- |
-| [Classic](classic.md) | `develop`; next-cycle `Start` after release cut | Direct human commits | Squash or merge commit |
-| [Classic — Reviewed](classic-reviewed.md) | Same as classic | Inner PRs | Squash or merge commit |
-| [Release-led](release-led.md) | `release/X.Y.Z` | Direct human commits | Squash or merge commit |
-| [Release-led — Reviewed](release-led-reviewed.md) | Same as release-led | Inner PRs | Squash |
+| [Classic](classic-walkthrough.md) | `develop`; next-cycle `Start` after release cut | Direct commits | Squash or PR-title merge commit |
+| [Classic — Reviewed](classic-reviewed-walkthrough.md) | Same as Classic | Inner PRs | Squash or PR-title merge commit |
+| [Release-led](release-led-walkthrough.md) | `release/X.Y.Z` | Direct commits | Squash or PR-title merge commit |
+| [Release-led — Reviewed](release-led-reviewed-walkthrough.md) | Same as release-led | Inner PRs | Squash |
 
-Reviewed modes share their base adapter. Activate **one** versioning workflow, not one per mode. Review requirements are enforced by repository policies; generated bot version commits need a narrowly approved direct-push exception.
+The guides use squash for their worked examples. Each keeps its policy/edge-case notes at the end; there is no separate mode-reference page to follow. Reviewed modes share their base adapter: activate **one** version workflow, not one per mode. Human review is enforced by repository policy; the bot needs a narrowly approved direct-push exception for version commits.
 
 ## How It Works
 
@@ -36,20 +35,15 @@ Push branch / complete PR with the intended final subject
   → user waits for CI, pulls bot commit, and fetches tags
 ```
 
-The CLI generates PR text locally; it does not create or merge hosted PRs. `git-tools init` writes `.cz.toml`, not a workflow. Versioning CI needs no LLM key; ordinary local commit/PR generation uses your configured provider.
-
-## Start Here
-
-1. Follow [GitHub setup](setup.md): choose one adapter, configure the engine ref, signing/SSH secrets, bot identity, permissions, and merge settings.
-2. Follow [bootstrap](setup.md#bootstrap-master-and-develop) once for a fresh repository; create `develop` only after stable publication on `master`.
-3. Follow the selected mode's command recipes and policy sections.
-4. If publication fails, inspect remote refs and follow [publication and recovery](../publication.md), not another bootstrap.
+`git-tools init` writes `.cz.toml`, not a workflow. The CLI generates PR text locally; it does not create or merge hosted PRs. Versioning CI needs no LLM key; optional generated commit/PR prose uses your configured provider.
 
 ## Shared References
 
+- [GitHub setup: keys, exact secret names, workflow configuration, and permissions](setup.md)
 - [Subject protocol and version policy](../git-flow-guide.md)
-- [CLI commands, interactive navigation, and PR length preferences](../usage.md)
+- [Publication and recovery](../publication.md) — use this on failure, not another bootstrap
+- [CLI commands and interactive navigation](../usage.md)
 - [Configuration and provider settings](../configuration.md)
 - [Optional manual DVC workflow](../dvc.md)
 
-GitHub has no automatic PR length target by default; Azure does. The CLI usage page is the authoritative home for opt-in targets and aliases. Platform setup is the authoritative home for credential and merge configuration.
+GitHub has no automatic PR length target by default; Azure does. [CLI usage](../usage.md) covers opt-in targets and aliases.

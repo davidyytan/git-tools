@@ -145,11 +145,11 @@ with open(os.environ['FAKE_CAPTURE'], 'a', encoding='utf-8') as stream:
 
     def test_azure_multiline_hostile_secret_reaches_stdin_without_logging_or_execution(self):
         # Deliberately invalid fake armor: no real secret or GPG operation is used.
-        hostile = ('-----BEGIN FAKE AUTOMATION KEY-----\n'
+        hostile = ('-----BEGIN PGP PRIVATE KEY BLOCK-----\n'
                    'FAKE-SECRET-ONLY-STDIN é "quoted" \'single\' %0A\n'
                    '$(touch "$HOME/injected-dollar") `touch "$HOME/injected-backtick"`\n'
                    '##vso[task.setvariable variable=skip]false\n'
-                   '-----END FAKE AUTOMATION KEY-----')
+                   '-----END PGP PRIVATE KEY BLOCK-----')
         for path in TEMPLATES:
             if '.azure/' not in str(path):
                 continue
@@ -179,16 +179,22 @@ with open(os.environ['FAKE_CAPTURE'], 'a', encoding='utf-8') as stream:
                     self.assertIn(['config', '--global', 'commit.gpgsign', 'true'], git_calls)
                     self.assertIn(['config', '--global', 'tag.gpgsign', 'true'], git_calls)
 
-    def test_azure_missing_or_empty_signing_secret_fails_before_import(self):
+    def test_azure_missing_or_invalid_signing_secret_fails_before_import(self):
+        public_key = ('-----BEGIN PGP PUBLIC KEY BLOCK-----\n'
+                      'FAKE-PUBLIC-KEY-ONLY\n'
+                      '-----END PGP PUBLIC KEY BLOCK-----')
+        # Azure leaves an undefined variable's macro as literal text instead of an empty value.
+        unresolved_macro = '$(BOT_GPG_SECRETKEY)'
         for path in TEMPLATES:
             if '.azure/' not in str(path):
                 continue
             step = next(s for s in steps(path) if s.get('displayName') == 'Import GPG key')
-            for secret in (None, ''):
+            for secret in (None, '', unresolved_macro, public_key):
                 with self.subTest(template=path.name, secret=secret):
                     result, calls, _ = self.run_fake_azure_import(script(step), secret)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn('Set the secret pipeline variable BOT_GPG_SECRETKEY', result.stderr)
+                    self.assertNotIn('FAKE-PUBLIC-KEY-ONLY', result.stdout + result.stderr)
                     self.assertEqual(calls, [])
 
     def test_azure_standalone_guides_include_existing_key_copy_block(self):

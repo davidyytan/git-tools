@@ -44,6 +44,31 @@ class PipelineSafetyTests(unittest.TestCase):
                     if text:
                         subprocess.run(['bash', '-n'], input=text, text=True, check=True)
 
+    def test_templates_select_the_same_supported_engine_ref(self):
+        # Keep both hosts and flow variants on the engine that contains the
+        # split bump strategy and publication helper; master predates those.
+        for path in TEMPLATES:
+            data = yaml.safe_load(path.read_text())
+            settings = data['variables'] if '.azure/' in str(path) else data['env']
+            with self.subTest(template=path):
+                self.assertEqual(settings['GIT_TOOLS_REPO'], 'https://github.com/davidyytan/git-tools.git')
+                self.assertEqual(settings['GIT_TOOLS_REF'], 'develop')
+
+    def test_standalone_guides_distinguish_stable_catchup_from_ahead_alpha(self):
+        for platform in ('github', 'azure-devops'):
+            paths = sorted((ROOT / 'docs' / platform).glob('*-walkthrough.md'))
+            self.assertEqual(len(paths), 4)
+            for path in paths:
+                text = path.read_text()
+                with self.subTest(guide=path):
+                    section = text.split('### Stable catch-up when develop is not ahead\n', 1)[1]
+                    section = section.split('\n### ', 1)[0]
+                    self.assertIn('ahead-alpha case only', section)
+                    self.assertIn('already-published stable target `X.Y.Z`', section)
+                    self.assertIn('only the managed version fields', section)
+                    self.assertIn('skips because the boundary already matches stable', section)
+                    self.assertIn('tests/test_backmerge_catchup.py', section)
+
     def test_hostile_subjects_and_errors_are_literal_log_data(self):
         hostile = 'feat: $(uname -s) `id` "quoted" %0A\n##vso[task.setvariable variable=skip]false\n::error::fake'
         for path in TEMPLATES:

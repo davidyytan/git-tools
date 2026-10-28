@@ -129,6 +129,8 @@ Preserve the original multiline block. Do not add quotes, flatten it, or replace
 
 The template maps this secret into the import step's environment and imports it through stdin. **If your pipeline uses an older Secure File-based adapter, update its signing step to this template first; adding the variable alone does not change the old adapter.** Do **not** put the secret value or an empty same-named default in YAML. There is no separate secret-authorization step. Configure the secret on **each pipeline definition**, even when reusing an approved automation key. One key per project or repository gives stronger rotation/revocation isolation.
 
+**Migrating from Secure Files?** Their resource permissions, approvals, and checks do not transfer to a pipeline-local secret variable. If your signing policy relies on those gates, retain the Secure File-based signing step or adapt the workflow to an appropriately protected secret variable group/template and verify equivalent controls before switching. Creating the variable alone is not a policy-preserving migration.
+
 `BOT_GPG_SECRETKEY` signs commits/tags; the Build Service token authenticates pushes. `BOT_SSH_SECRETKEY` is not used on Azure.
 
 ## 6. Grant Build Service Permissions

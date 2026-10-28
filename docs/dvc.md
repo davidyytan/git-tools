@@ -255,9 +255,7 @@ uv run dvc exp run -f --name "<name>-$(date +%Y%m%d-%H%M%S)"
 Override params:
 
 ```bash
-uv run dvc exp run -f \
-  --name "<name>-$(date +%Y%m%d-%H%M%S)" \
-  -S <group>.<param-key>=<value>
+uv run dvc exp run -f --name "<name>-$(date +%Y%m%d-%H%M%S)" -S <group>.<param-key>=<value>
 ```
 
 Compare:

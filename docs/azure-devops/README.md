@@ -2,54 +2,48 @@
 
 [Documentation index](../README.md) · [All platforms and modes](../git-flow-guide.md) · [GitHub](../github/README.md)
 
+## Existing Keys or Pipeline? Start Here
+
+- **[Copy your existing automation key into CI](setup.md#already-have-an-automation-key-copy-it-into-ci)** — two commands, exact secret pipeline variable **`BOT_GPG_SECRETKEY`**, no local export file or SSH key.
+- **[Setup and pipeline permissions](setup.md)** — shared YAML, optional key creation, Build Service identity, and merge settings. For existing release history, do not repeat bootstrap.
+- **[Returning-user quickstart](quickstart.md)** — compact key-copy and Classic checklist; includes a separately marked fresh-repository bootstrap.
+
+Versioning CI uses Azure's Build Service token for pushes and your automation GPG key for signing. It needs no Azure bot user, SSH key, PAT, or LLM key. Local AI commit/PR prose separately uses your configured provider.
+
 ## Full Walkthroughs
 
-For a fresh repository, follow one complete numbered journey:
+For a new repository or a complete release example, choose **one** detailed guide. Each contains the existing-key copy commands, installation and fresh bootstrap, exact PR actions, expected versions/tags, local sync commands, and its mode policy/edge cases:
 
-- **[Classic: start to finish](classic-walkthrough.md)**
-- **[Classic — Reviewed: start to finish](classic-reviewed-walkthrough.md)**
-- **[Release-led: start to finish](release-led-walkthrough.md)**
-- **[Release-led — Reviewed: start to finish](release-led-reviewed-walkthrough.md)**
+| Complete guide | Release line selected by | Human stabilization changes |
+| --- | --- | --- |
+| **[Classic](classic-walkthrough.md)** | `develop`; required next-cycle `Start` after release cut | Direct commits |
+| **[Classic — Reviewed](classic-reviewed-walkthrough.md)** | Same as classic | Inner PRs |
+| **[Release-led](release-led-walkthrough.md)** | `release/X.Y.Z`; optional next-cycle `Start` | Direct commits |
+| **[Release-led — Reviewed](release-led-reviewed-walkthrough.md)** | Same as release-led | Inner PRs |
 
-Each includes ordered Azure setup and manual pipeline authorization/run, the initial `Release 0.1.0`, features, release/RC, stable promotion, backmerge, hotfix, and the next cycle. Exact PR actions, pipeline results, and local sync commands accompany each transition. Use the mode references below for policy and isolated recipes, not as a substitute for the walkthrough.
+Reviewed modes share their base adapter: activate **one** versioning pipeline, not one per mode. Review requirements are repository policies; bot version commits need a narrowly approved direct-push exception.
 
-## Choose a Flow
-
-| Mode | Release line selected by | Stabilization changes | Merge style |
-| --- | --- | --- | --- |
-| [Classic](classic.md) | `develop`; next-cycle `Start` after release cut | Direct human commits | Squash or merge commit |
-| [Classic — Reviewed](classic-reviewed.md) | Same as classic | Inner PRs | Squash or merge commit |
-| [Release-led](release-led.md) | `release/X.Y.Z` | Direct human commits | Squash or merge commit |
-| [Release-led — Reviewed](release-led-reviewed.md) | Same as release-led | Inner PRs | Squash for stabilization; merge commits for walkthrough synchronization/backmerges |
-
-Reviewed modes share their base adapter. Activate **one** versioning pipeline, not one per mode. Review requirements are enforced by repository policies; generated bot version commits need a narrowly approved direct-push exception.
+Ordinary PRs use the guide's stated squash/merge style. The Azure guides require **Merge (no fast-forward)** for their synchronization and boundary-backmerge checkpoints to preserve ancestry and untagged version anchors. Prohibit rebase; do not apply a blanket squash-only policy to those steps.
 
 ## How It Works
 
 ```text
-Push branch / complete PR with the intended final subject
-  → Pipelines checks out application history and tags
-  → clones the selected git-tools engine branch/tag
-  → decides skip / invalid / bump
-  → signs version commit and, when applicable, tag
-  → publishes using the project Build Service identity
-  → user waits for CI, pulls bot commit, and fetches tags
+Push / complete PR with the intended final subject
+  → check out application history and tags
+  → clone the supported git-tools engine branch/tag
+  → decide skip / invalid / bump
+  → sign version commit and, when applicable, tag
+  → publish using the project Build Service identity
+  → wait for CI, pull bot commit, and fetch tags
 ```
 
-The CLI generates PR text locally; it does not create or merge hosted PRs. `git-tools init` writes `.cz.toml`, not a pipeline. Versioning CI needs no LLM key; ordinary local commit/PR generation uses your configured provider.
-
-## Start Here
-
-1. Follow [Azure DevOps setup](setup.md): choose one adapter, configure the engine ref, signing Secure File, bot identity, project-scoped Build Service permissions, and merge settings.
-2. Follow [bootstrap](setup.md#bootstrap-master-and-develop) once for a fresh repository. Push `master`, create and authorize the pipeline, then run it manually; the earlier push does not trigger a newly created pipeline retroactively. Create `develop` only after stable publication on `master`.
-3. Follow the selected mode's command recipes and policy sections.
-4. If publication fails, inspect remote refs and follow [publication and recovery](../publication.md), not another bootstrap.
+`git-tools init` writes `.cz.toml`, not a pipeline. `git-tools pr` generates text; it does not create or complete hosted PRs. Azure's first bootstrap push precedes pipeline creation, so it needs a manual run. Create develop only after stable publication on master. On failure, inspect remote refs and follow [publication/recovery](../publication.md), not another bootstrap.
 
 ## Shared References
 
 - [Subject protocol and version policy](../git-flow-guide.md)
-- [CLI commands, interactive navigation, and PR length preferences](../usage.md)
+- [CLI commands and PR length preferences](../usage.md)
 - [Configuration and provider settings](../configuration.md)
 - [Optional manual DVC workflow](../dvc.md)
 
-Azure descriptions have a 4,000 UTF-16-unit limit; origin detection enables the CLI length target by default. The CLI usage page is the authoritative home for limit preferences and overrides. Platform setup is the authoritative home for credential and merge configuration.
+Azure descriptions have a **4,000 UTF-16-unit** limit; Azure origin detection enables the CLI target. Inspect the final text before pasting. Credential details live in setup; mode policy and concrete journeys live together in the four complete guides.

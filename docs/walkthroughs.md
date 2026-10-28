@@ -2,7 +2,7 @@
 
 [Project README](../README.md) · [Documentation index](README.md) · [Flow comparison](git-flow-guide.md)
 
-**Start here to take a fresh repository through a complete release lifecycle.** These are numbered journeys with concrete changes and versions, not collections of independent command recipes.
+Each guide below contains an existing-key copy block, a complete worked release/hotfix process, and its flow policy. **Already have keys or an initialized project?** Use the copy block and jump to the relevant stage; do not rerun fresh-project bootstrap. For CI configuration without the full example, use [GitHub setup](github/setup.md) or [Azure setup](azure-devops/setup.md).
 
 Choose your hosting platform and **one** mode:
 
@@ -28,10 +28,10 @@ Every transition states the branch, PR target and exact title where required, ho
 
 ## Read before following the commands
 
-- These walkthroughs are for **fresh repositories**, not migration or repair of an existing release history. Do not repeat bootstrap in an initialized project.
-- Follow one walkthrough in order. Do not mix its merge settings or version-resolution steps with another platform's example: the GitHub walkthroughs demonstrate develop-based integration PRs, while Azure's examples retain source ancestry with merge-commit backmerges.
+- The numbered worked examples start with **fresh repositories**. Their bootstrap is not a migration or repair procedure for existing release history. Existing-key retrieval and the policy sections can be used independently.
+- Follow one walkthrough in order. Do not mix its merge settings or version-resolution steps with another platform's example: GitHub uses squash-safe develop-based integration PRs for backmerges, but reviewed current-master synchronization before promotion requires **Create a merge commit** with the stated Conventional Commit subject and rules that allow merge commits. Azure's examples retain source ancestry with merge-commit backmerges.
 - Stop at every editing, review, CI, and verification checkpoint. The pages are not scripts to paste wholesale.
 - Keep release/hotfix branches until promotion **and** backmerge finish. Squash merges and untagged preparation bumps need the specific history safeguards documented in the chosen walkthrough.
 - The version sequences have been checked against the local engine. Hosted permissions, signing, branch protections, and publication still need validation in a test repository.
 
-For policy and individual recipes after completing a walkthrough, use the [flow references](git-flow-guide.md). For failed publication, stop and consult [recovery](publication.md); do not force-push or bootstrap again.
+Mode-specific policy and edge cases are included in each complete guide; the [flow comparison](git-flow-guide.md) explains shared rules. For failed publication, stop and consult [recovery](publication.md); do not force-push or bootstrap again.

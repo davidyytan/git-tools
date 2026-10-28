@@ -4,7 +4,17 @@ This guide covers contributor-facing console conventions. For CLI commands and i
 
 ## Markdown Source Formatting
 
-Do not hard-wrap Markdown prose. Keep each paragraph on one source line, regardless of length, and use editor soft wrapping for readability. Keep each list item's prose paragraph on one source line too; retain line breaks only where Markdown structure or code examples require them (headings, separate list items, tables, and code blocks). Do not add forced prose line breaks with trailing spaces, backslashes, or `<br>` tags.
+Do not hard-wrap Markdown prose. Keep each paragraph on one source line, regardless of length, and use editor soft wrapping for readability. Keep each list item's prose paragraph on one source line too; retain line breaks only where Markdown structure or code examples require them (headings, separate list items, tables, and code blocks). Do not add forced prose line breaks with trailing spaces, backslashes, or `<br>` tags. Apply the same rule to plain-text documentation and prose comments in workflows and configuration examples. Keep shell commands on one source line unless line breaks are syntactically required, as with heredocs or control flow.
+
+## User-Facing Guides
+
+- Lead with the reader's common task. Existing-key retrieval comes before optional key creation; existing projects must not be sent through fresh-repository bootstrap.
+- Keep a short command group **in each standalone guide and copyable workflow example** where readers need it. Repeating three useful commands is better than making readers follow several links.
+- Put the exact secret/variable name and its settings destination beside the command that produces its value. Distinguish private-secret storage from public-key registration.
+- State where commands run, what placeholders to replace, and what result to check. Do not assume a working directory survives a shell restart.
+- Use the reader's own human identity, automation identity, and application repository. Label the upstream tool-source URL separately.
+- Avoid extra private-key export files when CI accepts pasted text. Keep important warnings at the relevant step; place advanced policy after the main path.
+- Consolidate overlapping explanations, not necessary steps. A beginner should have a complete process, and a returning reader should be able to enter in the middle.
 
 ## Console Width
 

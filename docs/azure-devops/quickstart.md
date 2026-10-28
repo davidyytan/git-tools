@@ -1,33 +1,50 @@
-# Azure DevOps quickstart
+# Azure DevOps quickstart — returning-user checklist
 
-**Fresh repository → first Classic release.** Requires [git-tools installed](../../README.md#install), Git author configured, an empty Azure Repo, and permission to configure Pipelines/security. No LLM account, PAT, bot user, or SSH key is needed for versioning CI.
+**Already have a repository or keys?** Configure the signing secret below and check [YAML/permissions](setup.md); skip fresh-repository bootstrap for existing release history. New to this flow? Use the [complete Classic guide](classic-walkthrough.md) instead. This checklist assumes [git-tools installed](../../README.md#install), Git/GnuPG, and permission to configure Pipelines/security.
+
+## Existing Key → Pipeline Secret
+
+**Destination: Azure DevOps → Pipelines → your pipeline → Edit → Variables → New variable → `BOT_GPG_SECRETKEY` → enable “Keep this value secret”.** Select your **dedicated automation signing key**, not your personal key. Replace `YOUR_GPG_KEY_ID` with its long ID or full fingerprint from the first command before running the second:
+
+```bash
+gpg --list-secret-keys --keyid-format=long
+gpg --export-secret-key -a YOUR_GPG_KEY_ID  # → BOT_GPG_SECRETKEY (secret pipeline variable)
+```
+
+Paste the full armored private-key block with original line breaks; no export file is needed. Existing pipeline users can paste now; fresh-repo users paste after creating the pipeline in step 2. No need to recreate/register keys already configured. [Need a new automation key?](setup.md#2-choose-an-automation-signing-key)
+
+**No GPG passphrase input is configured.** Use only an approved unattended key. Never log or trace it or put it in YAML; multiline masking does not protect individual lines. Azure needs no SSH key, PAT, bot user, or LLM key for versioning CI. The steps below illustrate **fresh-repository bootstrap only**.
 
 ## 1. Prepare the repository and pipeline YAML
 
-Replace the checkout path and remote:
+This example keeps the editable tool checkout at **`$HOME/projects/git-tools`** and the application beside it. If you installed elsewhere, use that checkout's absolute path in `cp`; keep the tool checkout in place. Run these commands in a new application directory, not inside git-tools.
+
+Replace `YOUR_NAME`/`YOUR_EMAIL` with **your own human Git identity**, and the origin's `YOUR_ORG`/`YOUR_PROJECT`/`YOUR_REPOSITORY` with **your own Azure repository**. The upstream git-tools URL is only the tool source.
 
 ```bash
-GIT_TOOLS_DIR=/path/to/git-tools
+mkdir -p "$HOME/projects"
+cd "$HOME/projects"
 mkdir my-app && cd my-app
 git init -b master
-git remote add origin https://dev.azure.com/ORG/PROJECT/_git/REPOSITORY
+git config user.name "YOUR_NAME"
+git config user.email "YOUR_EMAIL"
+git remote add origin "https://dev.azure.com/YOUR_ORG/YOUR_PROJECT/_git/YOUR_REPOSITORY"
 git-tools init --version 0.0.1 --tag-format '$version'
 mkdir -p .azure/workflows
-cp "$GIT_TOOLS_DIR/.azure/workflows/version-bump-git-flow-classic.yml.example" \
-  .azure/workflows/version-bump-git-flow-classic.yml
+cp "$HOME/projects/git-tools/.azure/workflows/version-bump-git-flow-classic.yml.example" .azure/workflows/version-bump-git-flow-classic.yml
 ```
 
-Following [Azure setup](setup.md), prepare these before running CI:
+Before running CI, follow [Azure setup](setup.md):
 
-- In YAML, set `GIT_TOOLS_REPO`, a **supported engine branch/tag** in `GIT_TOOLS_REF`, `GIT_BOT_NAME`, `GIT_BOT_EMAIL`, and `GPG_SECURE_FILE`. A bare SHA is not supported by the example clone.
-- Generate/export the automation GPG key; keep the private export out of Git. Retain full history, tag fetching, and `persistCredentials: true` in YAML.
-- Enable project-scoped job authorization. The pipeline pushes as **`<Project> Build Service (<Organization>)`**, not a personal account.
+- Set YAML `GIT_TOOLS_REPO`, a **supported engine branch/tag** in `GIT_TOOLS_REF`, and **your own automation identity** in `GIT_BOT_NAME`/`GIT_BOT_EMAIL`. Keep full history, tags, and `persistCredentials: true`. A bare engine SHA is not supported by the example clone.
+- [Choose an existing automation signing key or create one first](setup.md#2-choose-an-automation-signing-key). In step 2 below, paste its printed armored private key into **pipeline secret variable `BOT_GPG_SECRETKEY`**. No local export file is needed. The adapter has **no passphrase input**; use only an approved unattended automation key, not your personal key.
+- Enable **Limit job authorization scope to current project for non-release pipelines** in organization/project **Pipelines → Settings**. Pushes use **`<Your Project> Build Service (<Your Organization>)`**.
 
-Activate **one** version pipeline. Protect `master`/`develop`; this Classic path permits human stabilization commits on `release/*` and `hotfix/*`. `init` does not install pipelines.
+Activate **one** version pipeline. Protect `master`/`develop`; Classic permits human stabilization commits on `release/*` and `hotfix/*`. `init` does not install pipelines.
 
-## 2. Bootstrap, then create and authorize the pipeline
+## 2. Bootstrap, then configure and run the pipeline
 
-Ensure credentials/private keys are ignored, then choose **one** staging command:
+Review the files before staging; never include credentials. Choose **one** staging command:
 
 ```bash
 git add -A  # If application files are already present.
@@ -41,9 +58,11 @@ git push -u origin master
 Set the repo default branch to `master`. **After this push**, in Azure DevOps:
 
 1. **Pipelines → New pipeline → Azure Repos Git → Existing Azure Pipelines YAML file**: choose `master` and the copied YAML; save.
-2. Upload the private GPG export under **Pipelines → Library → Secure files**, matching `GPG_SECURE_FILE`; authorize this pipeline and its repository access.
-3. Grant the project Build Service **Read, Contribute, Create branch, Create tag** on this repo. Scope any required protected-branch push exception to automation, not humans.
+2. In this pipeline's **Edit → Variables**, create **`BOT_GPG_SECRETKEY`**, enable **Keep this value secret**, and paste the complete armored private key from the copy block above. Preserve original line breaks; do not log the secret or put it in YAML. There is no Secure File upload or separate secret-authorization step.
+3. Grant the project Build Service **Read, Contribute, Create branch, Create tag** on this repo, and authorize repository access if prompted. If the identity is missing, follow the [first-run identity caveat](setup.md#6-grant-build-service-permissions). Scope any required protected-branch push exception to automation, not humans.
 4. **Run pipeline** manually on `master`. The earlier push is **not retroactive**. Wait for the bot commit and signed tag **`0.1.0`**; do not manually bump/tag or add another bootstrap commit.
+
+Use a fresh disposable hosted agent and restrict changes to authorized YAML/secrets. Azure's masking does not reliably hide individual lines of a multiline key; never print it or enable tracing. GPG imports into the agent keyring, even though no export file is created. See [operational safety](setup.md#operational-safety-and-limitations).
 
 ```bash
 git pull --ff-only origin master

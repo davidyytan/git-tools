@@ -2,238 +2,223 @@
 
 [GitHub guides](README.md) · [Documentation index](../README.md) · [CLI usage](../usage.md)
 
-## Before You Start
+Use this page to configure Actions for **your application repository**, whether it already exists or is new. For a complete fresh-repository journey, choose a [walkthrough](README.md#full-walkthroughs).
 
-- Read this setup before running local bootstrap commands.
-- The checked-in adapters assume branches named `master` and `develop`.
-- Initialize the local repository on `master`. For an empty GitHub repository, set its default branch to `master` after the first push, when that branch exists. For an existing repository, plan migration separately; do not rerun the fresh-repository bootstrap or overwrite its version configuration.
+## Already have keys? Copy these into CI
 
-## Copy and Configure the Workflow
-
-### Workflow file
-
-`git-tools init` writes `.cz.toml`; it does **not** install Actions workflows, create branches, configure repository settings/secrets, or push to GitHub. The active classic workflow in this source repository versions **git-tools itself**. It is not installed into your application by the CLI.
-
-Activate exactly one workflow by copying or renaming one example to a real `.yml` file in `.github/workflows/`:
-
-- `.github/workflows/version-bump-git-flow-variant-release-led.yml.example` -> `.github/workflows/version-bump-git-flow-variant-release-led.yml`
-- `.github/workflows/version-bump-git-flow-classic.yml.example` -> `.github/workflows/version-bump-git-flow-classic.yml`
-
-### Tool-source ref and bot identity
-
-The workflow clones `GIT_TOOLS_REPO` separately from the repository being versioned. Its `GIT_TOOLS_REF` selects the implementation of the version strategy, not your application's default branch. The supplied classic example currently uses `develop`; the release-led example uses `master`. Inspect and set this value explicitly before activation: the selected ref must contain `decide_version_strategy`, the bump runner, and the fixed-title/backmerge behavior described by these guides. Local edits or installing a newer CLI do not update that remote CI clone.
-
-For reproducible CI, use a maintained release tag that contains the required behavior rather than a moving development branch. The examples use `git clone --branch "$GIT_TOOLS_REF"`, which accepts a branch or tag, **not an arbitrary commit SHA**; checking out a SHA requires adapting the clone/fetch step. Keep exactly one version workflow active to avoid competing version commits and tags.
-
-Set `GIT_BOT_NAME` and `GIT_BOT_EMAIL` to your automation identity. Copy the chosen example from this repository:
-
-- [Classic workflow example](../../.github/workflows/version-bump-git-flow-classic.yml.example)
-- [Release-led workflow example](../../.github/workflows/version-bump-git-flow-variant-release-led.yml.example)
-
-### Prepare keys and set the exact secrets
-
-Use a dedicated automation identity, not your personal signing/private key. The commands below are instructions for **your local terminal**, not workflow steps. Never paste private keys into issues, chat, logs, or source files.
-
-#### 1. Choose your values
-
-Replace these descriptive placeholders before running commands; do not use the example text literally:
-
-| Placeholder | Replace with |
-| --- | --- |
-| `YOUR_GPG_KEY_FINGERPRINT` | Full fingerprint of the bot's secret signing key from the listing below (preferred over a short key ID) |
-| `YOUR_SSH_PRIVATE_KEY_PATH` | Path to the bot's existing private SSH key, e.g. `$HOME/.ssh/git_tools_bot_ed25519`; **not** its `.pub` file |
-| `YOUR_BOT_NAME` | Git author name for generated commits |
-| `YOUR_BOT_EMAIL` | Bot email matching the GPG identity; use a verified email on the bot's GitHub account for verification |
-| `YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG` | An actual git-tools branch/tag containing the required strategy; not your application branch and not a bare SHA |
-
-#### 2. Find and export the GPG private key
+**Destination: your application repository → Settings → Secrets and variables → Actions → New repository secret.** Use your own **dedicated automation** keys, not personal private keys. Run one command at a time: after listing, replace `YOUR_GPG_KEY_ID` with the selected bot key's full fingerprint (preferred) or long key ID; replace the SSH filename with your own automation key's filename before reading it.
 
 ```bash
 gpg --list-secret-keys --keyid-format=long
+# Actions secret BOT_GPG_SECRETKEY: copy the complete private-key block printed next.
+gpg --export-secret-key -a YOUR_GPG_KEY_ID
+# Actions secret BOT_SSH_SECRETKEY: copy the complete SSH private key printed next.
+cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY"
 ```
 
-Select the bot's signing key by its identity/email. The `sec` line contains its long key ID; the fingerprint line below it identifies the full key. Do not copy the example ID from someone else's instructions. If you have no automation key, create a dedicated signing key with `gpg --full-generate-key`, then list it again. The supplied adapter has no passphrase input: use an approved unattended automation key or adapt the workflow securely for passphrase handling.
+Paste each complete private key, including BEGIN/END markers, into its named secret. Run only in a private, unrecorded local terminal; never paste keys into chat, logs, or source files, and do not save an extra export file. Clipboard/terminal history may retain copied text. The supplied workflows have no GPG/SSH passphrase configured; protected keys need an [approved adaptation](#credential-permissions-and-signing-limitations).
 
-Export outside the checkout into a private directory:
+**Already registered the matching public keys and write access?** Keep that setup; no need to create or register keys again. Otherwise follow [public-key registration](#register-public-keys-only-if-needed). Need a new key? Use the [optional creation steps](#prepare-keys-and-set-the-exact-secrets), then return to this same copy block.
 
-```bash
-GPG_KEY_FINGERPRINT='YOUR_GPG_KEY_FINGERPRINT'
-KEY_EXPORT_DIR="$HOME/.git-tools-key-exports"
-mkdir -p "$KEY_EXPORT_DIR"
-chmod 700 "$KEY_EXPORT_DIR"
-# Keep restrictive permissions for exports in this shell.
-umask 077
-gpg --output "$KEY_EXPORT_DIR/privatekey.pgp" --armor --export-secret-keys "$GPG_KEY_FINGERPRINT"
-cat "$KEY_EXPORT_DIR/privatekey.pgp"
-```
+Next, [configure the workflow](#copy-and-configure-the-workflow). Skip the fresh-repository bootstrap if your repository already has version history.
 
-Copy the **entire** output, including `-----BEGIN PGP PRIVATE KEY BLOCK-----` and its matching end marker. In the target repository open **Settings → Secrets and variables → Actions → Secrets → New repository secret**:
+## Before You Start
 
-- **Name:** `BOT_GPG_SECRETKEY`
-- **Secret:** the complete armored private-key contents, **not** the filename, fingerprint, or public key.
+- Install [git-tools](../../README.md#install), Git, Python **3.12**, and GnuPG. Keep the git-tools checkout: the installation is editable.
+- Use your own GitHub account or organization and repository. Configure local Git with **your own** author name and email. The dedicated automation identity below is separate from your human identity.
+- The adapters use `master` and `develop`. These bootstrap instructions are for a **fresh** repository. Existing history needs a migration plan; do not overwrite its version configuration or repeat bootstrap.
+- Commands run in your local terminal unless marked as GitHub settings or YAML. No LLM/API key is needed for versioning CI.
 
-`privatekey.pgp` is just an export filename; `--armor` makes its contents text regardless of extension. If it already exists, inspect it before choosing a new export filename; do not overwrite a key blindly. Remove the temporary export after securely storing the secret and any approved backup; this does not delete the key from your GPG keyring.
+## Copy and Configure the Workflow
 
-Export the matching **public** key separately:
+In your application's `.github/workflows/`, activate **exactly one** example by removing its `.example` suffix:
 
-```bash
-gpg --armor --export "$GPG_KEY_FINGERPRINT"
-```
+| Flow | Example in the git-tools checkout | Destination filename |
+| --- | --- | --- |
+| Classic / Classic reviewed | [Classic example](../../.github/workflows/version-bump-git-flow-classic.yml.example) | `version-bump-git-flow-classic.yml` |
+| Release-led / Release-led reviewed | [Release-led example](../../.github/workflows/version-bump-git-flow-variant-release-led.yml.example) | `version-bump-git-flow-variant-release-led.yml` |
 
-Register that public block on the bot account under **Settings → SSH and GPG keys → New GPG key**. Never upload the private block there.
+Copy from your retained tool checkout; the walkthroughs use `$HOME/projects/git-tools`. `git-tools init` creates `.cz.toml`, **not** a workflow or hosted repository settings. The active `.yml` in the tool checkout versions git-tools itself; copy an **example** into your application instead.
 
-#### 3. Read the SSH private key and register its public key
-
-Use your existing dedicated automation SSH key. If one is needed, create it with `ssh-keygen -t ed25519 -C 'YOUR_BOT_EMAIL' -f "$HOME/.ssh/git_tools_bot_ed25519"`; do not overwrite an existing key. The supplied checkout step has no SSH passphrase input, so plan unattended authentication accordingly.
-
-```bash
-# Replace the filename with YOUR_SSH_PRIVATE_KEY_PATH; keep $HOME expandable.
-SSH_PRIVATE_KEY_PATH="$HOME/.ssh/git_tools_bot_ed25519"
-cat "$SSH_PRIVATE_KEY_PATH"
-```
-
-This is the explicit-path form of `cat ~/.ssh/key`. Copy the **whole private key**, including its BEGIN/END markers. Create another repository Actions **secret**:
-
-- **Name:** `BOT_SSH_SECRETKEY`
-- **Secret:** the complete SSH private-key contents, **not** its path and **not** the `.pub` contents.
-
-Now read the **public** key:
-
-```bash
-cat "${SSH_PRIVATE_KEY_PATH}.pub"
-```
-
-Register the public key either as a repository **Settings → Deploy keys → Add deploy key**, with **Allow write access**, or on a dedicated bot account with repository write access. Choose one identity model and ensure its permissions/ruleset exceptions permit the required pushes. Public keys go in key-registration screens; private keys go only in the Actions secrets above.
-
-#### 4. Set workflow variables (not secrets)
-
-Edit the top-level `env:` block in the copied workflow:
+**Destination: the copied workflow's top-level `env:` block.** Replace the identity and ref placeholders before pushing:
 
 ```yaml
 env:
-  GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
-  GIT_TOOLS_REF: YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG
-  GIT_BOT_NAME: 'YOUR_BOT_NAME'
-  GIT_BOT_EMAIL: 'YOUR_BOT_EMAIL'
-  GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'true'
+  GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git # Upstream tool source; keep this URL.
+  GIT_TOOLS_REF: YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG # A supported branch/tag, not a bare SHA.
+  GIT_BOT_NAME: 'YOUR_AUTOMATION_NAME' # Your dedicated automation Git name, not David's.
+  GIT_BOT_EMAIL: 'YOUR_AUTOMATION_EMAIL' # Match the GPG key and verified signing account email.
+  GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'true' # 'false' bumps only .cz.toml.
 ```
 
-| Exact name | Location | Value |
-| --- | --- | --- |
-| `BOT_GPG_SECRETKEY` | Repository Actions **secret** | Armored GPG **private** key text |
-| `BOT_SSH_SECRETKEY` | Repository Actions **secret** | SSH **private** key text |
-| `GIT_TOOLS_REPO` | Workflow `env:` | Clone URL of the git-tools engine |
-| `GIT_TOOLS_REF` | Workflow `env:` | Supported engine branch/tag |
-| `GIT_BOT_NAME` | Workflow `env:` | Bot Git author name |
-| `GIT_BOT_EMAIL` | Workflow `env:` | Bot Git author email matching its signing identity |
-| `GIT_TOOLS_BUMP_SYNC_AUXILIARY` | Workflow `env:` | `'true'` to sync supported auxiliary version files; `'false'` for `.cz.toml` only |
+`GIT_TOOLS_REF` selects the **tool implementation**, not an application branch. Prefer a maintained release tag containing the documented strategy; both examples currently use `develop`. Check compatibility before activation; see [engine-ref details](#tool-source-ref-and-bot-identity).
 
-**Keep these exact names.** The supplied workflow reads `${{ secrets.BOT_SSH_SECRETKEY }}` and `${{ secrets.BOT_GPG_SECRETKEY }}`. It reads the other settings from YAML `env:`; merely creating same-named values in GitHub's **Variables** tab does not override them. To use repository Variables instead, explicitly wire them with `${{ vars.NAME }}` in the workflow. No LLM/API key is required for versioning CI.
+## Prepare keys and set the exact secrets
 
-### Credential permissions and signing limitations
+**Optional: need new keys?** If you already have suitable dedicated automation keys, skip creation and use the [copy block above](#already-have-keys-copy-these-into-ci). Create only the key you are missing; do not export your everyday personal keys to CI.
 
-`BOT_SSH_SECRETKEY` is the private SSH key for an identity allowed to write to the target repository (for example, a write-enabled deploy key or bot account). `BOT_GPG_SECRETKEY` is the private signing key used for version commits and tags. Register the matching public keys as appropriate, store private keys only in Actions secrets, and do not commit them to the repository.
+### Create a GPG signing key only if needed
 
-The supplied workflow does not configure a GPG passphrase input. Use a dedicated key suitable for unattended signing, or adapt the import step to supply a passphrase securely. Plan expiry, rotation, revocation, and backup; never use an unattended automation key as a personal signing key.
+Run this locally:
 
-Branch protections/rulesets must permit this bot to push signed version commits and tags on the workflow's target branches. In reviewed flows, require human changes to arrive through PRs while narrowly granting the automation identity the required bypass. The workflow's final `git push` uses the SSH checkout credentials; merely granting `GITHUB_TOKEN` write permissions does not make an SSH identity writable. Validate bootstrap in a test repository before enforcing the final protections.
+```bash
+gpg --full-generate-key
+```
+
+Choose a signing-capable key (for example RSA with signing), an expiry under your policy, and **your own automation name and email**. Use that same identity for `GIT_BOT_NAME` / `GIT_BOT_EMAIL`; verify the email on the GitHub account that will own the public key.
+
+**Passphrase constraint:** the supplied workflows do not configure a GPG passphrase. Create a no-passphrase automation key **only if your policy allows it**; otherwise [adapt passphrase handling](#credential-permissions-and-signing-limitations) before using a protected key. Do not remove protection from a personal key to make CI work.
+
+Return to the [same copy block](#already-have-keys-copy-these-into-ci), select the new key, and paste its complete private block into **Actions secret `BOT_GPG_SECRETKEY`**. No extra export file is needed.
+
+### Create an SSH authentication key only if needed
+
+Replace the comment's name/email with **your own automation identity**. The command creates the normal SSH key files at the stated path; choose another filename if either already exists, and **never overwrite an existing key**:
+
+```bash
+mkdir -p "$HOME/.ssh"
+ssh-keygen -t ed25519 -C 'YOUR_AUTOMATION_NAME <YOUR_AUTOMATION_EMAIL>' -f "$HOME/.ssh/git_tools_bot_ed25519"
+```
+
+The supplied checkout has **no SSH passphrase input**. At the passphrase prompts, press Enter twice for an empty passphrase **only if your policy permits unattended keys**. Otherwise arrange an approved authentication adaptation before using this key; an encrypted key will not automatically work with the supplied checkout.
+
+Return to the [same copy block](#already-have-keys-copy-these-into-ci), use `git_tools_bot_ed25519` as the SSH filename, and paste the complete private key into **Actions secret `BOT_SSH_SECRETKEY`**.
+
+### Register public keys only if needed
+
+If the matching public keys are already registered with the correct identities/access, leave them alone. Otherwise:
+
+**GPG public-key destination: your dedicated signing account → Settings → SSH and GPG keys → New GPG key.** Replace `YOUR_GPG_KEY_ID` with the same selected key identifier:
+
+```bash
+# GitHub account GPG key registration: PUBLIC block only, not an Actions secret.
+gpg --export -a YOUR_GPG_KEY_ID
+```
+
+Register only the public block. For GitHub verification, `GIT_BOT_EMAIL` must match an email in the key and a verified email on that account. A deploy key cannot own a GPG identity; signing registration and push authentication are separate.
+
+**SSH public-key destination: a write-enabled repository Deploy key OR your dedicated bot account's authentication keys.** Replace the filename with the public half of your selected SSH key (use `git_tools_bot_ed25519.pub` if you created it above):
+
+```bash
+# SSH public-key registration only; do not paste this into BOT_SSH_SECRETKEY.
+cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY.pub"
+```
+
+- **Deploy key:** application repository → Settings → Deploy keys → Add deploy key; enable **Allow write access**.
+- **Bot account:** that account → Settings → SSH and GPG keys → New SSH key; choose an authentication key and grant the account repository write access.
+
+Registering a GPG public key does not grant write access. Keep private keys out of the application checkout; only public keys belong in these registration screens.
 
 ## Merge Settings
 
-This flow supports two GitHub merge styles:
+For the serialized walkthroughs, use **Squash and merge**, with the final commit subject equal to the stated PR title. Reviewed synchronization of current master into a release/hotfix candidate is the narrow exception: complete that inner PR with **Create a merge commit** to preserve master's ancestry.
 
-- squash merge
-- merge commit
+- Enable squash merge; choose **Pull request title** or **Pull request title and description** for its default message.
+- Disable **Rebase merge**.
+- Classic, Classic reviewed, and direct release-led also support merge commits when their final subject is the PR title. Configure the default merge message accordingly, not `Merge pull request #...`. Release-led reviewed uses squash for ordinary PRs, promotions, and develop/backmerge preparation; its current-master synchronization inner PR must use **Create a merge commit**.
+- For either reviewed mode, enable repository **Allow merge commits** and ensure rules on `release/*` and `hotfix/*` permit merge commits; a linear-history requirement on those targets is incompatible with this synchronization route. Customize the final merge subject to `chore: merge master for release` or `chore: merge master for hotfix`, retain the intended RC fields and stable fixes, and re-check current-master ancestry after CI. This remains a reviewed inner PR, not a direct human push exception.
+- Use a separate read-only workflow for PR tests. The version workflow runs on pushes and **writes** commits/tags; it is not a PR validation check.
 
-Do not use `Rebase merge` for this automated flow.
-
-The rule that matters is the final commit subject on the target branch. GitHub may append a trailing `(#123)` to merged workflow PR subjects; the workflow matcher ignores that suffix.
-
-#### Subjects into `develop`
-
-- most feature and bugfix PRs into `develop` land with a Conventional Commit subject
-- the first PR on a fresh develop line may land with `Start X.Y.Z`
-- release backmerge PRs into `develop` must land with `Backmerge Release X.Y.Z`
-- hotfix backmerge PRs into `develop` must land with `Backmerge Hotfix X.Y.Z`
-
-#### Subjects into `master`
-
-- release promotion PRs into `master` must land with `Release X.Y.Z`
-- hotfix promotion PRs into `master` must land with `Hotfix X.Y.Z`
-
-#### Squash merge profile
-
-- enable `Squash merge`
-- set the default squash commit message to use the PR title, ideally `Pull request title and description`
-- disable `Rebase merge`
-- you may disable `Merge commit` if you want a strict squash-only repository
-
-#### Merge commit profile
-
-- enable `Merge commit`
-- set the default merge commit message to `Pull request title` or `Pull request title and description`
-- disable `Rebase merge`
-- for the closest classic Git Flow feel, use merge commits for `feature/*`, `bugfix/*`, `release/*`, and `hotfix/*` PRs
-
-GitHub's default merge-commit subject `Merge pull request #...` is not suitable for this flow because the version workflow reads the latest commit subject.
-
-Why:
-
-- `develop` bump decisions depend on the final merged subject
-- `master` release finalization depends on the merged prerelease state
-- backmerges into `develop` must be distinguishable from release promotion
-- squash and merge-commit styles both work when that final subject is the PR title
-
-## Operational Safety and Limitations
-
-- This is a **mutating push workflow**, not a read-only PR check. Use a separate test workflow for PR validation. Never expose its write/signing credentials to untrusted code or permit arbitrary changes to the adapter.
-- The examples trigger on `master`, `develop`, `release/**`, `hotfix/**`, `feature/**`, and `bugfix/**`. Reviewed `release-fix/*` and `hotfix-fix/*` branches are intentionally outside that list; merging their PRs triggers the stabilization branch instead.
-- Full history and tags are required. The adapter evaluates remote branch history as well as `.cz.toml`; shallow checkouts and stale refs can change decisions. Pull bot commits and explicitly fetch tags between dependent steps.
-- The examples do not configure job concurrency. Coordinate version-producing pushes on each branch and wait for publication before the next operation. Concurrent runs can race; rejected publication is not permission to force-push or repeat bootstrap. Inspect the remote refs and [recovery guide](../publication.md).
-- The bot's bump subject makes the next triggered run skip, preventing an ordinary bump loop. This is not a general guarantee against competing versioning workflows or manually changed versions.
-- Before enabling version writes, read the engine's [current limitations](../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps. These are implementation caveats, not changes to the release policy.
-- Reviewed flow is a repository-policy choice, not a compliance certification. Human changes require PRs; generated bot version commits need the approved narrow exception described above.
+Protect the intended target branches and require human reviews/checks. Narrowly allow the automation identity to push signed version commits/tags; plan the one-time seed exception before applying final protections. See [credential permissions](#credential-permissions-and-signing-limitations) for the SSH/ruleset distinction.
 
 ## Bootstrap `master` and `develop`
 
-For a **fresh** target repository, copy and configure the chosen adapter before staging the first commit. Do not use this recipe to migrate existing history.
+Do this **once**, after copying/configuring the adapter and setting the secrets. In your **fresh application directory**, replace `YOUR_USERNAME_OR_ORG` and `YOUR_REPOSITORY` with the owner/name of your own GitHub repository. The SSH user `git@` stays unchanged.
 
 ```bash
+# Use your application's actual directory, not the git-tools checkout.
+cd "$HOME/projects/YOUR_REPOSITORY"
 git init -b master
-git remote add origin git@github.com:<owner>/<repo>.git
-git-tools init
+git remote add origin git@github.com:YOUR_USERNAME_OR_ORG/YOUR_REPOSITORY.git
+git-tools init --version 0.0.1 --tag-format '$version'
 git add -A
+git diff --cached # Check that no credentials or private keys are staged.
 git commit -m "Release 0.1.0"
 git push -u origin master
 ```
 
-Review staged files before committing, and never stage signing-key exports. Set the remote default branch to `master` after it exists. Direct initialization seeds `.cz.toml` at `0.0.1`; initialize `[project].version` to the same baseline if present. The first master run should create stable `0.1.0`. The subject `Release 0.0.1` is also accepted for bootstrap. Interactive initialization must retain the same baseline to obtain this documented result.
+If you already initialized the application or set its remote, do not repeat those commands. `.cz.toml` starts at **`0.0.1`**; any managed application manifest version must match. Do not create a bootstrap tag manually. Set GitHub's default branch to `master` after the first push.
 
-Wait for CI to publish successfully, then:
+**Wait for Actions:** expect the bot commit at stable **`0.1.0`** and tag **`0.1.0`**. Only after successful publication:
 
 ```bash
-git checkout master
-git pull origin master
+git switch master
+git pull --ff-only origin master
 git fetch origin --tags
-git checkout -b develop
+git switch -c develop
 git push -u origin develop
 ```
 
-Before every dependent operation, pull the bot commit and fetch tags. Promote only after the release/hotfix branch contains the expected `rc` version; wait for stable publication on `master` before backmerge. Creating a branch or opening a PR alone does not bump it.
-
-## Local CLI and PR Descriptions
-
-Direct `git-tools commit` generates and commits by default; use `--no-commit` to review output first. `git-tools pr` generates text, not a GitHub PR. Push the source branch, create the PR in GitHub, and use the documented base and title. See [CLI usage](../usage.md) for direct/interactive options and PR length preferences, and [configuration](../configuration.md) for provider settings. Review the [current provider limitations](../configuration.md#current-limitations) before generation, especially after changing endpoints or providers.
+The branch-creation run skips. `develop` now starts from the published stable release. After every version-producing push/merge, wait for CI, pull the bot commit, and fetch tags before the next operation. Stop on failures; use [publication recovery](../publication.md), not another bootstrap or a force-push.
 
 ## After Setup
 
-Continue with one of these standalone guides:
+Continue with one complete journey:
 
-- [Git Flow Classic](classic.md)
-- [Git Flow Classic — Reviewed](classic-reviewed.md) (classic + inner PR layer for compliance)
-- [Git Flow Variant — Release-led](release-led.md)
-- [Git Flow Variant — Reviewed](release-led-reviewed.md) (release-led + inner PR layer, squash)
+- [Classic walkthrough](classic-walkthrough.md)
+- [Classic reviewed walkthrough](classic-reviewed-walkthrough.md)
+- [Release-led walkthrough](release-led-walkthrough.md)
+- [Release-led reviewed walkthrough](release-led-reviewed-walkthrough.md)
 
-## Publication and Recovery
+Each [complete guide](README.md#choose-a-flow) includes its mode's policy and edge cases. The details below cover shared configuration choices and operational limits.
 
-The selected engine ref must also contain `git_tools.generators.publish`. Publishing dry-runs an atomic push, logs its choice, and falls back only when the server explicitly lacks atomic support. Other failures stop. See [publication and missing-tag recovery](../publication.md).
+## Configuration and Safety Details
+
+### Tool-source ref and bot identity
+
+The selected engine ref must contain `decide_version_strategy`, the bump runner, fixed-title/backmerge behavior, and `git_tools.generators.publish`. A newer local CLI or local source edit does **not** update CI's separate remote clone.
+
+The example's `git clone --branch "$GIT_TOOLS_REF"` accepts a branch or tag, **not an arbitrary commit SHA**. To pin a SHA, adapt the clone/fetch/checkout step. Keep exactly one version workflow active to avoid competing version commits/tags.
+
+`GIT_BOT_NAME` is a commit identity label, not a GitHub username or authentication mechanism. Set your human Git author separately. Use your own account/org/repository for the application origin; keep the upstream git-tools URL for `GIT_TOOLS_REPO`.
+
+### Exact settings and destinations
+
+| Exact name | Set it here | Value |
+| --- | --- | --- |
+| `BOT_GPG_SECRETKEY` | Repository Actions **secret** | Complete armored GPG private key |
+| `BOT_SSH_SECRETKEY` | Repository Actions **secret** | Complete dedicated SSH private key |
+| `GIT_TOOLS_REPO` | Copied YAML `env:` | Upstream tool-source URL |
+| `GIT_TOOLS_REF` | Copied YAML `env:` | Supported tool branch/tag |
+| `GIT_BOT_NAME` / `GIT_BOT_EMAIL` | Copied YAML `env:` | Your automation identity, matching its GPG identity |
+| `GIT_TOOLS_BUMP_SYNC_AUXILIARY` | Copied YAML `env:` | `'true'` to sync supported auxiliary versions; `'false'` for `.cz.toml` only |
+
+Keep these names. The workflow reads `${{ secrets.BOT_SSH_SECRETKEY }}` and `${{ secrets.BOT_GPG_SECRETKEY }}`. Other settings come from YAML `env:`: creating same-named repository **Variables** does not override them. To use repository Variables, wire them explicitly with `${{ vars.NAME }}`.
+
+### Credential permissions and signing limitations
+
+- **GPG passphrase:** the import action supports one, but the supplied workflow does not configure it. For a protected key, create a separate Actions secret such as `BOT_GPG_PASSPHRASE` and add `passphrase: ${{ secrets.BOT_GPG_PASSPHRASE }}` to the import action's `with:` block. Do not hardcode it. Plan expiry, rotation, revocation, and approved backup; do not strip protection from a personal key to use it in CI.
+- **SSH permissions:** final pushes use the checkout's SSH identity. `GITHUB_TOKEN` write permission alone does not grant that SSH identity write access or bypass rulesets. Check branch/tag protections for the selected deploy key or bot account, and validate in a test repository before enforcing final protections.
+- **Reviewed modes:** require human changes through PRs while narrowly authorizing bot version pushes. Reviewed flow is a policy choice, not a compliance certification.
+- **Key storage:** printing avoids an extra export file; GnuPG still stores keys in its keyring, and the runner imports private material to sign. Protect the local terminal, secret store, and runner.
+
+### Final subjects
+
+The workflow reads the latest commit subject on the target branch. GitHub may append `(#123)` to a workflow PR subject; the matcher ignores that suffix.
+
+| Target | Final subject |
+| --- | --- |
+| `develop`, ordinary work | Conventional Commit |
+| `develop`, explicitly open a new line | `Start X.Y.Z` |
+| `develop`, release backmerge | `Backmerge Release X.Y.Z` |
+| `develop`, hotfix backmerge | `Backmerge Hotfix X.Y.Z` |
+| `master`, release promotion | `Release X.Y.Z` |
+| `master`, hotfix promotion | `Hotfix X.Y.Z` |
+
+The first master run also accepts `Release 0.0.1` for bootstrap. The documented sequence uses `Release 0.1.0` and the `0.0.1` starting configuration. Interactive initialization must retain that baseline.
+
+### Operational Safety and Limitations
+
+- Never expose this mutating workflow's write/signing credentials to untrusted code or allow arbitrary adapter edits. Its triggers include `master`, `develop`, `release/**`, `hotfix/**`, `feature/**`, and `bugfix/**`. Reviewed `release-fix/*` / `hotfix-fix/*` sources are intentionally excluded; their target merge triggers CI.
+- Full history and current tags are required. Decisions also read remote branch history; shallow checkouts or stale refs can change results.
+- The examples have no job concurrency setting. Serialize version-producing pushes per branch and wait for publication. A bot bump normally triggers a skip run, but that does not prevent races between competing workflows. Inspect remote refs on failures; do not force-push or repeat bootstrap.
+- Before promotion, the release/hotfix source must contain the expected RC and current stable changes. Wait for stable publication on `master` before backmerge; keep the source until integration is confirmed. Branch creation or opening a PR alone does not bump.
+- Read [current versioning limitations](../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps, before production use.
+
+### Local CLI and PR Descriptions
+
+`git-tools commit` generates **and commits** by default; use `--no-commit` to preview. `git-tools pr` generates text, not a hosted PR: push the source, create the PR in GitHub, and use the documented base/title. Configure a provider only if using generated prose; see [CLI usage](../usage.md), [configuration](../configuration.md), and [current provider limitations](../configuration.md#current-limitations).
+
+### Publication and Recovery
+
+Publishing dry-runs an atomic push and falls back only when the server explicitly lacks atomic support. Other failures stop. Inspect remote commits/tags and follow [publication and missing-tag recovery](../publication.md) before retrying.

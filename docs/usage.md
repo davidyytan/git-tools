@@ -11,7 +11,14 @@ git-tools --version         # Installed git-tools version (also -V)
 git-tools commit --help     # Options for one command
 ```
 
-Top-level `git-tools --version` (or `git-tools -V`) prints `git-tools VERSION` and exits. This is the tool's own installed package version from `importlib.metadata.version("git-tools")`, using metadata built from `pyproject.toml`, not the current repository's release version. Package metadata may normalize `0.2.0-alpha.1` to `0.2.0a1`; when package metadata is unavailable (for example, in an uninstalled checkout), the display is `git-tools unknown`. This display does not change `.cz.toml`'s sole authority for bumps and tags.
+`git-tools --version` prints the installed **tool version**, not your application's release version. Your application version comes from `.cz.toml`.
+
+<details>
+<summary>How the tool version is displayed</summary>
+
+The value comes from `importlib.metadata.version("git-tools")`, using metadata built from `pyproject.toml`. Package metadata may normalize `0.2.0-alpha.1` to `0.2.0a1`. An uninstalled checkout without package metadata shows `git-tools unknown`.
+
+</details>
 
 Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. The `settings` command has its own terminal-dependent setup/edit behavior described below.
 
@@ -25,6 +32,23 @@ Bare `git-tools` requires both stdin and stdout to be terminals to open the menu
 | `settings` | Edits saved user settings | Writes `~/.git-tools/settings.env`; model discovery can contact the provider |
 
 Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first, and check the [current destination/profile limitations](configuration.md#current-limitations) before sending it. Initialization and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
+
+## Everyday commands
+
+Run these in the application repository. Stage only the changes you intend to describe:
+
+```bash
+git status --short
+git add path/to/reviewed-file             # Replace with your actual reviewed path.
+git-tools commit --no-commit --no-copy    # Preview; still sends content to your provider.
+git-tools commit                         # Generate again and CREATE a commit.
+git-tools pr --base develop               # Generate PR text; create the hosted PR yourself.
+git-tools bump --dry-run                  # Preview version changes without writing.
+```
+
+Configure a provider with `git-tools settings` before AI generation. Do not run both `git-tools commit` and a separate `git commit` for the same change. AI generation may send repository content to the provider; init and bump do not need a provider.
+
+The sections below are reference material: go directly to [`commit`](#commit), [`issue` / `pr`](#issue-and-pr), [`bump`](#bump), [`init`](#init), or [`settings`](#settings-name-value).
 
 ## Shared generation options
 
@@ -116,14 +140,17 @@ Ordinary generation needs commits to describe. Fixed workflow modes can use vali
 | `--workflow-version X.Y.Z` | Explicit release tuple for Start/backmerge modes; required for noninteractive hotfix backmerge, using the already-promoted version |
 | `--pr-limit` / `--no-pr-limit` | Apply/disable the configured PR-description limit for this run, on any host; aliases: `--azure-limit` / `--no-azure-limit` |
 
-Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override. An explicit Start tuple is validated and never replaced with an inferred version; missing current/base version context produces a targeted error.
+Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override. An explicit Start tuple is validated and never replaced with an inferred version; for that explicit target, missing current/base version context produces a targeted error.
+
+Run only the command matching your checked-out source branch and workflow. Refresh the remote-tracking targets first; these examples use `origin/master` and `origin/develop` rather than possibly stale local branches.
 
 ```bash
-git-tools pr --base develop --start-pr --workflow-version 1.7.0
-git-tools pr --base master --release-pr
-git-tools pr --base master --hotfix-pr
-git-tools pr --base develop --backmerge-release-pr --workflow-version 1.6.0
-git-tools pr --base develop --backmerge-hotfix-pr --workflow-version 1.6.1
+git fetch origin
+git-tools pr --base origin/develop --start-pr --workflow-version 1.7.0
+git-tools pr --base origin/master --release-pr
+git-tools pr --base origin/master --hotfix-pr
+git-tools pr --base origin/develop --backmerge-release-pr --workflow-version 1.6.0
+git-tools pr --base origin/develop --backmerge-hotfix-pr --workflow-version 1.6.1
 ```
 
 Hotfix backmerge uses the **already-promoted** hotfix version, not the next patch. Supply it with `--workflow-version`; interactive mode asks for it without a guessed default. Neither latest master nor a source version synchronized with develop reliably identifies that earlier promotion, so this mode does not infer a version.
@@ -153,7 +180,7 @@ git-tools bump --increment MINOR --prerelease alpha --gpg-sign
 | `--default-increment MAJOR\|MINOR\|PATCH` | Fallback for Conventional Commit types outside built-in bump rules; unset by default |
 | `--prerelease alpha\|beta\|rc` | Create/continue that prerelease channel; unset means stable release behavior |
 | `--increment-mode linear\|exact` | Prerelease bump behavior; default `linear` |
-| `--allow-no-commit` | Off; allows a bump without new commits, using PATCH when no increment is detected |
+| `--allow-no-commit` | Off; allows a bump without new commits, using PATCH as a fallback. To start a prerelease from a stable version without a detected increment, also pass `--increment` |
 | `--dry-run` | Off; compute the managed-file plan and show diffs without file/Git writes |
 | `--get-next` | Off; compute and print only the next version, without writes |
 | `--yes`, `-y` | Off; permits initial untagged history when no tags or matching prior bump anchor exist; not a general confirmation/repair flag |
@@ -176,9 +203,11 @@ A successful preview cannot guarantee that hooks, signing, or Git will succeed. 
 ## `init`
 
 ```bash
+# Choose ONE alternative for a new .cz.toml:
 git-tools init --version 0.0.1 --tag-format '$version'
+# Or accept detected defaults instead:
 git-tools init --defaults
-# Explicitly update an existing .cz.toml:
+# For an existing .cz.toml, use --force to update:
 git-tools init --force --version 1.2.3
 ```
 

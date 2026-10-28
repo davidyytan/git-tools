@@ -2,411 +2,212 @@
 
 [Azure DevOps guides](README.md) · [Documentation index](../README.md) · [CLI usage](../usage.md)
 
-This guide sets up a classic or release-led (variant) Git Flow versioning pipeline in an Azure Repos repository.
+Set up **one** classic or release-led versioning pipeline in your own Azure Repos repository. Reviewed modes use the same adapter as their base flow; review is enforced through PR policies, not a second pipeline.
 
-The Azure pipeline and GitHub Actions workflow use different CI YAML, but both run the same `git_tools.generators.bumpgen` versioning engine.
+Configuring an existing pipeline? Use the copy block below, then check its YAML identity and [permissions](#6-grant-build-service-permissions). **Skip bootstrap if your repository already has release history.** For a fresh repository, follow steps 1–7 or one [complete walkthrough](README.md#full-walkthroughs).
 
-See the [Azure flow index](README.md) for all four flow policies and [CLI usage](../usage.md) for direct commands and interactive navigation.
+## Already Have an Automation Key? Copy It into CI
+
+**Destination: Azure DevOps → Pipelines → your pipeline → Edit → Variables → New variable → `BOT_GPG_SECRETKEY` → enable “Keep this value secret”.** Use an existing **dedicated automation signing key**, not your personal key. Select its long ID or full fingerprint from the first command and replace `YOUR_GPG_KEY_ID` before running the second:
+
+```bash
+gpg --list-secret-keys --keyid-format=long
+gpg --export-secret-key -a YOUR_GPG_KEY_ID  # → BOT_GPG_SECRETKEY (secret pipeline variable)
+```
+
+Paste the entire armored private-key block with its original line breaks into **`BOT_GPG_SECRETKEY`**. If the pipeline does not exist yet, run this block after [creating it](#4-create-the-azure-pipeline). Do not save an export file. No SSH key, PAT, or bot user is needed on Azure.
+
+The template has **no passphrase input**: use only an approved key that can sign unattended without one. Never log the key, enable tracing around it, or paste it into YAML/chat. Multiline-secret masking does not reliably hide individual lines. Already configured the key? No need to recreate it or register it on a hosting account. [Need a new key?](#2-choose-an-automation-signing-key)
 
 ## Before You Start
 
-- This project uses `master`.
-- Choose classic or release-led (variant). Reviewed workflows use the same adapter as their corresponding base flow; the extra review layer is a PR process.
-- You need permission to create an Azure pipeline and configure repository security, or an administrator who can grant the required permissions.
-- In **Organization settings → Pipelines → Settings** or **Project settings → Pipelines → Settings**, enable **Limit job authorization scope to current project for non-release pipelines**. The YAML pipeline is a non-release pipeline even when managing Git release branches. This runbook requires a project-scoped job token; otherwise the collection-scoped identity may run the job and grants to the project identity will not apply. Organization-level enforcement cannot be relaxed at project level.
-- Install `git-tools` locally as described in [CLI usage](../usage.md), and configure a provider/model for AI-generated commit and PR text. Fixed-title helpers and the CI versioning engine do not require an Azure API token.
-- You do not need an Azure DevOps bot user, SSH key, or personal access token. The pipeline pushes through Azure DevOps' automatic Build Service identity.
+- Install Git, **Python 3.12**, uv, GnuPG, and [git-tools](../../README.md#install). Keep its source checkout: installation is editable.
+- Use your **own name/email** for human commits, your **own Azure organization/project/repository** for the application origin, and a **dedicated automation identity** for signing. The upstream URL `https://github.com/davidyytan/git-tools.git` is the tool source, not your application origin.
+- These adapters use `master` and `develop`. You need permission to configure Pipelines and repository security, or an administrator's help.
+- In **Organization settings → Pipelines → Settings** or **Project settings → Pipelines → Settings**, enable **Limit job authorization scope to current project for non-release pipelines**. YAML pipelines are non-release pipelines even when managing Git release branches. This selects the project Build Service identity used below; organization-level enforcement cannot be relaxed by a project.
+- Versioning CI needs no LLM key, Azure bot user, SSH key, or PAT. Checkout/push use Azure's automatic Build Service job token. Local AI commit/PR generation separately needs a [configured provider](../configuration.md).
 
-## Naming Convention
+## 1. Copy and Configure One Adapter
 
-Use a short lowercase slug for the Azure DevOps project, such as `myproject`. The examples below assume one signing key shared by repositories in that project:
-
-| Resource | Recommended name | Scope |
-| --- | --- | --- |
-| Pipeline YAML file | `.azure/workflows/version-bump-git-flow-classic.yml` | Per repo |
-| Azure pipeline definition | `<repo-slug>-version-bump-classic` | Per repo |
-| GPG key identity | `MyProject Versioning Automation` | Per project |
-| GPG key email | `myproject-versioning@automation.invalid` | Per project |
-| Secure File | `myproject-versioning-gpg-private.asc` | Per project |
-| Build Service identity | `<Project> Build Service (<Organization>)` | Automatic per project |
-
-Keep variable keys such as `GIT_BOT_NAME`, `GIT_BOT_EMAIL`, and `GPG_SECURE_FILE` unchanged. Only their values vary. If security policy requires one key per repository, replace `myproject` with the repository slug in the key email and Secure File name.
-
-## 1. Copy and Configure the Pipeline File
-
-From the target repository root, initialize Git on `master` if needed:
+Work in your application repository, **not the git-tools source checkout**. Initialize a fresh repository on `master` if needed:
 
 ```bash
 git init -b master
 ```
 
-Choose **one** Azure Pipelines example from this repository and copy it into the target repository, removing the `.example` suffix:
+Copy one example from your retained upstream checkout into the application, removing `.example`:
 
-| Flow | Source example in git-tools | Destination in your repository |
+| Flow | Source in git-tools | Destination in your application |
 | --- | --- | --- |
-| Classic / Classic — Reviewed | `.azure/workflows/version-bump-git-flow-classic.yml.example` | `.azure/workflows/version-bump-git-flow-classic.yml` |
-| Release-led / Release-led — Reviewed | `.azure/workflows/version-bump-git-flow-variant-release-led.yml.example` | `.azure/workflows/version-bump-git-flow-variant-release-led.yml` |
+| Classic / Classic — Reviewed | [Classic example](../../.azure/workflows/version-bump-git-flow-classic.yml.example) | `.azure/workflows/version-bump-git-flow-classic.yml` |
+| Release-led / Release-led — Reviewed | [Release-led example](../../.azure/workflows/version-bump-git-flow-variant-release-led.yml.example) | `.azure/workflows/version-bump-git-flow-variant-release-led.yml` |
 
-Do not activate both adapters for the same repository and branches. The steps below use classic filenames; substitute the variant filename and use a `<repo-slug>-version-bump-variant` pipeline name when choosing release-led.
+The steps below use classic filenames. Substitute the release-led filename when choosing that flow. Do not activate both adapters for the same branches.
 
-Azure DevOps does not require a particular YAML folder, but this project uses `.azure/workflows/` by convention. `git-tools init` writes `.cz.toml` only: it does not install a pipeline, create branches, upload signing keys, grant permissions, or create/complete PRs. Copying YAML is not enough; create and authorize the pipeline definition using the steps below.
-
-- [Classic adapter source](../../.azure/workflows/version-bump-git-flow-classic.yml.example)
-- [Release-led adapter source](../../.azure/workflows/version-bump-git-flow-variant-release-led.yml.example)
-
-Set the workflow to use the git-tools public repository. The selected ref must contain Azure DevOps merge-subject normalization and the chosen strategy. Verify that `develop` contains that support before using the default below, or select a supported branch/tag. The adapter uses `git clone --branch`, so `GIT_TOOLS_REF` must be a branch or tag, not a bare commit SHA; use an immutable tag for a pinned engine revision. The ref must include `normalize_workflow_subject` handling `Merged PR <id>:` and `decide_version_strategy(..., flow="classic"/"variant")`. Do not assume an older published ref supports Azure merely because it can be cloned.
+In the copied YAML, keep the upstream tool URL and select a **supported engine branch or tag**:
 
 ```yaml
 GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
 GIT_TOOLS_REF: develop
 ```
 
-Configure the Git author and Secure File name:
+Verify that the selected ref contains Azure `Merged PR <id>:` normalization for fixed workflow-title recognition, your classic/variant strategy, and `git_tools.generators.publish`. The [PR-ID caveat](#pull-request-id-setting) still applies to ordinary squash subjects. Prefer an immutable supported tag for reproducibility. The example uses `git clone --branch`, so a bare commit SHA is not supported. Installing a newer local CLI does not update this remote CI clone.
+
+Replace these values with **your own automation name and email**, matching the GPG identity selected in step 2. They need not represent an Azure user account:
 
 ```yaml
-GIT_BOT_NAME: MyProject Versioning Automation
-GIT_BOT_EMAIL: myproject-versioning@automation.invalid
-GPG_SECURE_FILE: myproject-versioning-gpg-private.asc
+GIT_BOT_NAME: YOUR_AUTOMATION_NAME
+GIT_BOT_EMAIL: YOUR_AUTOMATION_EMAIL
 ```
 
-`GIT_BOT_NAME` and `GIT_BOT_EMAIL` control the author shown on generated commits. They do not need to represent an Azure DevOps account. The email should match the GPG key identity generated in the next step.
+Keep full history, tag fetching, and `persistCredentials: true`. Set `GIT_TOOLS_BUMP_SYNC_AUXILIARY` to `'true'` to sync supported auxiliary version files, or `'false'` for `.cz.toml` only. `git-tools init` creates version configuration; it does not install or authorize a pipeline.
 
-**Reuse scope:** the same name and email can be reused across repositories and projects when they use the same signing identity. Use different values if a project or repository has its own GPG key or compliance identity.
+## 2. Choose an Automation Signing Key
 
-## 2. Generate the GPG Secure File
+**Already have a suitable automation key?** Skip creation and use the [copy block above](#already-have-an-automation-key-copy-it-into-ci) when setting the pipeline secret. It prints the existing key; it does not create or replace one.
 
-Generate a dedicated signing key locally:
+### Need a New Key? Optional Create-First Path
+
+Only if you do not have an approved automation key, run this locally:
 
 ```bash
-gpg --batch \
-  --passphrase '' \
-  --quick-generate-key \
-  "MyProject Versioning Automation <myproject-versioning@automation.invalid>" \
-  rsa3072 sign 2y
+gpg --full-generate-key
 ```
 
-The empty passphrase allows the pipeline agent to sign non-interactively. Adjust the two-year expiration to match the organization's key-rotation policy.
+At the prompts:
 
-**Reuse scope:** a GPG signing key can be reused by multiple repositories and across Azure DevOps projects. For stronger isolation, use one key per project or one per repository. One key per project is a practical default: repositories in that project share the signing identity, while different projects can rotate or revoke their keys independently.
+1. Choose a key type that supports **signing** (for example RSA and RSA). An RSA size of 3072 bits is a reasonable starting point if your policy allows it.
+2. Set an expiration matching your organization's rotation policy.
+3. Enter **your own dedicated automation name/email**, matching YAML `GIT_BOT_NAME` and `GIT_BOT_EMAIL`, not the upstream author or your personal signing identity.
+4. The template has **no passphrase input**. Only under an approved unattended-key policy, leave the new automation key's passphrase empty and confirm any GnuPG warning. If policy requires a protected key, stop and adapt noninteractive signing securely instead; importing it alone does not unlock signing. Do not remove a personal key's passphrase.
 
-Confirm that the private key exists:
-
-```bash
-gpg --list-secret-keys --keyid-format=long
-```
-
-Select the dedicated bot key by its identity/email and copy its **full fingerprint** from the listing. Use `YOUR_GPG_KEY_FINGERPRINT` as the placeholder, not a real person's example key ID. The equivalent explicit export syntax is:
-
-```bash
-# Replace before running; this must identify the bot's key.
-GPG_KEY_FINGERPRINT='YOUR_GPG_KEY_FINGERPRINT'
-```
-
-For this Azure runbook, the export filename remains `myproject-versioning-gpg-private.asc` so it matches `GPG_SECURE_FILE` in the example pipeline. Replace the `myproject` prefix consistently if you rename it. Its contents are the same armored private-key text that could be saved as `privatekey.pgp`; the extension does not change the key format. Never paste this private key into chat, logs, or source control.
-
-From the target repository root, ignore private-key exports before creating the file:
-
-```bash
-printf '\n*-gpg-private.asc\n' >> .gitignore
-```
-
-Export the key into the repository directory:
-
-```bash
-umask 077
-gpg --output myproject-versioning-gpg-private.asc --armor --export-secret-keys "$GPG_KEY_FINGERPRINT"
-```
-
-Confirm that Git ignores the private key:
-
-```bash
-git check-ignore myproject-versioning-gpg-private.asc
-```
-
-The command should print `myproject-versioning-gpg-private.asc`. Do not continue to `git add -A` unless the file is ignored. You will upload it to Azure DevOps after creating the pipeline.
-
-### Exact Azure setting names and destinations
-
-| Exact name | Set it here | Value |
-| --- | --- | --- |
-| `GPG_SECURE_FILE` | Copied pipeline YAML `variables:` | Uploaded Secure File name, e.g. `myproject-versioning-gpg-private.asc` |
-| `GIT_BOT_NAME` | Pipeline YAML `variables:` | `YOUR_BOT_NAME`: automation Git author name |
-| `GIT_BOT_EMAIL` | Pipeline YAML `variables:` | `YOUR_BOT_EMAIL`: email matching the selected GPG identity |
-| `GIT_TOOLS_REPO` | Pipeline YAML `variables:` | git-tools engine clone URL |
-| `GIT_TOOLS_REF` | Pipeline YAML `variables:` | `YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG`: actual supported engine branch/tag, not a bare SHA |
-| `GIT_TOOLS_BUMP_SYNC_AUXILIARY` | Pipeline YAML `variables:` | `'true'` to sync auxiliary versions, or `'false'` for `.cz.toml` only |
-
-Upload the **file itself** under **Pipelines → Library → Secure files**, then authorize the pipeline as described below. `GPG_SECURE_FILE` holds its name, **not** the private-key text. The adapter obtains checkout/push authentication through Azure's pipeline identity; it does **not** consume `BOT_SSH_SECRETKEY` or `BOT_GPG_SECRETKEY`. Those are [GitHub Actions secrets](../github/setup.md#prepare-keys-and-set-the-exact-secrets), not Azure settings. No LLM/API key is needed for versioning CI.
-
-## Local CLI and PR Descriptions
-
-Direct `git-tools commit` generates and commits by default; use `--no-commit` to review output first. See [configuration](../configuration.md) for provider settings and [CLI usage](../usage.md) for direct and interactive options. Review the [current provider limitations](../configuration.md#current-limitations) before generation, especially after changing endpoints or providers.
-
-`git-tools pr` generates title/description text; it does not create or complete an Azure Repos PR. Push the source branch, then open **Repos → Pull requests → New pull request**, select the documented target, and paste the output.
-
-Azure descriptions are limited to **4,000 UTF-16 code units**. The CLI detects Azure HTTPS/SSH origins, including legacy `visualstudio.com` URLs. Force the limit for custom hosts with `--azure-limit`; `--no-azure-limit` disables it for output not intended for Azure. Oversized output is regenerated once from the original inputs, then retained with a warning if still too long. Verify and shorten the final pasted text. See [CLI usage](../usage.md) for options, interactive navigation, and saved preferences.
+Then return to the **same [list/export copy block](#already-have-an-automation-key-copy-it-into-ci)**, select the new automation key, and paste its printed private block into **`BOT_GPG_SECRETKEY`** after the pipeline exists. Azure needs no GitHub-style public-key registration or SSH key for this pipeline. Plan expiration, rotation, revocation, and approved backup storage. Use a trusted, unrecorded terminal and clear clipboard history where practical; no export file or Secure File upload is needed.
 
 ## Bootstrap `master` and `develop`
 
-The bootstrap sequence spans steps 3–8 below: push once, create and authorize the pipeline, run it manually, then create `develop` from the stable bump. Do not repeat this sequence in an already initialized repository.
+Steps 3–7 bootstrap a **fresh** repository: push once, create/configure the pipeline, run it manually, then create `develop` from the stable bot commit. Do not repeat bootstrap to repair a failure.
 
 ## 3. Bootstrap and Push `master`
 
-An empty Azure Repo has no branch for the pipeline picker to discover. Push the bootstrap commit before creating the Azure pipeline:
+An empty Azure Repo has no branch or YAML for the pipeline picker. In your application repository, replace the origin URL with **your own Azure organization, project, and repository**. Configure **your own human Git name/email**, not the automation identity:
 
 ```bash
-git remote add origin \
-  "https://dev.azure.com/<organization>/<project>/_git/<repository>"
-git-tools init
+git config user.name "YOUR_NAME"
+git config user.email "YOUR_EMAIL"
+git remote add origin "https://dev.azure.com/YOUR_ORG/YOUR_PROJECT/_git/YOUR_REPOSITORY"
+git-tools init --version 0.0.1 --tag-format '$version'
+```
+
+If `pyproject.toml` contains `[project].version`, initialize it to `0.0.1` too. Review what you are staging; no credentials belong in this commit:
+
+```bash
 git add -A
+git diff --cached
 git commit -m "Release 0.1.0"
 git push -u origin master
 ```
 
-`git-tools init` creates `.cz.toml` with bootstrap version `0.0.1`. If `pyproject.toml` contains `[project].version`, initialize it to `0.0.1` too.
+Set the Azure repository's default branch to `master` after this push. Keep `Release 0.1.0` as the latest subject until bootstrap runs. The engine also accepts `Release 0.0.1`, but the documented sequence uses `Release 0.1.0` to produce stable `0.1.0` from the `0.0.1` seed.
 
-After pushing, set the Azure Repos default branch to `master` in repository settings. Direct `git-tools init` seeds `0.0.1`; interactive initialization must retain that bootstrap baseline for the same result.
+## 4. Create the Azure Pipeline
 
-The recommended first commit subject is:
+1. Open **Pipelines → New pipeline → Azure Repos Git** and select your application repository.
+2. Choose **Existing Azure Pipelines YAML file**, branch **master**, and `/.azure/workflows/version-bump-git-flow-classic.yml` (or the release-led file).
+3. **Save** without running. Give it a recognizable name such as `<your-repo>-version-bump-classic` or `<your-repo>-version-bump-release-led`.
 
-```text
-Release 0.1.0
-```
+Create a separate pipeline definition for each repository, with only one active versioning adapter per set of branches.
 
-`Release 0.0.1` is also accepted by the engine for the first bootstrap commit; use `Release 0.1.0` for the documented `0.1.0` result.
+## 5. Set the Signing Secret
 
-## 4. Add the Azure Pipeline
+In the saved pipeline, open **Edit → Variables → New variable**:
 
-After the first push:
+- **Name:** `BOT_GPG_SECRETKEY`
+- **Value:** the complete armored private key printed by the [list/export commands](#already-have-an-automation-key-copy-it-into-ci).
+- Enable **Keep this value secret**, leave queue-time override disabled, and save.
 
-1. Open **Pipelines → New pipeline**.
-2. Select **Azure Repos Git**.
-3. Select the target repository.
-4. Select **Existing Azure Pipelines YAML file**.
-5. Select the `master` branch.
-6. Select `/.azure/workflows/version-bump-git-flow-classic.yml`.
-7. Select **Save**. Do not run the pipeline yet.
-8. Rename the pipeline to `<repo-slug>-version-bump-classic` so it is easy to distinguish from pipelines for other repositories in the project.
+Preserve the original multiline block. Do not add quotes, flatten it, or replace real newlines with literal `\n`. Azure does not repair multiline formatting; these examples use Bash on `ubuntu-latest`.
 
-**Reuse scope:** create a separate Azure pipeline definition for each repository, even when every definition uses identical YAML contents. Do not create two active versioning pipelines for the same repository and branches, because both could try to create the same bump and tag.
+The template maps this secret into the import step's environment and imports it through stdin. **If your pipeline uses an older Secure File-based adapter, update its signing step to this template first; adding the variable alone does not change the old adapter.** Do **not** put the secret value or an empty same-named default in YAML. There is no separate secret-authorization step. Configure the secret on **each pipeline definition**, even when reusing an approved automation key. One key per project or repository gives stronger rotation/revocation isolation.
 
-The pipeline clones the public `git-tools` repository over HTTPS and runs the same versioning engine used by GitHub Actions.
+**Migrating from Secure Files?** Their resource permissions, approvals, and checks do not transfer to a pipeline-local secret variable. If your signing policy relies on those gates, retain the Secure File-based signing step or adapt the workflow to an appropriately protected secret variable group/template and verify equivalent controls before switching. Creating the variable alone is not a policy-preserving migration.
 
-## 5. Upload the GPG Secure File
+`BOT_GPG_SECRETKEY` signs commits/tags; the Build Service token authenticates pushes. `BOT_SSH_SECRETKEY` is not used on Azure.
 
-In Azure DevOps:
+## 6. Grant Build Service Permissions
 
-1. Open **Pipelines → Library → Secure files**.
-2. Select **+ Secure file**.
-3. Upload `myproject-versioning-gpg-private.asc` from the repository directory.
-4. Confirm that Azure DevOps shows the filename as:
+Use the project-scoped identity **`<Your Project> Build Service (<Your Organization>)`**. Under **Project settings → Repositories → your repository → Security**, grant:
 
-   ```text
-   myproject-versioning-gpg-private.asc
-   ```
+- **Read**
+- **Contribute**
+- **Create branch**
+- **Create tag**
 
-The filename must exactly match the pipeline setting:
+Grant permissions per repository for least privilege. Each Azure project has its own identity. Do not use the collection-wide **Project Collection Build Service Accounts** group. If repository access protection prompts for this pipeline's authorization, approve access to this repository.
 
-```yaml
-GPG_SECURE_FILE: myproject-versioning-gpg-private.asc
-```
+**Identity missing?** A project's Build Service identity is created when a pipeline first runs, not necessarily when saved. Configure the secret and queue an initial run to materialize it. That attempt may fail at checkout/push. Once the identity appears, grant the permissions and rerun on `master`. Before retrying, check whether a bump commit or tag reached the remote; pull/fetch and inspect any partial publication instead of adding another bootstrap commit.
 
-Do not store the private key in an ordinary pipeline variable.
+Protect `master`/`develop` and, for reviewed modes, stabilization branches. Required-PR policies may need a narrowly approved, branch-scoped automation push exception for generated version commits. Do not give humans blanket bypass or grant **Bypass policies when pushing** without explicit administrator approval.
 
-**Reuse scope:** Secure Files belong to an Azure DevOps project. Within the same project, upload the key once and authorize each repository's pipeline to use that Secure File. For a repository in a different project, upload the key to that project's Library separately, even when reusing the same GPG key and filename.
+## 7. Run Bootstrap and Create `develop`
 
-After upload:
+After the secret, repository access, and permissions are ready, open your pipeline and choose **Run pipeline → master → Run**. The earlier push is **not retroactive**: it occurred before the pipeline existed.
 
-- keep an approved backup in the organization's secret manager;
-- remove the exported file from the repository directory after upload:
+Wait for the entire run, including publication, to succeed. Expected result:
 
-  ```bash
-  rm myproject-versioning-gpg-private.asc
-  ```
+- signed bot commit `bump: version 0.0.1 → 0.1.0`;
+- signed tag **`0.1.0`**.
 
-- never force-add or commit the `.asc` file.
-
-## 6. Authorize the Pipeline to Use the Secure File
-
-1. Open **Pipelines → Library → Secure files**.
-2. Select `myproject-versioning-gpg-private.asc`.
-3. Open the **Pipeline permissions** section.
-4. Select **+** to add an authorized pipeline.
-5. Select the versioning pipeline and confirm the authorization.
-
-Alternatively, **Open access** allows every pipeline in the project to use the Secure File. Prefer pipeline-specific authorization when possible.
-
-## 7. Grant Build Service Permissions
-
-Azure DevOps automatically creates a license-free pipeline identity:
-
-```text
-<Project name> Build Service (<Organization>)
-```
-
-**Initial-run identity caveat:** the project Build Service identity is created when a pipeline in the project first runs, not necessarily when its definition is saved. If it is absent from the identity picker, authorize the Secure File and queue an initial run to materialize it. That first attempt may fail at checkout or push because permissions have not yet been granted. Once the identity appears, grant the permissions below and rerun on `master`. Do not work around this by granting the collection-wide group. Check whether the failed attempt created a bump commit or tag before rerunning; if it did, pull and fetch tags and inspect the pipeline decision rather than repeating the bootstrap commit.
-
-**Reuse scope:** pipelines and repositories in the same Azure DevOps project use this project Build Service identity. Each Azure DevOps project has its own Build Service identity; it is not shared across projects.
-
-Open:
-
-```text
-Project settings
-→ Repositories
-→ <repository>
-→ Security
-```
-
-Select the project Build Service identity and set **Allow** for:
-
-- `Read`
-- `Contribute`
-- `Create branch`
-- `Create tag`
-
-**Reuse scope:** permissions are evaluated for each repository. For least privilege, grant them separately on every repository that uses the versioning pipeline. If every repository in the project should use this automation, an administrator may instead grant the permissions at **All repositories** so repos inherit them. Permissions must be configured again in each Azure DevOps project for that project's Build Service identity.
-
-Do not select the general **Project Collection Build Service Accounts** group. Do not grant **Bypass policies when pushing** unless an explicit repository policy requires it and an administrator approves the exception.
-
-If the project protects repository access from YAML pipelines, authorize the pipeline to access the repository when Azure DevOps prompts for approval.
-
-## 8. Run the Bootstrap Pipeline
-
-After the pipeline, Secure File authorization, and Build Service permissions are ready, manually run the pipeline against `master`:
-
-1. Open **Pipelines** and select the versioning pipeline.
-2. Select **Run pipeline**.
-3. Choose the `master` branch.
-4. Select **Run**.
-
-The first push happened before the pipeline existed, so it does not trigger a run retroactively.
-
-With `.cz.toml` at `0.0.1` and latest commit subject `Release 0.1.0`, the run should create:
-
-```text
-bump: version 0.0.1 → 0.1.0
-```
-
-and signed tag:
-
-```text
-0.1.0
-```
-
-After the run succeeds:
-
-```bash
-git pull origin master
-git fetch origin --tags
-git tag -v 0.1.0
-```
-
-A normal `git pull` might fetch the generated commit without displaying the new tag locally, so fetch tags explicitly.
-
-Create `develop` from the bumped `master`, not from the original bootstrap commit:
+Pull the bot commit and explicitly fetch tags, then create `develop` from that stable result:
 
 ```bash
 git checkout master
-git pull origin master
+git pull --ff-only origin master
+git fetch origin --tags
+git tag -v 0.1.0
 git checkout -b develop
 git push -u origin develop
 ```
 
-## Pull Request ID Setting
-
-Azure DevOps can prefix PR-completion commit subjects like this:
-
-```text
-Merged PR 42: Release 1.2.3
-```
-
-The shared `git-tools` engine recognizes this prefix, but cleaner history is produced by disabling it as well.
-
-Under:
-
-```text
-Project settings
-→ Repositories
-→ <repository>
-→ Settings
-```
-
-turn off the setting that includes the pull request ID in commit messages. Configure this before completing PRs. It does not affect the direct bootstrap commit.
-
-This setting is available in Azure DevOps Services from the Sprint 270 update. Older Azure DevOps Server versions might not expose it; the code normalizer remains the fallback in that case.
+Do not create `develop` from the original bootstrap commit. If publication fails, inspect the remote and follow [recovery](../publication.md); do not create a competing bump or tag.
 
 ## Merge Settings
 
-This flow supports two Azure DevOps completion strategies:
+Permit **Squash commit** and **Merge (no fast-forward)** as needed by your selected walkthrough. Prohibit rebase completion. The final commit subject on the target must be the documented PR title, not an unrelated generated merge message.
 
-- squash merge
-- merge commit
+| Target / action | Final subject |
+| --- | --- |
+| Ordinary feature/bugfix into `develop` | Conventional Commit |
+| Open a develop cycle | `Start X.Y.Z` |
+| Promote release into `master` | `Release X.Y.Z` |
+| Promote hotfix into `master` | `Hotfix X.Y.Z` |
+| Release backmerge into `develop` | `Backmerge Release X.Y.Z` |
+| Hotfix backmerge into `develop` | `Backmerge Hotfix X.Y.Z` |
 
-Do not use rebase merge for this automated flow.
+For squash, set the final squash subject to the PR title. For merge commits, customize the first line to the PR title. **Synchronization and boundary-backmerge steps marked Merge (no fast-forward) must preserve ancestry and untagged bump anchors; do not squash them.** Reviewed stabilization PRs follow their mode's merge policy.
 
-The final commit subject on the target branch must represent the PR title. The runtime also ignores Azure DevOps' optional leading `Merged PR <id>:` prefix.
+### Pull Request ID Setting
 
-### Subjects into `develop`
+In **Project settings → Repositories → your repository → Settings**, disable inclusion of the PR ID in completion commit messages. This setting arrived in Azure DevOps Services Sprint 270; older Server versions may not expose it. A supported engine recognizes the optional `Merged PR 42:` prefix for fixed workflow titles such as `Start X.Y.Z` and `Backmerge Release X.Y.Z`, but ordinary Conventional Commit increment inference does not reliably normalize it. **Ordinary squash PRs must produce a plain final subject**, such as `feat: add greeting`, without the prefix. If your hosting cannot produce that subject, stop and validate an approved alternative before following the ordinary squash steps. The rest of any recognized fixed workflow subject must still match the intended title.
 
-- most feature and bugfix PRs into `develop` land with a Conventional Commit subject
-- the first PR on a fresh develop line may land with `Start X.Y.Z`
-- release backmerge PRs into `develop` must land with `Backmerge Release X.Y.Z`
-- hotfix backmerge PRs into `develop` must land with `Backmerge Hotfix X.Y.Z`
+## Local CLI and PR Descriptions
 
-### Subjects into `master`
+`git-tools commit` generates **and commits** by default; use `--no-commit` to preview. `git-tools pr` generates text, not a hosted PR: push your source branch and create/complete the PR in **Repos → Pull requests** yourself.
 
-- release promotion PRs into `master` must land with `Release X.Y.Z`
-- hotfix promotion PRs into `master` must land with `Hotfix X.Y.Z`
-
-### Squash merge profile
-
-- complete the PR with **Squash commit**
-- ensure the final squash commit subject is the PR title
-- do not leave an unrelated generated subject in the completion dialog
-- disable or prohibit rebase completion for this versioning flow
-
-The [numbered walkthroughs](README.md#full-walkthroughs) use **Merge (no fast-forward)** for boundary backmerges and, in reviewed modes, their synchronization inner PRs. Those steps must preserve ancestry and untagged bump anchors; permitting squash elsewhere is not permission to squash those steps.
-
-### Merge commit profile
-
-- complete the PR with **Merge (no fast-forward)**
-- customize the merge commit message when necessary so its subject is the PR title
-- for the closest classic Git Flow feel, use merge commits for `feature/*`, `bugfix/*`, `release/*`, and `hotfix/*` PRs
-
-Azure DevOps' generated PR-ID prefix is safe when the code normalizer is present, but the remainder of the subject must still match the PR title.
-
-Why:
-
-- `develop` bump decisions depend on the final merged subject
-- `master` release finalization depends on the merged prerelease state
-- backmerges into `develop` must be distinguishable from release promotion
-- squash and merge-commit styles both work when the final subject represents the PR title
-
-## After Setup
-
-Choose the corresponding Azure procedure (reviewed shares its base adapter):
-
-- [Classic](classic.md)
-- [Classic — Reviewed](classic-reviewed.md)
-- [Release-led](release-led.md)
-- [Release-led — Reviewed](release-led-reviewed.md)
-
-Use branch policies for required reviewers and allowed merge types. Do not add this mutating versioning pipeline as a PR build-validation policy: it reacts to branch pushes (`pr: none` in the adapter). Use a separate read-only test pipeline for validation. Protect `master` and `develop` and, for reviewed flows, stabilization branches. An administrator must reconcile required-PR policies with the automation's direct version commits; grant only the minimal approved branch-scoped exception if necessary, not blanket bypass to humans.
-
-## Local CLI Preferences
-
-See [PR preferences](../usage.md) and [configuration](../configuration.md) for persistent settings and overrides.
+Azure descriptions are limited to **4,000 UTF-16 code units**. Azure origin detection enables the CLI limit automatically; use `--azure-limit` for custom hosts or `--no-azure-limit` for other destinations. Oversized output is regenerated once, then retained with a warning if still too long. Inspect and shorten the final text before pasting. See [CLI usage](../usage.md) and [provider configuration/limitations](../configuration.md).
 
 ## Operational Safety and Limitations
 
-The adapters are mutating push pipelines, not PR validation builds. Keep write and signing credentials inaccessible to untrusted code and restrict who can modify authorized YAML. Reviewed flow is a repository-policy choice, not a compliance certification; generated bot commits still use an approved direct push exception.
-
-Before enabling version writes, read the engine's [current limitations](../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps. These are implementation caveats, not changes to the release policy.
-
-Full history, tags, and remote branch refs are required. The supplied triggers include `master`, `develop`, `release/*`, `hotfix/*`, `feature/*`, and `bugfix/*`. The reviewed inner branches (`release-fix/*`, `hotfix-fix/*`) do not trigger this pipeline; their merge triggers the target stabilization branch instead.
-
-The examples do not serialize concurrent runs. Coordinate version-producing pushes on each branch and wait for publication before the next operation. Racing or rejected publication must be investigated against remote refs; never force-push a version commit or repeat bootstrap to repair it. The next run normally skips a bot bump subject, but that does not protect against multiple active versioning pipelines or manual version edits.
+- **Trust boundary:** restrict who can edit the pipeline, its secrets, and credential-bearing YAML/branches. These are mutating push pipelines, not PR validation builds. `pr: none` alone does not protect credentials from untrusted YAML. Use a separate read-only test pipeline for PR validation.
+- **Never log the key.** Azure masking does not guarantee protection of individual lines/substrings of a multiline secret. Do not enable shell tracing around secrets, print their environment, or include them in diagnostic artifacts. The examples map the secret only into the import step.
+- **Agent assumption:** use a fresh disposable Microsoft-hosted agent and one automation signing key. Stdin avoids an extra export file, but GPG still stores the imported key in the agent keyring. Reused/self-hosted agents need isolated keyrings, explicit key selection, and cleanup designed separately. These templates do not provide that hardening or a passphrase input.
+- **History and serialization:** retain full history, tags, and remote branch refs. The examples do not serialize concurrent runs; coordinate version-producing pushes and wait/pull/fetch before dependent operations. The generated bump subject skips the next ordinary run, but does not protect against competing pipelines or manual version edits.
+- **Triggers:** `master`, `develop`, `release/*`, `hotfix/*`, `feature/*`, and `bugfix/*` are included. Reviewed helpers `release-fix/*` and `hotfix-fix/*` run versioning only when their merge pushes the target branch.
+- Reviewed flow is a repository-policy choice, not a compliance certification. Read the [current engine limitations](../versioning.md#current-limitations) before enabling writes.
 
 ## Publication and Recovery
 
-The selected engine ref must also contain `git_tools.generators.publish`. Publishing dry-runs an atomic push, logs its choice, and falls back to separate pushes only if the server explicitly lacks atomic support. Other failures stop. See [publication and missing-tag recovery](../publication.md); a new pipeline run is not guaranteed to recover a lost local signed tag automatically.
+The engine dry-runs an atomic push and falls back to separate pushes only when the server explicitly lacks atomic support. Other failures stop. Inspect remote refs and follow [publication and missing-tag recovery](../publication.md). Never force-push a version commit or repeat bootstrap to repair publication; rerunning is not guaranteed to recover a lost local signed tag.
+
+## After Setup
+
+Follow one complete guide: [Classic](classic-walkthrough.md), [Classic — Reviewed](classic-reviewed-walkthrough.md), [Release-led](release-led-walkthrough.md), or [Release-led — Reviewed](release-led-reviewed-walkthrough.md). Each includes its mode policy and edge cases as well as the concrete journey.

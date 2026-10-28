@@ -1,72 +1,82 @@
-# Git Flow Guide
+# Choose a Git Flow
 
-## Start with a Full Walkthrough
+[Documentation index](README.md) · [Complete walkthroughs](walkthroughs.md) · [CLI reference](usage.md)
 
-For a fresh repository, use the **[numbered end-to-end walkthroughs](walkthroughs.md)**. They cover setup and `Release 0.1.0`, feature work, release stabilization/promotion, backmerges, hotfixes, and the next cycle with concrete versions and CI checkpoints. This page is the shared policy/reference, not the complete procedural guide.
+## Choose your mode
 
-## Choose Your Platform First
+Choose your platform and **one** mode. Each link below is a complete guide with key-copy commands, CI setup checkpoints, a release/hotfix example, and mode-specific policy.
 
-1. Open [GitHub guides](github/README.md) or [Azure DevOps guides](azure-devops/README.md).
-2. Complete that platform's setup and choose a flow below.
-3. Use [Direct CLI and Interactive Usage](usage.md) for command examples and step-by-step terminal menu navigation.
+| Mode | Who chooses the release line? | Human stabilization changes | GitHub | Azure DevOps |
+| --- | --- | --- | --- | --- |
+| Classic | `develop` selects it first; explicitly open the next cycle after cutting a release | Direct commits allowed | [Complete guide](github/classic-walkthrough.md) | [Complete guide](azure-devops/classic-walkthrough.md) |
+| Classic — Reviewed | Same as Classic | Inner PRs required | [Complete guide](github/classic-reviewed-walkthrough.md) | [Complete guide](azure-devops/classic-reviewed-walkthrough.md) |
+| Release-led | `release/X.Y.Z` selects it | Direct commits allowed | [Complete guide](github/release-led-walkthrough.md) | [Complete guide](azure-devops/release-led-walkthrough.md) |
+| Release-led — Reviewed | Same as release-led | Inner PRs required | [Complete guide](github/release-led-reviewed-walkthrough.md) | [Complete guide](azure-devops/release-led-reviewed-walkthrough.md) |
 
-| Flow | Version policy | GitHub guide | Azure DevOps guide |
-| --- | --- | --- | --- |
-| Classic | `develop` chooses the release line | [Classic](github/classic.md) | [Classic](azure-devops/classic.md) |
-| Classic — Reviewed | Classic with inner stabilization PRs | [Reviewed](github/classic-reviewed.md) | [Reviewed](azure-devops/classic-reviewed.md) |
-| Release-led | `release/X.Y.Z` chooses the release line | [Release-led](github/release-led.md) | [Release-led](azure-devops/release-led.md) |
-| Release-led — Reviewed | Release-led with squash inner PRs | [Reviewed](github/release-led-reviewed.md) | [Reviewed](azure-devops/release-led-reviewed.md) |
+For the closest classic Git Flow experience, choose Classic with merge commits for feature, release, and hotfix PRs. The serialized GitHub examples use squash; reviewed current-master synchronization before promotion instead requires an ancestry-preserving merge commit. Follow the chosen guide's method at each checkpoint.
 
-Both platforms supply classic and release-led example adapters. Reviewed flows share their base adapter: enable **one** versioning workflow/pipeline per repo, not both adapters. Templates are examples to copy/configure in the target repo; their presence does not certify a live run in your organization. See each setup guide for supported engine refs, signing, permissions, and merge settings. `git-tools init` creates `.cz.toml` only; it does not install either adapter or configure hosting. These recipes assume `master` and `develop`, full history and tags, and fresh-repository bootstrap. Existing projects need a separate migration plan. Versioning CI does not require an LLM key; normal local commit and PR generation does. Before provider use or configuring custom sync targets, read the current [configuration](configuration.md#current-limitations) and [versioning](versioning.md#current-limitations) limitations.
+**Only configuring CI or copying existing keys?** Go straight to [GitHub setup](github/setup.md) or [Azure setup](azure-devops/setup.md). You do not need to repeat fresh-repository bootstrap.
 
-## Shared Naming Policy
+## Before following a complete example
 
-- `Start X.Y.Z` opens `X.Y.Z-alpha.0` on `develop`
-- `Release X.Y.Z` is reserved for `release/* -> master`
-- `Hotfix X.Y.Z` is reserved for `hotfix/* -> master`
-- `Backmerge Release X.Y.Z` is reserved for `release/* -> develop`
-- `Backmerge Hotfix X.Y.Z` is reserved for `hotfix/* -> develop`
+- The examples use `master` and `develop`, full history and tags, and a fresh-repository bootstrap. An existing project needs its own migration plan; do not reset its history or version configuration to match the example.
+- Enable **one** versioning adapter. Reviewed modes share the Classic or release-led adapter; review is a repository-policy layer, not another pipeline.
+- `git-tools init` writes `.cz.toml` only. It does not install CI, configure secrets, create branches, or push.
+- CI clones its own git-tools engine branch/tag. Local CLI updates do not update that clone. Select a supported engine ref as explained in platform setup.
+- Versioning needs no LLM key. AI-generated commit and PR text uses your configured provider. Check [configuration limitations](configuration.md#current-limitations) before generation and [versioning limitations](versioning.md#current-limitations) before custom sync targets.
+- Validate signing, permissions, and publication in a test repository before production. The examples are not proof of a live run in your organization.
 
-GitHub may append a trailing `(#123)` to merged workflow subjects. The runtime matcher ignores that suffix and still recognizes the underlying fixed title. Azure DevOps may prefix subjects with `Merged PR <id>:`; a supported engine ref normalizes that prefix too. In either case, the underlying subject must still match the intended title.
+## PR titles drive versioning
 
-Release and hotfix branch work stays normal Conventional Commits. If a release branch needs to open `rc.0` without a real stabilization change, use an empty commit such as:
+The **final commit subject on the target branch** must match the intended title:
+
+| Title | Use it for |
+| --- | --- |
+| `Start X.Y.Z` | Open `X.Y.Z-alpha.0` on `develop` |
+| `Release X.Y.Z` | Promote `release/*` to `master` |
+| `Hotfix X.Y.Z` | Promote `hotfix/*` to `master` |
+| `Backmerge Release X.Y.Z` | Bring a promoted release back into `develop` |
+| `Backmerge Hotfix X.Y.Z` | Bring a promoted hotfix back into `develop` |
+
+Ordinary feature, bugfix, and stabilization work uses Conventional Commit subjects. A supported engine ignores GitHub's trailing `(#123)` and Azure's leading `Merged PR <id>:` when matching fixed titles.
+
+If a **direct-push** release flow needs to open `rc.0` without a real stabilization change, this is an optional alternative—not an extra required commit:
 
 ```bash
 git commit --allow-empty -m "chore: open release"
 ```
 
-This opener is an alternative to a real stabilization change, not a required extra commit. In reviewed flows, an empty commit alone is not a reviewable PR: use a meaningful inner PR or an approved initialization procedure instead.
+An empty commit alone is not a reviewable inner PR. Reviewed modes require a meaningful stabilization change or an approved initialization procedure.
 
-## Shared Bump Policy
+## Version and backmerge rules
 
-These guides assume the bump strategy follows these rules:
+- `develop` creates or continues tagged `alpha` versions.
+- `master` finalizes a prerelease to a stable version.
+- A backmerge preserves an already-ahead alpha line; meaningful unique fixes may advance that alpha by one.
+- If `develop` is not ahead, a backmerge may catch it up to the promoted stable target **without a tag**. Open the next cycle later with `Start X.Y.Z` when needed.
+- Keep release/hotfix branches until promotion **and** backmerge finish. After each version-producing push or merge, wait for CI, pull its commit, and fetch tags.
 
-- `develop` creates or continues tagged `alpha`
-- `master` finalizes prerelease to stable
-- backmerges into `develop` preserve an ahead alpha line when one is already open
-- meaningful unique backmerged fixes may advance that ahead alpha by one
-- if `develop` is not ahead yet, a backmerge may catch `develop` up to the promoted stable target without tagging
-- after that stable catch-up, open the next cycle later with `Start X.Y.Z` when needed
+## Merge methods are platform-specific
 
-## CLI Coverage
+Classic, Classic reviewed, and direct release-led support squash or merge commits for ordinary feature/stabilization PRs, provided the final subject is the PR title. Release-led reviewed uses squash for those ordinary PRs. **Rebase merge is not supported by these flows.**
 
-Current helpers match the documented workflow:
+Follow the chosen guide for synchronization and backmerges. On GitHub, reviewed current-master synchronization into a release/hotfix candidate requires **Create a merge commit**, with the stated Conventional Commit subject; repository and source-branch rules must permit merge commits. Do not squash or rebase that inner PR, because master's ancestry must survive. This exception does not change GitHub's squash-safe develop synchronization and integration-PR backmerge recipes. Azure requires **Merge (no fast-forward)** at the synchronization and boundary-backmerge steps it marks, even in release-led reviewed mode. Generated bot version commits need a narrow, approved direct-push exception to review policies; in reviewed modes, humans still use PRs.
 
-- `git-tools commit --workflow-kind open-release`
-- `git-tools pr --start-pr`, `--release-pr`, `--hotfix-pr`, `--backmerge-release-pr`, and `--backmerge-hotfix-pr`
-- for direct `--backmerge-hotfix-pr`, always pass `--workflow-version X.Y.Z` naming the **already-promoted** hotfix; interactive mode asks without an inferred default
-- Start and release-backmerge can infer their tuple where context permits; pass an explicit exact `X.Y.Z` when needed. Explicit Start input requires readable current/base version context and a valid next-cycle transition
+## Local title helpers
 
-These guides are GitHub and Azure DevOps PR-based adaptations of Git Flow. Ordinary feature/stabilization PRs in classic, classic-reviewed, and release-led support either squash merge or merge commits, provided the final commit subject on the target branch is the PR title. Synchronization and boundary backmerge steps must still use the completion method required by the selected platform walkthrough. Release-led-reviewed uses squash for ordinary feature/stabilization PRs. GitHub's strict squash recipe and Azure's ancestry-preserving synchronization/backmerge recipe differ: the Azure walkthrough requires Merge (no fast-forward) for those specified steps, so it is not squash-only end to end. Follow the selected platform's completion instructions.
+These commands generate commit or PR text; `pr` does **not** create or merge a hosted PR:
 
-If you want the closest thing to classic Git Flow, use [Git Flow Classic](github/classic.md) on GitHub or [Classic](azure-devops/classic.md) on Azure DevOps with merge commits for feature, release, and hotfix PRs.
+```bash
+git-tools commit --workflow-kind open-release
+git-tools pr --base develop --start-pr --workflow-version X.Y.Z
+git fetch origin master
+git-tools pr --base origin/master --release-pr
+git fetch origin master
+git-tools pr --base origin/master --hotfix-pr
+git-tools pr --base develop --backmerge-release-pr --workflow-version X.Y.Z
+git-tools pr --base develop --backmerge-hotfix-pr --workflow-version X.Y.Z
+```
 
-`Rebase merge` is not part of this documented flow.
+Replace `X.Y.Z` before running. Refresh `origin/master` immediately before either promotion helper; a fetch updates the remote-tracking ref but does **not** move local `master`, so these helpers explicitly use `--base origin/master`. If master changes, synchronize/revalidate the candidate first and reassess the hotfix's next-patch target. For hotfix backmerge, `X.Y.Z` must be the **already-promoted hotfix version**, not the next patch. Direct mode requires it; interactive mode asks without guessing. Start and release-backmerge can infer a tuple when repository context permits. Explicit Start input still needs readable current/base versions and a valid next-cycle transition.
 
-Use **Variant — Release-led** if you want `release/X.Y.Z` to choose the release line.
-
-Use **Classic** if you want `develop` to choose the release line first and then open the next cycle with a `Start X.Y.Z` first PR.
-
-Use **Classic — Reviewed** if you want classic semantics but every human change on `release/*` and `hotfix/*` must arrive via an inner PR for review trail.
-
-Use **Variant — Reviewed** if you want the release-led model but every human change on `release/*` and `hotfix/*` must arrive via an inner PR for a review trail. Stabilization PRs squash-merge; the Azure walkthrough's specified synchronization and boundary-backmerge steps retain merge ancestry. Generated version commits still arrive from the bot directly, with a narrowly approved policy exception. Keep source branches until promotion and backmerge both finish. For failed publication, see [publication and recovery](publication.md).
+Direct `commit` creates a commit by default; use `--no-commit --no-copy` to preview. See the [CLI reference](usage.md) for exact options. If publication fails, inspect the remote state and use [recovery](publication.md), not force-push or another bootstrap.

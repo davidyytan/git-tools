@@ -1,47 +1,79 @@
-# Release-led: a fresh-repository walkthrough
+# Release-led: complete GitHub guide
 
-[GitHub guides](README.md) · [Platform setup](setup.md) · [Mode reference](release-led.md) · [CLI reference](../usage.md)
+[GitHub guides](README.md) · [Platform setup](setup.md) · [CLI reference](../usage.md)
 
-This is one continuous journey for a new `greeting-demo` repository, not a script to paste wholesale. Stop at each editing, GitHub, and CI checkpoint. Replace `<owner>` and local checkout paths. We build a tiny Python module without a package manifest, so `.cz.toml` is the only version file. In a packaged application, also reconcile the managed version fields in manifests and lockfiles; do not discard unrelated dependency changes.
+## Already have keys? Copy these into CI
 
-The expected versions assume the exact subjects, serialized merges, default `semver2` configuration, and no extra version-producing pushes. Tags below are bare versions (`0.2.0-rc.0`, not `v0.2.0-rc.0`). This walkthrough is derived from the engine and local tests; it does not claim a live GitHub deployment was exercised.
+**Destination: your application repository → Settings → Secrets and variables → Actions → New repository secret.** Select your own dedicated automation key, not a personal key. Run one command at a time; replace `YOUR_GPG_KEY_ID` with its full fingerprint (preferred) or long key ID after listing, and replace the SSH filename before reading it:
+
+```bash
+gpg --list-secret-keys --keyid-format=long
+# Actions secret BOT_GPG_SECRETKEY: paste the complete private-key block printed next.
+gpg --export-secret-key -a YOUR_GPG_KEY_ID
+# Actions secret BOT_SSH_SECRETKEY: paste the complete SSH private key printed next.
+cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY"
+```
+
+Paste each complete BEGIN/END block into its named secret from a private, unrecorded local terminal. Do not save an extra export file or expose output in chat/logs/source. Keep existing public-key registration/write access if already correct; [register public keys only if needed](setup.md#register-public-keys-only-if-needed). Missing a key? Follow the [optional creation steps](setup.md#prepare-keys-and-set-the-exact-secrets), then return to this block. These workflows have no GPG/SSH passphrase configured; protected keys need an approved adaptation.
+
+**Entering an existing project?** Configure [the workflow](setup.md#copy-and-configure-the-workflow), preserve its version/history, and resume at the applicable release checkpoint below. **Do not repeat fresh-repository bootstrap.**
+
+## Fresh-repository journey
+
+Follow this journey in a new **`greeting-demo` repository under your own GitHub account or organization**. Stop at each editing, GitHub, and CI checkpoint; this is not a paste-all script.
+
+- **Local layout:** `$HOME/projects/git-tools` holds the retained tool checkout; `$HOME/projects/greeting-demo` holds your application. If you choose another parent, use that location consistently.
+- **Example application:** a tiny Python module without a package manifest, so `.cz.toml` is its only version file. In a packaged application, reconcile managed manifest/lockfile versions without discarding unrelated changes.
+- **Expected results:** exact subjects, serialized merges, default `semver2`, and bare-version tags (`0.2.0-rc.0`, not `v0.2.0-rc.0`). Extra version-producing pushes change the timeline. Results are derived from the engine/local tests, not a live GitHub deployment.
 
 Features, promotions, and backmerges use hosted PRs; release/hotfix stabilization and source synchronization use permitted direct human pushes. Use **Squash and merge** for the hosted PRs here, with final subjects equal to their stated titles. The mode also permits PR-title merge commits, but do not switch styles mid-example or use rebase completion.
 
 ## 1. Install the CLI and prepare GitHub before the first push
 
-Install Git, Python **3.12**, and [uv](https://docs.astral.sh/uv/getting-started/installation/). Configure your Git author identity and authenticate Git/SSH to GitHub. Clone the tool into a separate directory, not inside the application:
+Install Git, Python **3.12**, [uv](https://docs.astral.sh/uv/getting-started/installation/), and GnuPG. Authenticate your local Git/SSH connection to GitHub. From outside any existing repository:
 
 ```bash
-git clone https://github.com/davidyytan/git-tools.git ../git-tools
-cd ../git-tools
+mkdir -p "$HOME/projects"
+cd "$HOME/projects"
+git clone https://github.com/davidyytan/git-tools.git
+cd git-tools
 ./install.sh
 ```
-Restart your shell; if necessary run `uv tool update-shell` and restart again. Run `git-tools --help`, then `git-tools settings` and choose a provider, credentials, and model for local text generation. Prefer the masked credential prompt. CI versioning needs no LLM key. See [configuration](../configuration.md) for provider details.
 
-In GitHub create an **empty** repository named `greeting-demo`: no generated README, license, or `.gitignore`. Before pushing the seed, follow [platform setup](setup.md) in this order:
+Already have the tool checkout? Go to it and rerun `./install.sh` instead of cloning again. **Keep the checkout:** installation is editable. The upstream URL above is the tool source, not your application origin.
 
-1. Follow [Prepare keys and set the exact secrets](setup.md#prepare-keys-and-set-the-exact-secrets): list/select the GPG key, export `privatekey.pgp`, read the SSH private key, register public keys, and copy private contents to the named Actions secrets. The runbook supplies commands, descriptive placeholders, and the exact variable-to-settings mapping.
-2. Store `BOT_SSH_SECRETKEY` and `BOT_GPG_SECRETKEY` as Actions secrets. Never place private keys in the application checkout.
-3. Check bot identity, SSH write permissions, signed-commit/tag policy, and narrowly scoped ruleset exceptions. `GITHUB_TOKEN` permission alone does not authorize the workflow's SSH push.
-4. Copy **only** `version-bump-git-flow-variant-release-led.yml.example` from the tool's `.github/workflows/` into the application's `.github/workflows/version-bump-git-flow-variant-release-led.yml`. Configure `GIT_TOOLS_REPO`, `GIT_TOOLS_REF`, `GIT_BOT_NAME`, and `GIT_BOT_EMAIL`. Pick an engine branch/tag known to contain the documented behavior; prefer a maintained pinned tag. The example clone accepts a branch/tag, not an arbitrary SHA. Installing a newer local CLI does not change the engine clone used by CI.
-5. Configure squash messages to use PR titles, disable rebase merging, and configure a separate test workflow/check for PR validation. The version workflow is a mutating push workflow, not a PR test. Require the intended reviews/checks, with a planned one-time seed exception before final branch protection is enabled.
+Restart your shell, then run `git-tools --help`. If it is not on PATH, run `uv tool update-shell` and restart again; see [installation](../../README.md#install) for completion setup.
 
-Keep exactly one version adapter active. Use full history and tags, serialize version-producing operations, and wait for successful publication after **every** push/merge below. A bot-generated bump can trigger another run that skips; wait until publication is complete. On failure, stop and inspect [publication/recovery](../publication.md), not force-push or repeat bootstrap.
+In **your own** GitHub account or organization, create an **empty** `greeting-demo` repository: no generated README, license, or `.gitignore`. The next section creates its local checkout and configures Actions before the first push.
+
+**Optional generated prose:** the fixed `git commit -m` commands and CI need no LLM. If you use `git-tools commit` or `git-tools pr`, configure a provider/model with `git-tools settings` before the first use; prefer its masked credential prompt. See [configuration](../configuration.md).
+
+**Working rule:** keep one version adapter, full history, and current tags. After each version-producing push/merge, wait for publication, pull the bot commit, and fetch tags. A follow-up bot run may skip. On failure, stop and use [recovery](../publication.md), not force-push or another bootstrap.
 
 ## 2. Seed master at the required baseline and publish 0.1.0
 
-From the tool checkout run `cd ..` to return to its parent, then create the separate application directory:
+Return explicitly to your chosen parent after the shell restart. Replace `YOUR_NAME` / `YOUR_EMAIL` with **your human Git identity**, and `YOUR_USERNAME_OR_ORG` with the owner of your new GitHub repository. Keep the SSH user `git@` unchanged:
 
 ```bash
+cd "$HOME/projects"
 mkdir greeting-demo
 cd greeting-demo
 git init -b master
-git remote add origin git@github.com:<owner>/greeting-demo.git
+git config user.name 'YOUR_NAME'
+git config user.email 'YOUR_EMAIL'
+git remote add origin git@github.com:YOUR_USERNAME_OR_ORG/greeting-demo.git
 git-tools init --version 0.0.1 --tag-format '$version'
 mkdir -p .github/workflows
+cp "$HOME/projects/git-tools/.github/workflows/version-bump-git-flow-variant-release-led.yml.example" .github/workflows/version-bump-git-flow-variant-release-led.yml
 ```
-Now copy/configure the adapter from step 1 into `.github/workflows/version-bump-git-flow-variant-release-led.yml`. Create `README.md` containing `# Greeting demo` and `.gitignore` containing `__pycache__/`. Inspect `.cz.toml`: its version must be `0.0.1`, not `0.1.0`. Do not manually create a bootstrap tag. If adding a package manifest, its starting version must also be `0.0.1`.
+
+**Before the first push, complete [GitHub setup](setup.md):**
+
+1. In the copied YAML `env:`, set `GIT_BOT_NAME` / `GIT_BOT_EMAIL` to **your dedicated automation identity**, not your human identity or David's. Keep the upstream `GIT_TOOLS_REPO`; choose a supported engine branch/tag in `GIT_TOOLS_REF` (not a bare SHA). Local installation does not change CI's engine clone.
+2. Follow [key setup](setup.md#prepare-keys-and-set-the-exact-secrets): use an existing dedicated automation GPG key **or create one first**, print its private block and paste it into Actions secret **`BOT_GPG_SECRETKEY`**, and read the dedicated SSH private key into **`BOT_SSH_SECRETKEY`** using the copy block above. Register matching public keys separately **only if not already configured**. Do not save a private-key export file.
+3. Use PR-title squash messages, disable rebase, and add separate read-only PR tests. Grant the SSH identity write access and narrow bot protection exceptions; `GITHUB_TOKEN` permission alone is insufficient. Plan the one-time seed exception before final protections.
+
+Create `README.md` containing `# Greeting demo` and `.gitignore` containing `__pycache__/`. Confirm `.cz.toml` is **`0.0.1`**, not `0.1.0`; any managed package version must match. Do not create a bootstrap tag manually.
 
 ```bash
 git add README.md .gitignore .cz.toml .github/workflows
@@ -242,9 +274,13 @@ If the ancestry check fails because master advanced, stop this timeline and sync
 ## 8. Promote the release through GitHub, then wait for stable publication
 
 ```bash
-git fetch origin --tags
-git-tools pr --base master --release-pr
+git fetch origin master --tags
+git merge-base --is-ancestor origin/master HEAD
+git-tools pr --base origin/master --release-pr
 ```
+
+Fetching updates `origin/master`, not local `master`; promotion helpers therefore explicitly use `--base origin/master`. If the ancestry check fails, stop and synchronize/revalidate the candidate as described above before generating text or promoting. The same rule applies to the hotfix helper below.
+
 In GitHub create **`release/0.2.0` → `master`**, title **`Release 0.2.0`**. Inspect the diff: it contains the greeting and stabilization work, not farewell; `.cz.toml` carries **`0.2.0-rc.1`** in this uninterrupted example. Obtain review and green PR checks, squash-merge with final subject `Release 0.2.0`, and **retain the source branch** (disable automatic deletion or explicitly keep it).
 
 Wait for master's post-merge version job: stable **`0.2.0`**, tag **`0.2.0`**. Creating or approving the PR alone does not publish stable.
@@ -330,7 +366,7 @@ git tag --list '0.3.0-alpha.*'
 At this point only `0.3.0-alpha.0` is tagged on that line. Version-only/no-op backmerges do **not** advance alpha; a develop line not yet ahead can instead catch up/finalize to the promoted stable version without a tag. Do not expect a new tag from either backmerge kind. Once the real fixes are confirmed on develop, the release source and temporary branches can be deleted; retain `hotfix/*` similarly until its own backmerge finishes. Do not repeatedly reuse a squash-promoted branch for later releases.
 
 
-Before beginning the hotfix, publish a normal next-cycle checkpoint. This matters particularly for squash-only reviewed synchronization: copying an **untagged** develop version into a squash commit can drop the original bot history anchor. A tagged checkpoint avoids that problem without direct pushes or fabricated tags.
+Before beginning the hotfix, publish a normal next-cycle checkpoint. This matters particularly for reviewed develop synchronization completed with squash: copying an **untagged** develop version into a squash commit can drop the original bot history anchor. A tagged checkpoint avoids that problem without direct pushes or fabricated tags.
 
 ```bash
 git switch -c feature/farewell-docs
@@ -395,11 +431,18 @@ git fetch origin --tags
 git fetch origin master
 git merge-base --is-ancestor origin/master HEAD
 python -m unittest discover -s tests
-git-tools pr --base master --hotfix-pr
 ```
 The master ancestry check succeeds in this serialized story: hotfix contains stable `0.2.0`. If master has advanced, stop and synchronize the new stable changes before promotion, keeping the intended patch RC and re-testing. Use a direct synchronization merge on the hotfix with subject `chore: merge master for hotfix`, push, wait CI, and pull/fetch. If master's next-patch target changed, reassess the target rather than forcing a stale version.
 
 ## 12. Promote the hotfix and wait for stable 0.2.1
+
+Refresh the promotion base again; if ancestry fails or the next-patch target changed, stop and return to the synchronization/reassessment route above:
+
+```bash
+git fetch origin master --tags
+git merge-base --is-ancestor origin/master HEAD
+git-tools pr --base origin/master --hotfix-pr
+```
 
 In GitHub create **`hotfix/missing-name` → `master`**, title **`Hotfix 0.2.1`**. The proposed tree must carry `0.2.1-rc.0`, the missing-name fix and regression test, and current stable master state, but not farewell. Review, pass checks, and squash-merge with final subject `Hotfix 0.2.1`. **Keep the hotfix source branch.**
 
@@ -516,3 +559,57 @@ git push -u origin release/0.3.0
 ## Why the expected results are conditional
 
 The engine's behavior is covered by `tests/test_git_flow_strategy.py`, `tests/test_backmerge_content.py`, and `tests/test_hotfix_backmerge.py`; implementation is in `git_tools/generators/bumpgen/{strategy,rules,repo}.py`. Backmerge content is compared against the target commit's **first parent**, ignoring only actual managed version-field changes, not whole manifests or lockfiles. Different diffs, subjects, merge styles, extra CI-producing pushes, stale refs, or a different remote engine ref can legitimately change the result. Check `.cz.toml`, bot commits, remote refs, and tags at each checkpoint rather than manufacturing a missing tag or asserting that opening a PR performed a release.
+
+## Flow policy and edge cases
+
+Use these rules outside the concrete timeline; commands run in your application checkout. Release-led lets the **release branch** select the final release line.
+
+### Feature and Bugfix Policy
+
+Ordinary feature/bugfix PRs into develop use Conventional Commit titles and create/continue tagged alpha versions. A real first PR on a fresh develop line may optionally use `Start X.Y.Z` while branch commits remain Conventional Commits. Unlike Classic, release-led does not require this Start title after a release cut.
+
+### Release-Line Policy
+
+`release/X.Y.Z` selects the target tuple, validated against stable master; cutting it alone does not open `rc.0`. Develop may continue its existing alpha independently. The worked journey optionally uses `Start 0.3.0` to separate next-cycle work; that is a choice, not a release-led requirement.
+
+To explicitly open a new cycle later, use a real feature/bugfix branch and `git-tools pr --base develop --start-pr --workflow-version A.B.C`, replacing `A.B.C` with a valid forward tuple. Complete it as `Start A.B.C` for tagged `A.B.C-alpha.0`. A Backmerge title never opens a new cycle.
+
+### Merge Strategy
+
+This journey uses PR-title **squash merges**. Direct release-led also supports merge commits with the final subject equal to the PR title; see [merge settings](setup.md#merge-settings). Do not use rebase, the factory-default `Merge pull request #...` subject, or switch styles midway through the example.
+
+### Synchronization Policy
+
+Direct stabilization/synchronization pushes are permitted on release/hotfix lines in this mode. Current-master synchronization before promotion still matters. If every human change needs review, use the [release-led reviewed guide](release-led-reviewed-walkthrough.md), including its inner synchronization PRs.
+
+### Release Stabilization and Promotion
+
+Branch creation does not open RC. The first meaningful Conventional Commit opens the branch-selected `X.Y.Z-rc.0`; later eligible commits continue that line. If genuinely no stabilization change is needed, an approved direct empty `git commit --allow-empty -m "chore: open release"` is an alternative initialization, not an additional required step. Push, wait for CI, and use its actual version; this changes the sample timeline.
+
+Include current master and the expected RC, synchronize/re-test if master advances, and promote into master with `Release X.Y.Z`. Wait for stable publication before backmerge.
+
+### Release Backmerge
+
+Use `Backmerge Release X.Y.Z` into develop. Preserve an ahead alpha line; meaningful unique fixes advance it once without tagging. No-op/version-only changes do not advance it. Develop not yet ahead may catch up to stable `X.Y.Z` without a tag; open a later real cycle with `Start A.B.C` when wanted.
+
+Follow the [source synchronization](#9-synchronize-the-retained-release-source-for-backmerge) and [develop-based integration PR](#10-backmerge-through-a-develop-based-integration-pr) rather than squashing the retained source directly. Preserve develop's current version in the integration diff **only when its alpha release tuple is ahead of the promoted target**, not an untagged preparation version. Otherwise use the [stable-catch-up procedure](#stable-catch-up-when-develop-is-not-ahead). Keep `.cz.toml` and managed manifest versions consistent with the intended target line; never resolve versions by lexical string order.
+
+### Stable catch-up when develop is not ahead
+
+The numbered `0.3.0-alpha.*` backmerge is the **ahead-alpha case only**. Compare numeric release tuples, not prerelease counters or lexical strings: `0.2.0-alpha.N` is not ahead of promoted stable `0.2.0`. This procedure also applies to hotfix backmerges when develop is not ahead of the promoted patch.
+
+1. Finish promotion and fetch its existing stable tag. Complete the retained source's synchronization through the permitted direct or reviewed lane. Wait for any no-tag preparation job and pull its result. That source version is intermediate: setting stable before the exact `chore: merge develop for backmerge` subject is not sufficient, because its special rule can open another RC.
+2. Update develop, fetch tags, and create a fresh `integration/*` branch **from develop**, as in the numbered integration recipe. Merge the retained prepared source with `git merge --no-ff --no-commit <source-ref>`, replacing `<source-ref>` with the fetched release/hotfix ref. Retain all published fixes and continued develop work.
+3. Before committing this integration, resolve **only the managed version fields** in `.cz.toml` and synchronized manifests/lockfiles to the **already-published stable target `X.Y.Z`**, not develop's same-line alpha or the source's preparation version. Preserve all other settings, dependencies, and application changes; do not restore whole manifests from master. For example, backmerging `Release 0.2.0` into `0.2.0-alpha.N` must propose stable `0.2.0` at the develop boundary.
+4. Test and commit the integration, push it, and open its reviewed PR into develop with final title `Backmerge Release X.Y.Z` or `Backmerge Hotfix X.Y.Z`. Generate the title using the matching `git-tools pr --base develop --backmerge-release-pr --workflow-version X.Y.Z` or `--backmerge-hotfix-pr --workflow-version X.Y.Z`. Replace `X.Y.Z` with the historical promoted target. Squash-merge as in the numbered GitHub recipe; never promote this integration to master.
+5. Verify develop contains the fixes and stable `X.Y.Z`. Its version job **skips because the boundary already matches stable**, including version-only backmerges; it must not advance the old alpha or create another stable tag. Open the next cycle later with a real `Start A.B.C` PR. The alternate histories are covered by `tests/test_backmerge_catchup.py`.
+
+### Hotfix Stabilization and Promotion
+
+Start from published stable master. Creating `hotfix/*` alone does not open RC; the first meaningful Conventional Commit selects the next patch `rc.0`, and later eligible commits continue it. The same optional direct empty `chore: open release` initialization is available only as an alternative to real stabilization work.
+
+Include current master, re-test if it moves, and reassess the patch target if necessary. Promote with `Hotfix X.Y.Z`, then wait for stable publication.
+
+### Hotfix Backmerge
+
+Use `Backmerge Hotfix X.Y.Z` into develop. The helper's explicit `--workflow-version` is the **already-promoted patch**, not master's next patch or the synchronized source's alpha. Ahead-alpha, stable-catch-up, no-op, no-tag, and version-resolution rules match release backmerge. Follow the [hotfix synchronization](#13-synchronize-the-retained-hotfix-source-through-the-proper-lane) and [integration PR](#14-backmerge-the-hotfix-without-downgrading-develop); never promote the combined source again.

@@ -88,7 +88,7 @@ The engine and strategy modules must stay stdlib-only: CI adapters import them f
 | `generator.py` | Interactive `BumpGenerator` over the engine |
 | `cli.py`, `__main__.py` | Argparse entry point for `python -m git_tools.generators.bumpgen` |
 
-Imports flow one way: `errors` → `version` → `conventions` → `targets` → `config` → `git` → `repo` → `engine`, and `decision` → `rules` → `strategy`. Keep new code on that line rather than importing back toward `engine` or `strategy`.
+Dependency layers run from low-level to high-level: `errors` → `version` → `conventions` → `targets` → `config` → `git` → `repo` → `engine`, and `decision` → `rules` → `strategy`. These arrows show layering, not literal Python import direction: higher-level modules import lower-level dependencies. Keep dependencies pointed toward the lower-level modules rather than importing back toward `engine` or `strategy`.
 
 ### `initgen/`
 

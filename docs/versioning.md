@@ -2,6 +2,19 @@
 
 [Documentation index](README.md) · [CLI reference](usage.md#bump) · [Workflow modes](git-flow-guide.md)
 
+## Common tasks
+
+| What you need | Start here |
+| --- | --- |
+| Preview a bump without changing files | `git-tools bump --dry-run` in your application repository |
+| Print only the next version | `git-tools bump --get-next` |
+| Update only `.cz.toml` | [Disable auxiliary sync](#disabling-auxiliary-sync-local-and-ci) |
+| Sync only the root app, not child tools | [Set the directory allowlist](#optional-directory-allowlist) to `["."]` |
+| Check supported manifests/lockfiles | [Automatic targets](#automatic-targets) |
+| Recover failed CI publication | [Publication and recovery](publication.md) |
+
+Direct `git-tools bump` writes files, commits, and normally tags; it does not push. Keep the index empty before applying and review the full diff. Read the [current limitations](#current-limitations) before custom selectors or planning around unusual filesystem paths.
+
 ## Authority
 
 **`.cz.toml` is the sole authority for the current version, next version, and Git tag format.** Other files never determine or override these values.
@@ -44,6 +57,8 @@ Or optionally override it for one local `uv` execution:
 ```sh
 GIT_TOOLS_BUMP_SYNC_AUXILIARY=false uv run git-tools bump --yes
 ```
+
+The bump engine reads this override from the **process environment**, not automatically from `git-tools.env` or `~/.git-tools/settings.env`; export it or use the command prefix shown above.
 
 Precedence is **environment variable > `.cz.toml` `sync_auxiliary` > `true`**. The TOML setting must be a boolean, not a quoted string; invalid TOML setting types fail even when an environment override is present. Environment values are case-insensitive and trimmed: `true`/`false`, `1`/`0`, `yes`/`no`, or `on`/`off`. An empty or unrecognized environment value raises `ConfigError` rather than silently enabling or disabling sync.
 

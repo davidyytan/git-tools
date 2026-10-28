@@ -31,8 +31,7 @@ git config user.email "YOUR_EMAIL"
 git remote add origin "https://dev.azure.com/YOUR_ORG/YOUR_PROJECT/_git/YOUR_REPOSITORY"
 git-tools init --version 0.0.1 --tag-format '$version'
 mkdir -p .azure/workflows
-cp "$HOME/projects/git-tools/.azure/workflows/version-bump-git-flow-classic.yml.example" \
-  .azure/workflows/version-bump-git-flow-classic.yml
+cp "$HOME/projects/git-tools/.azure/workflows/version-bump-git-flow-classic.yml.example" .azure/workflows/version-bump-git-flow-classic.yml
 ```
 
 Before running CI, follow [Azure setup](setup.md):

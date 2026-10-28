@@ -64,8 +64,7 @@ git config user.email 'YOUR_EMAIL'
 git remote add origin git@github.com:YOUR_USERNAME_OR_ORG/greeting-demo.git
 git-tools init --version 0.0.1 --tag-format '$version'
 mkdir -p .github/workflows
-cp "$HOME/projects/git-tools/.github/workflows/version-bump-git-flow-variant-release-led.yml.example" \
-  .github/workflows/version-bump-git-flow-variant-release-led.yml
+cp "$HOME/projects/git-tools/.github/workflows/version-bump-git-flow-variant-release-led.yml.example" .github/workflows/version-bump-git-flow-variant-release-led.yml
 ```
 
 **Before the first push, complete [GitHub setup](setup.md):**

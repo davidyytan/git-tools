@@ -61,8 +61,7 @@ mkdir -p .azure/workflows
 Copy the classic adapter into this application. If you chose a different tool-checkout location, replace the absolute source path:
 
 ```bash
-cp "$HOME/projects/git-tools/.azure/workflows/version-bump-git-flow-classic.yml.example" \
-  .azure/workflows/version-bump-git-flow-classic.yml
+cp "$HOME/projects/git-tools/.azure/workflows/version-bump-git-flow-classic.yml.example" .azure/workflows/version-bump-git-flow-classic.yml
 ```
 
 In that YAML set `GIT_TOOLS_REPO` to the public git-tools repository and `GIT_TOOLS_REF` to a supported branch or tag containing Azure subject normalization and the selected flow. The example uses `develop`; verify its support, or use an immutable supported tag for reproducible engine code. The adapter uses `git clone --branch`, so a bare commit SHA is not accepted. Do not activate a second adapter.

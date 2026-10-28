@@ -4,7 +4,7 @@ This guide covers contributor-facing console conventions. For CLI commands and i
 
 ## Markdown Source Formatting
 
-Do not hard-wrap Markdown prose. Keep each paragraph on one source line, regardless of length, and use editor soft wrapping for readability. Keep each list item's prose paragraph on one source line too; retain line breaks only where Markdown structure or code examples require them (headings, separate list items, tables, and code blocks). Do not add forced prose line breaks with trailing spaces, backslashes, or `<br>` tags.
+Do not hard-wrap Markdown prose. Keep each paragraph on one source line, regardless of length, and use editor soft wrapping for readability. Keep each list item's prose paragraph on one source line too; retain line breaks only where Markdown structure or code examples require them (headings, separate list items, tables, and code blocks). Do not add forced prose line breaks with trailing spaces, backslashes, or `<br>` tags. Apply the same rule to plain-text documentation and prose comments in workflows and configuration examples. Keep shell commands on one source line unless line breaks are syntactically required, as with heredocs or control flow.
 
 ## User-Facing Guides
 

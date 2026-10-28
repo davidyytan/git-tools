@@ -58,6 +58,8 @@ Or optionally override it for one local `uv` execution:
 GIT_TOOLS_BUMP_SYNC_AUXILIARY=false uv run git-tools bump --yes
 ```
 
+The bump engine reads this override from the **process environment**, not automatically from `git-tools.env` or `~/.git-tools/settings.env`; export it or use the command prefix shown above.
+
 Precedence is **environment variable > `.cz.toml` `sync_auxiliary` > `true`**. The TOML setting must be a boolean, not a quoted string; invalid TOML setting types fail even when an environment override is present. Environment values are case-insensitive and trimmed: `true`/`false`, `1`/`0`, `yes`/`no`, or `on`/`off`. An empty or unrecognized environment value raises `ConfigError` rather than silently enabling or disabling sync.
 
 Disabled means **all auxiliary targets**: `pyproject.toml`, `uv.lock`, npm JSON files, Cargo files at the root and eligible immediate-child locations, and every custom `version_files` entry. Auxiliary files are not parsed or registered as sync targets, and auxiliary selectors are not validated or resolved; even unsafe custom selectors are inactive while sync is disabled. The reviewed-plan snapshot still inspects known metadata paths, independently of target selection. It currently attempts to read any existing non-symlink metadata path without first requiring a regular file: a FIFO can hang planning even with sync disabled. Concurrent metadata byte changes can also require a fresh plan. See [current limitations](#current-limitations). No auxiliary version updates are planned. `.cz.toml` remains the source of truth and is still bumped. Version calculation, branch/history rules, commits, tagging, and publication are not disabled by this switch.

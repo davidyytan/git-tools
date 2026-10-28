@@ -11,10 +11,12 @@ git-tools settings
 Choose **Provider** and follow the prompts:
 
 1. Select your provider.
-2. Enter its API key using the masked prompt and confirm its endpoint.
+2. Enter its API key using the masked prompt. Qwen asks for its exact plan/region endpoint first.
 3. Choose the main model.
 4. Choose routing or thinking/reasoning options when offered.
 5. Complete the flow to save.
+
+Other providers do not prompt for an endpoint in this wizard; inspect or edit **API Endpoint** separately in `git-tools settings`, or run `git-tools settings api-base <URL>`, before generation.
 
 **Before generation:** keep the intended endpoint explicitly nonblank. Known [destination/profile defects](#current-limitations) can otherwise route content to an unintended host. Check the endpoint again after switching providers. For a saved Kimi tier, explicitly select the intended tier rather than blindly accepting the picker's default.
 
@@ -77,7 +79,9 @@ Do not commit real credentials. Ordinary AI commit/issue/PR generation needs a p
 
 For normal settings loading, exported environment variables override env files; `settings.env` overrides matching values in `git-tools.env`. CLI options override their corresponding generation defaults. A stale exported variable can therefore hide a newly saved setting.
 
-The application settings readers and credential prechecks use that order, resolving aliases within each source. An exported provider-specific endpoint therefore overrides a saved shared endpoint. Empty exported variables and empty saved credentials are treated as unset. In env files, an explicitly assigned blank for endpoint, model, effort, routing, or thinking controls (including provider profiles) masks lower-priority file values; a bare variable name without `=` remains unset. A saved blank Qwen endpoint fails required configuration validation. **For other compatible providers a blank can instead become `None` and trigger an unrelated transport default; do not use blank endpoint controls.** See [current limitations](#current-limitations). The endpoint and credential rows show their application-resolved source without exposing keys; this display does not establish the actual transport destination when the endpoint is absent. After saving, an environment override remains authoritative. Endpoint lookup itself does not require valid credentials.
+The application settings readers and credential prechecks use that order, resolving aliases within each source. An exported provider-specific endpoint therefore overrides a saved shared endpoint. Empty exported variables and empty saved credentials are treated as unset. In env files, an explicitly assigned blank for endpoint, model, effort, routing, or thinking controls (including provider profiles) masks lower-priority file values; a bare variable name without `=` remains unset. A saved blank Qwen endpoint fails required configuration validation. **For other compatible providers a blank can instead become `None` and trigger an unrelated transport default; do not use blank endpoint controls.** See [current limitations](#current-limitations). The endpoint and credential rows show their application-resolved source without exposing keys; this display does not establish the actual transport destination when the endpoint is absent. An exported endpoint override remains authoritative after an endpoint save. Endpoint lookup itself does not require valid credentials.
+
+**API-key replacement exception:** explicitly entering a replacement in the API-key editor or completing the provider wizard with a new key also activates that key in the current git-tools process, including subsequent discovery/generation from the interactive menu. This does not change the parent shell's environment; a fresh invocation can use an older exported key again. Unset or update that shell export for a durable change.
 
 When `settings.env` is absent, legacy `~/.git-tools/config.env` or `$XDG_CONFIG_HOME/git-tools/config.env` (default `~/.config/git-tools/config.env`) is migrated automatically. The `.git-tools` legacy location takes priority. A failed move remains readable as a fallback; legacy files are ignored once `settings.env` exists.
 

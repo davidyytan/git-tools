@@ -178,7 +178,7 @@ git push -u origin release/0.2.0
 ```
 **Transition:** `develop` at `0.2.0-alpha.1` → new `release/0.2.0`; no PR/title and no new human commit. Wait for the workflow: it should skip (there is no unique human stabilization commit), leaving **`0.2.0-alpha.1`**, **no new tag**. Merely naming/creating the branch does not open RC.
 
-Classic has already selected `0.2.0` on develop, so the release branch must match that prerelease line. The next develop PR must open a forward cycle, rather than continue producing `0.2.0-alpha.N` while release stabilizes it.
+Classic has already selected `0.2.0` on develop, so the release branch must match that prerelease line. As a process policy, the next develop PR must explicitly open a forward cycle with `Start`. In this illustrated minor-alpha sequence, ordinary feature/fix PRs would continue `0.2.0-alpha.N` while release stabilizes it; that is not a universal rule for every patch-alpha state or semantic increment.
 
 ```bash
 git switch develop
@@ -274,9 +274,13 @@ If the ancestry check fails because master advanced, stop this timeline and sync
 ## 8. Promote the release through GitHub, then wait for stable publication
 
 ```bash
-git fetch origin --tags
-git-tools pr --base master --release-pr
+git fetch origin master --tags
+git merge-base --is-ancestor origin/master HEAD
+git-tools pr --base origin/master --release-pr
 ```
+
+Fetching updates `origin/master`, not local `master`; promotion helpers therefore explicitly use `--base origin/master`. If the ancestry check fails, stop and synchronize/revalidate the candidate as described above before generating text or promoting. The same rule applies to the hotfix helper below.
+
 In GitHub create **`release/0.2.0` → `master`**, title **`Release 0.2.0`**. Inspect the diff: it contains the greeting and stabilization work, not farewell; `.cz.toml` carries **`0.2.0-rc.1`** in this uninterrupted example. Obtain review and green PR checks, squash-merge with final subject `Release 0.2.0`, and **retain the source branch** (disable automatic deletion or explicitly keep it).
 
 Wait for master's post-merge version job: stable **`0.2.0`**, tag **`0.2.0`**. Creating or approving the PR alone does not publish stable.
@@ -362,7 +366,7 @@ git tag --list '0.3.0-alpha.*'
 At this point only `0.3.0-alpha.0` is tagged on that line. Version-only/no-op backmerges do **not** advance alpha; a develop line not yet ahead can instead catch up/finalize to the promoted stable version without a tag. Do not expect a new tag from either backmerge kind. Once the real fixes are confirmed on develop, the release source and temporary branches can be deleted; retain `hotfix/*` similarly until its own backmerge finishes. Do not repeatedly reuse a squash-promoted branch for later releases.
 
 
-Before beginning the hotfix, publish a normal next-cycle checkpoint. This matters particularly for squash-only reviewed synchronization: copying an **untagged** develop version into a squash commit can drop the original bot history anchor. A tagged checkpoint avoids that problem without direct pushes or fabricated tags.
+Before beginning the hotfix, publish a normal next-cycle checkpoint. This matters particularly for reviewed develop synchronization completed with squash: copying an **untagged** develop version into a squash commit can drop the original bot history anchor. A tagged checkpoint avoids that problem without direct pushes or fabricated tags.
 
 ```bash
 git switch -c feature/farewell-docs
@@ -427,11 +431,18 @@ git fetch origin --tags
 git fetch origin master
 git merge-base --is-ancestor origin/master HEAD
 python -m unittest discover -s tests
-git-tools pr --base master --hotfix-pr
 ```
 The master ancestry check succeeds in this serialized story: hotfix contains stable `0.2.0`. If master has advanced, stop and synchronize the new stable changes before promotion, keeping the intended patch RC and re-testing. Use a direct synchronization merge on the hotfix with subject `chore: merge master for hotfix`, push, wait CI, and pull/fetch. If master's next-patch target changed, reassess the target rather than forcing a stale version.
 
 ## 12. Promote the hotfix and wait for stable 0.2.1
+
+Refresh the promotion base again; if ancestry fails or the next-patch target changed, stop and return to the synchronization/reassessment route above:
+
+```bash
+git fetch origin master --tags
+git merge-base --is-ancestor origin/master HEAD
+git-tools pr --base origin/master --hotfix-pr
+```
 
 In GitHub create **`hotfix/missing-name` → `master`**, title **`Hotfix 0.2.1`**. The proposed tree must carry `0.2.1-rc.0`, the missing-name fix and regression test, and current stable master state, but not farewell. Review, pass checks, and squash-merge with final subject `Hotfix 0.2.1`. **Keep the hotfix source branch.**
 
@@ -559,7 +570,7 @@ Ordinary feature/bugfix PRs into `develop` use Conventional Commit titles and pr
 
 ### Release-Line Policy
 
-Classic selects the release line on `develop`. After cutting `release/X.Y.Z`, the next develop PR must use `Start A.B.C`, a valid forward line, producing tagged `A.B.C-alpha.0`. Continuing ordinary develop work on `X.Y.Z-alpha.N` instead collides with the line being stabilized. The Start PR may carry real next-cycle work; it is not an extra empty step.
+Classic selects the release line on `develop`. As a process policy, after cutting `release/X.Y.Z`, the next develop PR must use `Start A.B.C`, a valid forward line, producing tagged `A.B.C-alpha.0`. In the illustrated minor-alpha sequence, ordinary feature/fix PRs would continue `X.Y.Z-alpha.N` and collide with the line being stabilized. Do not generalize that arithmetic to every patch-alpha state: a different semantic increment can select a different tuple. Explicit `Start` remains the policy for deliberate next-cycle selection; its PR may carry real work and is not an extra empty step.
 
 ### Merge Strategy
 

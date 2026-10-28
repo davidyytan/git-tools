@@ -29,7 +29,7 @@ Every transition states the branch, PR target and exact title where required, ho
 ## Read before following the commands
 
 - The numbered worked examples start with **fresh repositories**. Their bootstrap is not a migration or repair procedure for existing release history. Existing-key retrieval and the policy sections can be used independently.
-- Follow one walkthrough in order. Do not mix its merge settings or version-resolution steps with another platform's example: the GitHub walkthroughs demonstrate develop-based integration PRs, while Azure's examples retain source ancestry with merge-commit backmerges.
+- Follow one walkthrough in order. Do not mix its merge settings or version-resolution steps with another platform's example: GitHub uses squash-safe develop-based integration PRs for backmerges, but reviewed current-master synchronization before promotion requires **Create a merge commit** with the stated Conventional Commit subject and rules that allow merge commits. Azure's examples retain source ancestry with merge-commit backmerges.
 - Stop at every editing, review, CI, and verification checkpoint. The pages are not scripts to paste wholesale.
 - Keep release/hotfix branches until promotion **and** backmerge finish. Squash merges and untagged preparation bumps need the specific history safeguards documented in the chosen walkthrough.
 - The version sequences have been checked against the local engine. Hosted permissions, signing, branch protections, and publication still need validation in a test repository.

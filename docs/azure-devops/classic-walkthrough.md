@@ -64,7 +64,7 @@ Copy the classic adapter into this application. If you chose a different tool-ch
 cp "$HOME/projects/git-tools/.azure/workflows/version-bump-git-flow-classic.yml.example" .azure/workflows/version-bump-git-flow-classic.yml
 ```
 
-In that YAML set `GIT_TOOLS_REPO` to the public git-tools repository and `GIT_TOOLS_REF` to a supported branch or tag containing Azure subject normalization and the selected flow. The example uses `develop`; verify its support, or use an immutable supported tag for reproducible engine code. The adapter uses `git clone --branch`, so a bare commit SHA is not accepted. Do not activate a second adapter.
+In that YAML set `GIT_TOOLS_REPO` to the public git-tools repository and `GIT_TOOLS_REF` to a supported branch or tag containing Azure fixed workflow-title recognition and the selected flow. The example uses `develop`; verify its support, or use an immutable supported tag for reproducible engine code. The adapter uses `git clone --branch`, so a bare commit SHA is not accepted. Do not activate a second adapter.
 
 Keep full history, tag fetching, and `persistCredentials: true`. Replace these with **your own dedicated automation name/email**, matching the signing key used in step 4 (not your human author identity):
 
@@ -115,13 +115,13 @@ If the run fails, inspect its decision and publication output and the remote sta
 
 ## 5. Set PR policy and create develop from the stable bot commit
 
-Configure **Project settings → Repositories → this repository → Settings** to disable the PR-ID prefix in completion messages if available. The engine also recognizes `Merged PR 42:` on older installations. In branch policies protect `master` and `develop` with required reviews; use a separate read-only validation pipeline, not this mutating version pipeline, as a PR build policy.
+Configure **Project settings → Repositories → this repository → Settings** to disable the PR-ID prefix in completion messages. A supported engine recognizes `Merged PR 42:` for fixed workflow titles such as `Start` and `Backmerge`, but ordinary Conventional Commit increment inference does not reliably normalize it. **Ordinary squash PRs must produce a plain final subject**, such as `feat: add greeting`, without the prefix. If older hosting cannot produce that subject, stop and validate an approved alternative before following those squash steps. In branch policies protect `master` and `develop` with required reviews; use a separate read-only validation pipeline, not this mutating version pipeline, as a PR build policy.
 
 This direct-change mode permits human stabilization/synchronization pushes on `release/*` and `hotfix/*`. Permit squash and basic merge completion; the backmerge PRs below require **Merge (no fast-forward)** to preserve ancestry.
 
 Only the automation may receive a minimal administrator-approved branch-scoped exception needed for its direct version commits under required-PR policies. Do not grant humans blanket bypass. Restrict authorized YAML/signing-key access.
 
-**For every PR below:** push the source, then in **Repos → Pull requests → New pull request** select the stated source and target, enter the exact title, and create it. Review the diff, obtain required approvals/checks, choose **Complete**, choose the stated merge type, and ensure the final commit subject is the title (the recognized Azure prefix is okay). Never use rebase completion. Wait for the target's push-triggered version pipeline to finish, then run the specified pull/fetch commands. Keep release/hotfix source branches until backmerge finishes.
+**For every PR below:** push the source, then in **Repos → Pull requests → New pull request** select the stated source and target, enter the exact title, and create it. Review the diff, obtain required approvals/checks, choose **Complete**, choose the stated merge type, and ensure the final commit subject is the title (only fixed workflow titles may retain the recognized Azure prefix). Never use rebase completion. Wait for the target's push-triggered version pipeline to finish, then run the specified pull/fetch commands. Keep release/hotfix source branches until backmerge finishes.
 
 `git-tools pr` only generates text: it does **not** create or complete Azure PRs. Its descriptions must fit Azure's **4,000 UTF-16 code-unit** limit, not 4,000 bytes or necessarily 4,000 displayed characters. Azure origins enable the limit automatically; use `--azure-limit` for custom hosts. Inspect/shorten the final text even after regeneration. Fixed titles below override ordinary generated title suggestions.
 
@@ -255,13 +255,13 @@ git show 0.2.0-rc.0:.cz.toml
 ## 10. Promote release/0.2.0 to master
 
 ```bash
-git checkout master
-git pull --ff-only origin master
 git checkout release/0.2.0
 git pull --ff-only origin release/0.2.0
 git fetch origin --tags
-git-tools pr --base master --release-pr
+git-tools pr --base origin/master --release-pr
 ```
+
+The fetch refreshes `origin/master`, not your local `master` branch. The helper compares against that fetched ref; the Azure PR still targets `master`.
 
 Master is still `0.1.0`, the base from which this cycle began: no pre-promotion master sync is needed in this serial example. Create Azure PR **`release/0.2.0` → `master`**, title **`Release 0.2.0`**. Review and **Complete → Squash**, final subject `Release 0.2.0`, **without deleting the source**. Wait for the master push pipeline to finalize the merged RC: stable **`0.2.0`** and signed tag **`0.2.0`**. Develop is still `0.3.0-alpha.0`.
 
@@ -367,12 +367,10 @@ git fetch origin --tags
 ## 14. Promote the hotfix to master
 
 ```bash
-git checkout master
-git pull --ff-only origin master
 git checkout hotfix/timeout
 git pull --ff-only origin hotfix/timeout
 git fetch origin --tags
-git-tools pr --base master --hotfix-pr
+git-tools pr --base origin/master --hotfix-pr
 ```
 
 Master has not moved since this hotfix was cut, so no pre-promotion sync is needed. Create Azure PR **`hotfix/timeout` → `master`**, title **`Hotfix 0.2.1`**. Review and **Complete → Squash**, final subject `Hotfix 0.2.1`, keeping the source branch. Wait for the master push pipeline: stable **`0.2.1`** and signed tag **`0.2.1`**. Develop remains `0.3.0-alpha.2` for now.
@@ -470,9 +468,9 @@ You are now developing 0.3.0 while master is stable 0.2.1. For the next release,
 
 ## 17. Handle divergence safely and check the completed sequence
 
-The concrete run deliberately had no concurrent master updates before either promotion. In real work, re-fetch master before each promotion. If it moved, merge its actual changes into the candidate and resolve version files to the intended candidate line before promoting; never discard a production fix.
+The concrete run deliberately had no concurrent master updates before either promotion. In real work, run `git fetch origin --tags` and inspect `origin/master` before each promotion. If it moved, merge that fetched ref's actual changes into the candidate and resolve version files to the intended candidate line before promoting; never discard a production fix.
 
-In this direct mode, merge master into the candidate locally with a suitable Conventional Commit subject, resolve conflicts, push the candidate, wait for its pipeline, then pull/fetch before promotion. A meaningful integration can advance RC. If master has already shipped the target, stop and recut/retarget appropriately instead of trying to force a stale release or hotfix line.
+In this direct mode, merge `origin/master` into the candidate locally with a suitable Conventional Commit subject, resolve conflicts, push the candidate, wait for its pipeline, then pull/fetch before promotion. A meaningful integration can advance RC. If master has already shipped the target, stop and recut/retarget appropriately instead of trying to force a stale release or hotfix line.
 
 After a squash promotion, the paired master/develop preparation merges above deliberately stay local until their final prep subject is ready. In reviewed mode they stay on the helper until its inner PR is completed. This avoids publishing an intermediate source with stable or mismatched version state. Backmerge-prepared sources must never be promoted again.
 
@@ -507,7 +505,7 @@ Most `feature/*` and `bugfix/*` PRs into `develop` use Conventional Commit title
 
 ### Release-Line Policy
 
-**Classic chooses the release line on `develop`.** After cutting `release/X.Y.Z`, the first PR for the next develop cycle must land as `Start A.B.C`, where `A.B.C` is a valid forward step above `X.Y.Z`. Use `git-tools pr --base develop --start-pr --workflow-version A.B.C` to generate that fixed title. It opens tagged `A.B.C-alpha.0`; an ordinary feature instead continues `X.Y.Z-alpha.N` and collides with the line being stabilized.
+**Classic chooses the release line on `develop`.** After cutting `release/X.Y.Z`, the first PR for the next develop cycle must land as `Start A.B.C`, where `A.B.C` is a valid forward step above `X.Y.Z`. Use `git-tools pr --base develop --start-pr --workflow-version A.B.C` to generate that fixed title. This explicit Start is a process policy and opens tagged `A.B.C-alpha.0`. In the illustrated minor-alpha example, an ordinary feature instead continues `0.2.0-alpha.N` and collides with the line being stabilized; this is not universal for patch-alpha lines, where a `feat` can select the next minor tuple.
 
 ### Release Stabilization and Promotion
 
@@ -541,7 +539,7 @@ Use `Backmerge Hotfix X.Y.Z`, where `X.Y.Z` is the historical promoted hotfix, n
 
 ### Merge Strategy
 
-Ordinary PRs may use squash or merge commits when their final subject is the PR title. Prohibit rebase completion. The synchronization/boundary steps in this guide specifically require **Merge (no fast-forward)** to retain ancestry and untagged anchors; permission to squash ordinary PRs does not extend to those steps. Azure's optional `Merged PR <id>:` prefix is normalized by a supported engine.
+Ordinary PRs may use squash or merge commits when their final subject is the PR title. Prohibit rebase completion. The synchronization/boundary steps in this guide specifically require **Merge (no fast-forward)** to retain ancestry and untagged anchors; permission to squash ordinary PRs does not extend to those steps. Use plain ordinary squash subjects; a supported engine recognizes Azure's optional `Merged PR <id>:` prefix for fixed workflow titles, not reliably for ordinary Conventional Commit increment inference.
 
 ### Synchronization Policy
 

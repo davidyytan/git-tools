@@ -140,14 +140,17 @@ Ordinary generation needs commits to describe. Fixed workflow modes can use vali
 | `--workflow-version X.Y.Z` | Explicit release tuple for Start/backmerge modes; required for noninteractive hotfix backmerge, using the already-promoted version |
 | `--pr-limit` / `--no-pr-limit` | Apply/disable the configured PR-description limit for this run, on any host; aliases: `--azure-limit` / `--no-azure-limit` |
 
-Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override. An explicit Start tuple is validated and never replaced with an inferred version; missing current/base version context produces a targeted error.
+Only one fixed-title mode may be enabled. All are off by default; a release-looking branch does not automatically enable promotion mode. Release/hotfix modes default to `master`, or `main` if discovered, while Start/backmerge modes require `develop`. The documented CI flows target `master`; select the actual target required by your chosen flow. Promotion modes validate branch/version relationships when the needed configuration is available. `--workflow-version` is not a release/hotfix target override. An explicit Start tuple is validated and never replaced with an inferred version; for that explicit target, missing current/base version context produces a targeted error.
+
+Run only the command matching your checked-out source branch and workflow. Refresh the remote-tracking targets first; these examples use `origin/master` and `origin/develop` rather than possibly stale local branches.
 
 ```bash
-git-tools pr --base develop --start-pr --workflow-version 1.7.0
-git-tools pr --base master --release-pr
-git-tools pr --base master --hotfix-pr
-git-tools pr --base develop --backmerge-release-pr --workflow-version 1.6.0
-git-tools pr --base develop --backmerge-hotfix-pr --workflow-version 1.6.1
+git fetch origin
+git-tools pr --base origin/develop --start-pr --workflow-version 1.7.0
+git-tools pr --base origin/master --release-pr
+git-tools pr --base origin/master --hotfix-pr
+git-tools pr --base origin/develop --backmerge-release-pr --workflow-version 1.6.0
+git-tools pr --base origin/develop --backmerge-hotfix-pr --workflow-version 1.6.1
 ```
 
 Hotfix backmerge uses the **already-promoted** hotfix version, not the next patch. Supply it with `--workflow-version`; interactive mode asks for it without a guessed default. Neither latest master nor a source version synchronized with develop reliably identifies that earlier promotion, so this mode does not infer a version.
@@ -177,7 +180,7 @@ git-tools bump --increment MINOR --prerelease alpha --gpg-sign
 | `--default-increment MAJOR\|MINOR\|PATCH` | Fallback for Conventional Commit types outside built-in bump rules; unset by default |
 | `--prerelease alpha\|beta\|rc` | Create/continue that prerelease channel; unset means stable release behavior |
 | `--increment-mode linear\|exact` | Prerelease bump behavior; default `linear` |
-| `--allow-no-commit` | Off; allows a bump without new commits, using PATCH when no increment is detected |
+| `--allow-no-commit` | Off; allows a bump without new commits, using PATCH as a fallback. To start a prerelease from a stable version without a detected increment, also pass `--increment` |
 | `--dry-run` | Off; compute the managed-file plan and show diffs without file/Git writes |
 | `--get-next` | Off; compute and print only the next version, without writes |
 | `--yes`, `-y` | Off; permits initial untagged history when no tags or matching prior bump anchor exist; not a general confirmation/repair flag |
@@ -200,9 +203,11 @@ A successful preview cannot guarantee that hooks, signing, or Git will succeed. 
 ## `init`
 
 ```bash
+# Choose ONE alternative for a new .cz.toml:
 git-tools init --version 0.0.1 --tag-format '$version'
+# Or accept detected defaults instead:
 git-tools init --defaults
-# Explicitly update an existing .cz.toml:
+# For an existing .cz.toml, use --force to update:
 git-tools init --force --version 1.2.3
 ```
 

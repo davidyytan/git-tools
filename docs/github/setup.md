@@ -111,11 +111,12 @@ Registering a GPG public key does not grant write access. Keep private keys out 
 
 ## Merge Settings
 
-For the walkthroughs, use **Squash and merge**, with the final commit subject equal to the stated PR title:
+For the serialized walkthroughs, use **Squash and merge**, with the final commit subject equal to the stated PR title. Reviewed synchronization of current master into a release/hotfix candidate is the narrow exception: complete that inner PR with **Create a merge commit** to preserve master's ancestry.
 
 - Enable squash merge; choose **Pull request title** or **Pull request title and description** for its default message.
 - Disable **Rebase merge**.
-- Classic, Classic reviewed, and direct release-led also support merge commits when their final subject is the PR title. Configure the default merge message accordingly, not `Merge pull request #...`. Release-led reviewed uses squash.
+- Classic, Classic reviewed, and direct release-led also support merge commits when their final subject is the PR title. Configure the default merge message accordingly, not `Merge pull request #...`. Release-led reviewed uses squash for ordinary PRs, promotions, and develop/backmerge preparation; its current-master synchronization inner PR must use **Create a merge commit**.
+- For either reviewed mode, enable repository **Allow merge commits** and ensure rules on `release/*` and `hotfix/*` permit merge commits; a linear-history requirement on those targets is incompatible with this synchronization route. Customize the final merge subject to `chore: merge master for release` or `chore: merge master for hotfix`, retain the intended RC fields and stable fixes, and re-check current-master ancestry after CI. This remains a reviewed inner PR, not a direct human push exception.
 - Use a separate read-only workflow for PR tests. The version workflow runs on pushes and **writes** commits/tags; it is not a PR validation check.
 
 Protect the intended target branches and require human reviews/checks. Narrowly allow the automation identity to push signed version commits/tags; plan the one-time seed exception before applying final protections. See [credential permissions](#credential-permissions-and-signing-limitations) for the SSH/ruleset distinction.

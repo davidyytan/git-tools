@@ -51,7 +51,7 @@ GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
 GIT_TOOLS_REF: develop
 ```
 
-Verify that the selected ref contains Azure `Merged PR <id>:` subject normalization, your classic/variant strategy, and `git_tools.generators.publish`. Prefer an immutable supported tag for reproducibility. The example uses `git clone --branch`, so a bare commit SHA is not supported. Installing a newer local CLI does not update this remote CI clone.
+Verify that the selected ref contains Azure `Merged PR <id>:` normalization for fixed workflow-title recognition, your classic/variant strategy, and `git_tools.generators.publish`. The [PR-ID caveat](#pull-request-id-setting) still applies to ordinary squash subjects. Prefer an immutable supported tag for reproducibility. The example uses `git clone --branch`, so a bare commit SHA is not supported. Installing a newer local CLI does not update this remote CI clone.
 
 Replace these values with **your own automation name and email**, matching the GPG identity selected in step 2. They need not represent an Azure user account:
 
@@ -187,7 +187,7 @@ For squash, set the final squash subject to the PR title. For merge commits, cus
 
 ### Pull Request ID Setting
 
-In **Project settings → Repositories → your repository → Settings**, disable inclusion of the PR ID in completion commit messages if available. This setting arrived in Azure DevOps Services Sprint 270; older Server versions may not expose it. A supported engine also normalizes the optional `Merged PR 42:` prefix. The rest of the subject must still match the intended title.
+In **Project settings → Repositories → your repository → Settings**, disable inclusion of the PR ID in completion commit messages. This setting arrived in Azure DevOps Services Sprint 270; older Server versions may not expose it. A supported engine recognizes the optional `Merged PR 42:` prefix for fixed workflow titles such as `Start X.Y.Z` and `Backmerge Release X.Y.Z`, but ordinary Conventional Commit increment inference does not reliably normalize it. **Ordinary squash PRs must produce a plain final subject**, such as `feat: add greeting`, without the prefix. If your hosting cannot produce that subject, stop and validate an approved alternative before following the ordinary squash steps. The rest of any recognized fixed workflow subject must still match the intended title.
 
 ## Local CLI and PR Descriptions
 

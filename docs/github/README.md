@@ -17,11 +17,11 @@ Use your own GitHub account/org, application repository, and human author identi
 | Complete guide | Release line selected by | Human stabilization changes | Merge style |
 | --- | --- | --- | --- |
 | [Classic](classic-walkthrough.md) | `develop`; next-cycle `Start` after release cut | Direct commits | Squash or PR-title merge commit |
-| [Classic — Reviewed](classic-reviewed-walkthrough.md) | Same as Classic | Inner PRs | Squash or PR-title merge commit |
+| [Classic — Reviewed](classic-reviewed-walkthrough.md) | Same as Classic | Inner PRs | Squash or PR-title merge commit; current-master sync requires a merge commit |
 | [Release-led](release-led-walkthrough.md) | `release/X.Y.Z` | Direct commits | Squash or PR-title merge commit |
-| [Release-led — Reviewed](release-led-reviewed-walkthrough.md) | Same as release-led | Inner PRs | Squash |
+| [Release-led — Reviewed](release-led-reviewed-walkthrough.md) | Same as release-led | Inner PRs | Squash; merge commit for current-master sync |
 
-The guides use squash for their worked examples. Each keeps its policy/edge-case notes at the end; there is no separate mode-reference page to follow. Reviewed modes share their base adapter: activate **one** version workflow, not one per mode. Human review is enforced by repository policy; the bot needs a narrowly approved direct-push exception for version commits.
+The guides use squash for their serialized worked examples. If master advances before promotion, reviewed modes require **Create a merge commit** for the current-master synchronization inner PR, with a customized Conventional Commit subject; repository and source-branch rules must allow that ancestry-preserving exception. Develop/backmerge preparation still follows its separate squash-safe recipe. Each guide keeps its policy/edge-case notes at the end; there is no separate mode-reference page to follow. Reviewed modes share their base adapter: activate **one** version workflow, not one per mode. Human review is enforced by repository policy; the bot needs a narrowly approved direct-push exception for version commits.
 
 ## How It Works
 

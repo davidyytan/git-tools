@@ -13,7 +13,7 @@ Choose your platform and **one** mode. Each link below is a complete guide with 
 | Release-led | `release/X.Y.Z` selects it | Direct commits allowed | [Complete guide](github/release-led-walkthrough.md) | [Complete guide](azure-devops/release-led-walkthrough.md) |
 | Release-led — Reviewed | Same as release-led | Inner PRs required | [Complete guide](github/release-led-reviewed-walkthrough.md) | [Complete guide](azure-devops/release-led-reviewed-walkthrough.md) |
 
-For the closest classic Git Flow experience, choose Classic with merge commits for feature, release, and hotfix PRs. The worked GitHub examples use squash; follow one example's completion methods consistently.
+For the closest classic Git Flow experience, choose Classic with merge commits for feature, release, and hotfix PRs. The serialized GitHub examples use squash; reviewed current-master synchronization before promotion instead requires an ancestry-preserving merge commit. Follow the chosen guide's method at each checkpoint.
 
 **Only configuring CI or copying existing keys?** Go straight to [GitHub setup](github/setup.md) or [Azure setup](azure-devops/setup.md). You do not need to repeat fresh-repository bootstrap.
 
@@ -60,7 +60,7 @@ An empty commit alone is not a reviewable inner PR. Reviewed modes require a mea
 
 Classic, Classic reviewed, and direct release-led support squash or merge commits for ordinary feature/stabilization PRs, provided the final subject is the PR title. Release-led reviewed uses squash for those ordinary PRs. **Rebase merge is not supported by these flows.**
 
-Follow the chosen guide for synchronization and backmerges: GitHub's worked recipes and Azure's ancestry-preserving recipes are not interchangeable. Azure requires **Merge (no fast-forward)** at the synchronization and boundary-backmerge steps it marks, even in release-led reviewed mode. Generated bot version commits need a narrow, approved direct-push exception to review policies.
+Follow the chosen guide for synchronization and backmerges. On GitHub, reviewed current-master synchronization into a release/hotfix candidate requires **Create a merge commit**, with the stated Conventional Commit subject; repository and source-branch rules must permit merge commits. Do not squash or rebase that inner PR, because master's ancestry must survive. This exception does not change GitHub's squash-safe develop synchronization and integration-PR backmerge recipes. Azure requires **Merge (no fast-forward)** at the synchronization and boundary-backmerge steps it marks, even in release-led reviewed mode. Generated bot version commits need a narrow, approved direct-push exception to review policies; in reviewed modes, humans still use PRs.
 
 ## Local title helpers
 
@@ -69,12 +69,14 @@ These commands generate commit or PR text; `pr` does **not** create or merge a h
 ```bash
 git-tools commit --workflow-kind open-release
 git-tools pr --base develop --start-pr --workflow-version X.Y.Z
-git-tools pr --base master --release-pr
-git-tools pr --base master --hotfix-pr
+git fetch origin master
+git-tools pr --base origin/master --release-pr
+git fetch origin master
+git-tools pr --base origin/master --hotfix-pr
 git-tools pr --base develop --backmerge-release-pr --workflow-version X.Y.Z
 git-tools pr --base develop --backmerge-hotfix-pr --workflow-version X.Y.Z
 ```
 
-Replace `X.Y.Z` before running. For hotfix backmerge, it must be the **already-promoted hotfix version**, not the next patch. Direct mode requires it; interactive mode asks without guessing. Start and release-backmerge can infer a tuple when repository context permits. Explicit Start input still needs readable current/base versions and a valid next-cycle transition.
+Replace `X.Y.Z` before running. Refresh `origin/master` immediately before either promotion helper; a fetch updates the remote-tracking ref but does **not** move local `master`, so these helpers explicitly use `--base origin/master`. If master changes, synchronize/revalidate the candidate first and reassess the hotfix's next-patch target. For hotfix backmerge, `X.Y.Z` must be the **already-promoted hotfix version**, not the next patch. Direct mode requires it; interactive mode asks without guessing. Start and release-backmerge can infer a tuple when repository context permits. Explicit Start input still needs readable current/base versions and a valid next-cycle transition.
 
 Direct `commit` creates a commit by default; use `--no-commit --no-copy` to preview. See the [CLI reference](usage.md) for exact options. If publication fails, inspect the remote state and use [recovery](publication.md), not force-push or another bootstrap.

@@ -18,8 +18,8 @@ This is a Python module entry point, **not** a `git-tools publish` subcommand.
 | --- | --- |
 | `--branch NAME` | Required destination branch; pushes local `HEAD` to `refs/heads/NAME` |
 | `--remote NAME` | Remote name or URL; default `origin`. Empty values and values starting with `-` are rejected |
-| `--create-tag true\|false` | Default `false`: publish only the branch. `true` also publishes the exact configured version tag |
-| `--recover-tag` | Publish only the expected version tag after checking the remote branch tip equals local `HEAD`; implies tag validation regardless of `--create-tag` |
+| `--create-tag true\|false` | Default `false`: request branch-only publication. `true` also requests the exact configured version tag; Git configuration can add tags as described below |
+| `--recover-tag` | Request the expected version tag without a branch update after checking the remote branch tip equals local `HEAD`; implies tag validation regardless of `--create-tag` |
 
 `--create-tag true` is a literal argument value, not a standalone Boolean flag. The publisher does not compute a version, create a commit/tag, choose a CI strategy, or call hosting APIs. It returns a nonzero exit status on failure.
 
@@ -27,14 +27,16 @@ This is a Python module entry point, **not** a `git-tools publish` subcommand.
 
 Before normal publication, the helper validates the destination branch ref and resolves local `HEAD`. When publishing a tag, it loads the bump configuration, derives the expected tag from its current version and tag format, validates the tag ref, and requires that the local tag's peeled commit equals `HEAD`.
 
-It sends these exact refspecs:
+It explicitly supplies these refspecs:
 
 ```text
 HEAD:refs/heads/<branch>
 refs/tags/<expected-tag>:refs/tags/<expected-tag>   # Only when requested
 ```
 
-It never sends all local tags and does not force updates. Normal Git permission, non-fast-forward, and existing-tag rules still apply. The `--branch` value is the **destination**; the helper does not require the checked-out branch name to match it. Verify the checkout and intended destination before running it.
+It does not request `--tags` or forced updates. Normal Git permission, non-fast-forward, and existing-tag rules still apply. The `--branch` value is the **destination**; the helper does not require the checked-out branch name to match it. Verify the checkout and intended destination before running it.
+
+Exact ref scope assumes `push.followTags` is false or unset. Check `git config --show-origin --get push.followTags`; if true, Git can add other missing annotated tags reachable from the pushed commits, even with `--create-tag false` or during recovery. If exact scope is required, deliberately disable the effective setting before publication/recovery (for a repository-local override, `git config --local push.followTags false`), verify it with `git config --get --bool push.followTags`, and inspect the remote refs afterward.
 
 The publisher checks tag identity/target, not cryptographic signatures or the cleanliness of the working tree. Signing policy must already have been enforced during tag creation. Branch-only publication does not require a version tag or load the version configuration.
 
@@ -69,16 +71,16 @@ If fallback branch publication succeeds but tag publication fails, the job fails
 
 1. Inspect the failed job and remote refs. Fix the underlying permission, conflict, or connectivity issue first.
 2. Preserve the checkout containing the original tag, particularly a signed tag. Hosted runners may discard it after the job; do not assume a fresh clone can recover an unpublished tag object.
-3. Verify that local `HEAD` equals the remote destination branch tip, the configured version matches the published bump, and its exact local version tag points to `HEAD`.
+3. Verify that local `HEAD` equals the branch tip on the actual push destination, the configured version matches the published bump, and its exact local version tag points to `HEAD`. Check both `git remote get-url --all origin` and `git remote get-url --push --all origin` (substitute your remote). If fetch and push URLs differ, check the intended push destination directly with `git ls-remote --refs <push-url> refs/heads/<branch>`; the helper's check of a named remote uses its fetch URL.
 4. From that application checkout, with the supported engine on the import path, run:
 
    ```bash
    python -m git_tools.generators.publish --branch develop --recover-tag
    ```
 
-   Substitute the actual destination branch and use `--remote <name>` if it is not `origin`. In CI-style clones, set `PYTHONPATH` to the cloned git-tools directory as the adapter does.
+   Substitute the actual destination branch and use `--remote <name-or-url>` if it is not `origin`. With split fetch/push URLs, pass the verified push destination URL explicitly using `--remote <push-url>` so the check and push address the same repository. If multiple push URLs are configured, verify and recover each intended destination separately. In CI-style clones, set `PYTHONPATH` to the cloned git-tools directory as the adapter does.
 
-Recovery performs a remote-tip check and then pushes **only the expected tag**. It does not bump the version, create a tag/commit, or update the branch. It refuses if the checked remote branch tip differs from local `HEAD`, or if the local tag targets another commit. This check is a point-in-time check, not a lock on concurrent branch movement.
+Recovery performs a remote-tip check and then requests **only the expected tag**, subject to the `push.followTags` precondition above. It does not bump the version, create a tag/commit, or update the branch. It refuses if the checked remote branch tip differs from local `HEAD`, or if the local tag targets another commit. This check is a point-in-time check, not a lock on concurrent branch movement.
 
 If the original local tag is lost, an authorized release operator must reconstruct and verify the intended tag using repository signing policy before running recovery. Do not blindly tag the newest branch tip or force-replace a conflicting remote tag. A newly created signature/tag object is not recovery of the original unpublished signed object; document any reconstruction according to release policy.
 

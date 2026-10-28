@@ -51,7 +51,7 @@ env:
   GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'true' # 'false' bumps only .cz.toml.
 ```
 
-`GIT_TOOLS_REF` selects the **tool implementation**, not an application branch. Prefer a maintained release tag containing the documented strategy; the examples currently use `develop` for Classic and `master` for release-led. Check compatibility before activation; see [engine-ref details](#tool-source-ref-and-bot-identity).
+`GIT_TOOLS_REF` selects the **tool implementation**, not an application branch. Prefer a maintained release tag containing the documented strategy; both examples currently use `develop`. Check compatibility before activation; see [engine-ref details](#tool-source-ref-and-bot-identity).
 
 ## Prepare keys and set the exact secrets
 

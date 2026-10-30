@@ -438,7 +438,7 @@ class CliTests(unittest.TestCase):
         titles = [plain_title(choice.title) for choice in choices]
         values = [choice.value for choice in choices]
 
-        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic"})
+        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic", "zcode"})
         self.assertIn(
             "OpenRouter [openrouter] — https://openrouter.ai/api/v1", titles[0]
         )

@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 from git_tools.cli import app
 from git_tools.generators.base import BaseGenerator
+from git_tools.navigation import NavigationBack
 from git_tools.settings import mappings
 from git_tools.settings.settings import GitToolsSettings, load_provider_config, settings
 
@@ -26,7 +27,7 @@ def _endpoints(*tags):
 class ProviderParityTests(unittest.TestCase):
     def test_all_core_providers_and_aliases(self):
         from git_tools.settings.settings import normalize_provider_name
-        self.assertEqual(set(mappings.PROVIDERS), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic"})
+        self.assertEqual(set(mappings.PROVIDERS), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic", "zcode"})
         self.assertEqual(normalize_provider_name("kimicode"), "kimicli")
         self.assertEqual(normalize_provider_name("claude"), "anthropic")
         self.assertEqual(normalize_provider_name("dashscope"), "qwen")
@@ -60,7 +61,7 @@ class ProviderParityTests(unittest.TestCase):
 
     def test_generic_transports_and_qwen_thinking(self):
         config = SimpleNamespace(api_key="test", base_url="https://test.invalid/v1")
-        with patch("langchain_openai.ChatOpenAI") as client, patch.object(settings, "default_reasoning_effort", "high"):
+        with patch("git_tools.generators.base.clients.create_chat_client") as client, patch.object(settings, "default_reasoning_effort", "high"):
             for provider in ("acrc", "copilot", "qwen"):
                 BaseGenerator()._create_compatible_client(provider, "qwen3.8-max", config, 0.6, 100)
             kwargs = client.call_args.kwargs
@@ -68,7 +69,7 @@ class ProviderParityTests(unittest.TestCase):
 
     def test_openrouter_pin_and_explicit_none(self):
         config = SimpleNamespace(api_key="test", base_url="https://test.invalid/v1")
-        with patch("langchain_openai.ChatOpenAI") as client, patch.object(settings, "openrouter_provider", "deepinfra"), patch.object(settings, "default_reasoning_effort", "none"):
+        with patch("git_tools.generators.base.clients.create_chat_client") as client, patch.object(settings, "openrouter_provider", "deepinfra"), patch.object(settings, "default_reasoning_effort", "none"):
             BaseGenerator()._create_openrouter_client("vendor/model", config, 0.6, 100)
         body = client.call_args.kwargs["extra_body"]
         self.assertEqual(body["provider"]["only"], ["deepinfra"])
@@ -138,12 +139,12 @@ class ProviderParityTests(unittest.TestCase):
             self.assertEqual(state["provider"], "openrouter")
             save.assert_not_called()
 
-    def test_catalog_metadata_drives_kimi_thinking(self):
+    def test_kimi_explicit_runtime_setting_is_not_overridden_by_catalog(self):
         config = SimpleNamespace(api_key="test", base_url="https://test.invalid/v1")
         model = {"model_name": "thinking-only", "supports_thinking_type": "only"}
-        with patch.dict(mappings.PROVIDERS["kimicli"]["models"], {"thinking-only": model}), patch.object(settings, "kimi_thinking", False), patch.object(settings, "default_reasoning_effort", None), patch("langchain_openai.ChatOpenAI") as client:
+        with patch.dict(mappings.PROVIDERS["kimicli"]["models"], {"thinking-only": model}), patch.object(settings, "kimi_thinking", False), patch.object(settings, "default_reasoning_effort", None), patch("git_tools.generators.base.clients.create_chat_client") as client:
             BaseGenerator()._create_kimicli_client("thinking-only", config, 0.6, 100)
-            self.assertEqual(client.call_args.kwargs["extra_body"]["thinking"]["type"], "enabled")
+            self.assertEqual(client.call_args.kwargs["extra_body"]["thinking"]["type"], "disabled")
 
     def test_effort_none_sends_nothing_for_kimi(self):
         # Kimi has no "none" tier: as in agent-core a global `none` is absence
@@ -154,7 +155,7 @@ class ProviderParityTests(unittest.TestCase):
                   "think_efforts": {"support": True, "valid_efforts": ["low", "high"]}}
         plain = {"model_name": "plain", "supports_thinking_type": "both"}
         for name, model in (("tiered", tiered), ("plain", plain)):
-            with self.subTest(model=name), patch.dict(mappings.PROVIDERS["kimicli"]["models"], {name: model}), patch.object(settings, "kimi_thinking", None), patch.object(settings, "default_reasoning_effort", "none"), patch("langchain_openai.ChatOpenAI") as client:
+            with self.subTest(model=name), patch.dict(mappings.PROVIDERS["kimicli"]["models"], {name: model}), patch.object(settings, "kimi_thinking", None), patch.object(settings, "default_reasoning_effort", "none"), patch("git_tools.generators.base.clients.create_chat_client") as client:
                 BaseGenerator()._create_kimicli_client(name, config, 0.6, 100)
                 self.assertNotIn("thinking", client.call_args.kwargs["extra_body"])
 
@@ -180,9 +181,9 @@ class ProviderParityTests(unittest.TestCase):
         self.assertTrue(any("unlisted-main" in label for label in labels))
         self.assertTrue(any("manually" in label for label in labels))
 
-    def test_generation_picker_cancel_does_not_select_fallback(self):
+    def test_generation_picker_back_does_not_select_fallback(self):
         with patch("git_tools.cli._ask_model_choice", return_value=None):
-            with self.assertRaises(KeyboardInterrupt):
+            with self.assertRaises(NavigationBack):
                 BaseGenerator(interactive=True)._interactive_model_selection(mappings.PROVIDERS["kimicli"]["models"], "kimicli")
 
     def test_generation_reports_refresh_failure_and_keeps_explicit_model(self):
@@ -198,7 +199,7 @@ class ProviderParityTests(unittest.TestCase):
             with self.subTest(value=invalid):
                 metadata = {"model_name": "bad-metadata", "supports_thinking_type": [],
                             "think_efforts": {"support": True, "valid_efforts": invalid}}
-                with patch.dict(mappings.PROVIDERS["kimicli"]["models"], {"bad-metadata": metadata}), patch.object(settings, "default_reasoning_effort", "high"), patch("langchain_openai.ChatOpenAI") as client:
+                with patch.dict(mappings.PROVIDERS["kimicli"]["models"], {"bad-metadata": metadata}), patch.object(settings, "default_reasoning_effort", "high"), patch("git_tools.generators.base.clients.create_chat_client") as client:
                     BaseGenerator()._create_kimicli_client("bad-metadata", config, 0.6, 100)
                 client.assert_called_once()
 

@@ -57,7 +57,7 @@ def captured_console(width, answers=()):
             console.print(f"❯ {message} {answer}", markup=False, soft_wrap=False)
             return answer
 
-        return SimpleNamespace(ask=ask)
+        return SimpleNamespace(application=SimpleNamespace(key_bindings=None), unsafe_ask=ask)
 
     with ExitStack() as stack:
         for module in CONSOLES:

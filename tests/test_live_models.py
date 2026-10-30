@@ -145,7 +145,7 @@ class TestResolveProviderCatalog(CatalogStateCase):
 
 class TestRefreshLiveModels(CatalogStateCase):
     def test_every_live_provider_places_the_served_catalog_in_the_registry(self) -> None:
-        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS) - {"qwen"})
+        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS) - {"qwen", "zcode"})
         self.configure()
         for provider in LIVE_MODEL_PROVIDERS:
             with self.subTest(provider=provider):
@@ -243,7 +243,7 @@ class TestRefreshLiveModels(CatalogStateCase):
         with patch.object(mappings, "_fetch_models_sync", return_value=_live("vendor/new-model")):
             self.assertTrue(refresh_live_models("openrouter"))
         self.assertEqual(PROVIDERS["openrouter"]["models"]["vendor/new-model"], {"model_name": "vendor/new-model"})
-        with patch("langchain_openai.ChatOpenAI") as client:
+        with patch("git_tools.generators.base.clients.create_chat_client") as client:
             BaseGenerator()._create_openrouter_client(
                 "vendor/new-model", SimpleNamespace(api_key="k", base_url="http://x/v1"), 0.6, 100)
         self.assertEqual(client.call_args.kwargs["extra_body"]["provider"]["data_collection"], "deny")

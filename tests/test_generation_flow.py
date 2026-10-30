@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from rich.console import Console
 
 from git_tools.cli import app
+from git_tools.navigation import NavigationBack
 from git_tools.generators.base import BaseGenerator
 from git_tools.generators.commitgen import CommitGenerator
 from git_tools.generators.issueprgen import IssuePullRequestGenerator
@@ -179,7 +180,7 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
 
         def select(message, **kwargs):
             questions.append(message)
-            return SimpleNamespace(ask=lambda: next(answers))
+            return SimpleNamespace(application=SimpleNamespace(key_bindings=None), unsafe_ask=lambda: next(answers))
 
         with contextlib.ExitStack() as stack:
             enhanced, _, _ = self._commit_boundaries(stack, generator)
@@ -202,11 +203,11 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
 
         def select(message, **kwargs):
             questions.append(message)
-            return SimpleNamespace(ask=lambda: next(answers))
+            return SimpleNamespace(application=SimpleNamespace(key_bindings=None), unsafe_ask=lambda: next(answers))
 
         def text(message, **kwargs):
             questions.append(message)
-            return SimpleNamespace(ask=lambda: "  user intent  ")
+            return SimpleNamespace(application=SimpleNamespace(key_bindings=None), unsafe_ask=lambda: "  user intent  ")
 
         with contextlib.ExitStack() as stack:
             collected, _, generate = self._issue_boundaries(stack, generator)
@@ -261,10 +262,10 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
                 with contextlib.ExitStack() as stack:
                     _, initialize, generate = self._commit_boundaries(stack, generator)
                     select = stack.enter_context(patch("git_tools.generators.base.interaction.questionary.select"))
-                    select.return_value.ask.side_effect = answers
+                    select.return_value.unsafe_ask.side_effect = answers
                     copy = stack.enter_context(patch("pyperclip.copy"))
                     commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
-                    with self.assertRaises(KeyboardInterrupt):
+                    with self.assertRaises(NavigationBack):
                         generator.generate_commit()
                 copy.assert_not_called()
                 commit.assert_not_called()
@@ -277,9 +278,9 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
         with contextlib.ExitStack() as stack:
             _, initialize, generate = self._issue_boundaries(stack, generator)
             text = stack.enter_context(patch("git_tools.generators.base.interaction.questionary.text"))
-            text.return_value.ask.return_value = None
+            text.return_value.unsafe_ask.return_value = None
             copy = stack.enter_context(patch("pyperclip.copy"))
-            with self.assertRaises(KeyboardInterrupt):
+            with self.assertRaises(NavigationBack):
                 generator.generate_issue_pullrequest()
         initialize.assert_not_called()
         generate.assert_not_called()
@@ -327,8 +328,8 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
         generator = BaseGenerator(interactive=True)
         for method, args, questionary_name in (("prompt_text", ("context", "default"), "text"), ("prompt_select", ("choice", ["first", "second"]), "select"), ("prompt_confirm", ("consent",), "select")):
             with self.subTest(method=method), patch(f"git_tools.generators.base.interaction.questionary.{questionary_name}") as question:
-                question.return_value.ask.return_value = None
-                with self.assertRaises(KeyboardInterrupt):
+                question.return_value.unsafe_ask.return_value = None
+                with self.assertRaises(NavigationBack):
                     getattr(generator, method)(*args)
 
 

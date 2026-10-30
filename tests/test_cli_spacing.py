@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from git_tools import cli
+from git_tools.navigation import BACK, NavigationBack
 from git_tools.generators.base import display, interaction, models, terminal
 from git_tools.generators.base.generator import BaseGenerator
 from git_tools.settings import settings as settings_module
@@ -51,7 +52,7 @@ def fake_questions(console, answers):
             answer = next(answers)
             console.print(f"❯ {message} {answer if answer is not None else ''}")
             return answer
-        return SimpleNamespace(ask=ask, unsafe_ask=ask)
+        return SimpleNamespace(application=SimpleNamespace(key_bindings=None), unsafe_ask=ask)
 
     return question
 
@@ -210,7 +211,7 @@ class PromptPresentationTests(unittest.TestCase):
             for kind in ("text", "select"):
                 with self.subTest(message=message, kind=kind):
                     with patch.object(interaction.questionary, kind) as question:
-                        question.return_value.ask.return_value = "answer"
+                        question.return_value.unsafe_ask.return_value = "answer"
                         if kind == "text":
                             self.assertEqual(generator.prompt_text(message, "default"), "answer")
                             self.assertEqual(question.call_args.kwargs["default"], "default")
@@ -230,17 +231,19 @@ class PromptPresentationTests(unittest.TestCase):
                 self.assertFalse(generator.prompt_confirm("Continue?", default=False))
                 generator.prompt_text("Details: ")
         self.assertEqual(output.getvalue(), "❯ Select mode: mode\n❯ Continue? No\n❯ Details: details\n")
-        self.assertEqual(select.call_args.kwargs["choices"], ["No", "Yes"])
+        choices = select.call_args.kwargs["choices"]
+        self.assertEqual(choices[:2], ["No", "Yes"])
+        self.assertEqual(choices[-1].value, BACK)
 
     def test_cancelled_text_selection_and_confirmation_still_abort(self):
         generator = BaseGenerator(interactive=True)
         with patch.object(interaction.questionary, "text") as text, patch.object(interaction.questionary, "select") as select:
-            text.return_value.ask.return_value = None
-            select.return_value.ask.return_value = None
+            text.return_value.unsafe_ask.return_value = None
+            select.return_value.unsafe_ask.return_value = None
             for ask in (lambda: generator.prompt_text("Details"),
                         lambda: generator.prompt_select("Mode", ["mode"]),
                         lambda: generator.prompt_confirm("Continue?")):
-                with self.assertRaises(KeyboardInterrupt):
+                with self.assertRaises(NavigationBack):
                     ask()
 
 
@@ -287,12 +290,13 @@ class ModelStatusSpacingTests(unittest.TestCase):
         generator = BaseGenerator(interactive=True)
         for width in WIDTHS:
             with self.subTest(width=width), captured_console(width) as (console, output):
-                def setup(_provider):
+                def setup(_message):
                     console.print("Enter your OpenRouter API key: ********")
-                    return True
+                    return "new-test-key"
                 with (
                     patch.object(settings_module, "check_api_key_configured", return_value=(False, None)),
-                    patch.object(settings_module, "setup_api_key", side_effect=setup) as saved,
+                    patch.object(generator, "prompt_password", side_effect=setup),
+                    patch.object(settings_module, "save_setting", return_value=True) as saved,
                     patch.object(interaction.questionary, "select", side_effect=fake_questions(console, ["Yes"])),
                 ):
                     self.assertTrue(generator.ensure_api_key_configured("openrouter"))
@@ -300,7 +304,7 @@ class ModelStatusSpacingTests(unittest.TestCase):
                 text = output.getvalue()
                 self.assertNotIn("\n\n\n", text)
                 self.assertRegex(text, r"saved to [\s\S]*\n\nmodel list: live")
-                saved.assert_called_once_with("openrouter")
+                saved.assert_called_once_with("OPENROUTER_API_KEY", "new-test-key")
 
 
 class SettingsSpacingTests(unittest.TestCase):
@@ -371,6 +375,7 @@ class SettingsSpacingTests(unittest.TestCase):
                 with (
                     patch.object(cli, "_has_interactive_terminal", return_value=True),
                     patch.object(cli, "_setup_logging"),
+                    patch.object(cli, "_version_line", return_value="git-tools 9.8.7"),
                     patch.object(cli, "reload_settings") as reload,
                     patch.object(cli, "_run_settings_menu", side_effect=settings_menu),
                     patch.object(cli.questionary, "select", side_effect=fake_questions(console, ["settings", "commit"])),
@@ -379,7 +384,7 @@ class SettingsSpacingTests(unittest.TestCase):
                 reload.assert_called_once_with()
                 ctx.invoke.assert_called_once_with(cli.commit, interactive=True)
                 text = output.getvalue()
-                header = f"git-tools {cli.__version__}"
+                header = "git-tools 9.8.7"
                 self.assertTrue(text.startswith(f"{header}\n❯ Select command: settings\n"), text)
                 self.assertEqual(text.splitlines().count(header), 1, text)
                 self.assertIn("settings\n\n❯ Select setting to edit:", text)

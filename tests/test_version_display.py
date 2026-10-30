@@ -29,7 +29,7 @@ class VersionDisplayTests(unittest.TestCase):
         ):
             with (
                 self.subTest(arguments=arguments),
-                patch.object(cli, "__version__", version),
+                patch.object(cli, "_version_line", return_value=f"git-tools {version}"),
                 patch.object(cli, "_setup_logging") as logging,
                 patch.object(cli, "_has_interactive_terminal") as terminal,
                 patch.object(cli.questionary, "select") as select,
@@ -53,7 +53,7 @@ class VersionDisplayTests(unittest.TestCase):
                           ["init", "--help"], ["settings", "--help"]):
             with (
                 self.subTest(arguments=arguments),
-                patch.object(cli, "__version__", version),
+                patch.object(cli, "_version_line", return_value=f"git-tools {version}"),
                 patch.object(cli, "_has_interactive_terminal", return_value=False),
                 patch.object(cli.questionary, "select") as select,
             ):
@@ -66,7 +66,7 @@ class VersionDisplayTests(unittest.TestCase):
 
     def test_direct_command_does_not_print_a_version_header(self) -> None:
         with (
-            patch.object(cli, "__version__", "9.8.7+direct-header-sentinel"),
+            patch.object(cli, "_version_line", return_value="git-tools 9.8.7+direct-header-sentinel"),
             patch.object(cli.questionary, "select") as select,
             patch("git_tools.generators.commitgen.CommitGenerator") as generator,
         ):
@@ -79,7 +79,7 @@ class VersionDisplayTests(unittest.TestCase):
 
     def test_init_version_remains_an_independent_command_option(self) -> None:
         with (
-            patch.object(cli, "__version__", "9.8.7+tool-version"),
+            patch.object(cli, "_version_line", return_value="git-tools 9.8.7+tool-version"),
             patch.object(cli.questionary, "select") as select,
             patch("git_tools.generators.initgen.CommitizenInitGenerator") as generator,
         ):
@@ -96,7 +96,7 @@ class VersionDisplayTests(unittest.TestCase):
         version = "9.8.7+[literal]"
         ctx = SimpleNamespace(invoked_subcommand=None, invoke=Mock())
         with (
-            patch.object(cli, "__version__", version),
+            patch.object(cli, "_version_line", return_value=f"git-tools {version}"),
             patch.object(cli, "_setup_logging"),
             patch.object(cli, "_has_interactive_terminal", return_value=True),
             patch.object(cli, "_run_settings_menu") as settings_menu,
@@ -104,7 +104,7 @@ class VersionDisplayTests(unittest.TestCase):
             patch.object(cli.questionary, "select") as select,
             patch.object(cli.console, "print") as printed,
         ):
-            select.return_value.ask.side_effect = ["settings", "settings", "commit"]
+            select.return_value.unsafe_ask.side_effect = ["settings", "settings", "commit"]
             cli.main(ctx)
 
         header = call(f"git-tools {version}", style="dim", markup=False)

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen
+from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen, zcode
 from git_tools.providers.catalog import (
     MODEL_CATALOG_FILENAME,
     CatalogFetchResult,
@@ -49,11 +49,10 @@ MODEL_CATALOG_PATH = Path.home() / ".git-tools" / MODEL_CATALOG_FILENAME
 
 # OpenAI models known to reject the native ``reasoning_effort`` field with
 # HTTP 400: the pre-reasoning chat lines and the ``*-chat`` variants
-# (gpt-5-chat-latest). They take a temperature, where the reasoning models
-# accept only the server's default. This is a denylist on purpose, as in
-# agent-core: a new family defaults to reasoning, so the tier works on release
-# day, and a wrong guess costs one 400 that one more entry here fixes. agent-core
-# reaches the same temperature outcome by sending OpenAI's default of 1.
+# (gpt-5-chat-latest). This classifies effort support, not temperature:
+# configured temperature is forwarded just as in agent-core. The denylist
+# defaults a new OpenAI family to reasoning; endpoint parameter acceptance
+# remains model-dependent.
 _OPENAI_NON_REASONING_PREFIXES = (
     "gpt-3",
     "gpt-4",
@@ -73,9 +72,18 @@ ANTHROPIC_API_VERSION = anthropic.API_VERSION
 anthropic_catalog_headers = anthropic.catalog_headers
 
 
+def _strip_openai_route_prefix(model_name: str | None) -> str:
+    """Lower-case the id and drop OpenRouter's ``openai/`` prefix so routed
+    ids classify the same way as the platform's own."""
+    normalized = (model_name or "").strip().lower()
+    if normalized.startswith("openai/"):
+        normalized = normalized[len("openai/"):]
+    return normalized
+
+
 def is_openai_family_model(model_id: str) -> bool:
     """Whether an id looks like one of OpenAI's own models."""
-    normalized = model_id.strip().lower()
+    normalized = _strip_openai_route_prefix(model_id)
     if normalized.startswith(_OPENAI_FAMILY_PREFIXES):
         return True
     return len(normalized) >= 2 and normalized[0] == "o" and normalized[1].isdigit()
@@ -83,14 +91,14 @@ def is_openai_family_model(model_id: str) -> bool:
 
 def is_known_non_reasoning_openai_model(model_id: str) -> bool:
     """Whether an OpenAI id is on the list that rejects ``reasoning_effort``."""
-    normalized = model_id.strip().lower()
+    normalized = _strip_openai_route_prefix(model_id)
     if normalized.startswith(_OPENAI_NON_REASONING_PREFIXES):
         return True
     return any(marker in normalized for marker in _OPENAI_NON_REASONING_MARKERS)
 
 
 def is_openai_reasoning_model(model_id: str, *, platform: bool = False) -> bool:
-    """Whether a model reads ``reasoning_effort`` (and refuses a temperature).
+    """Whether a model reads OpenAI's native ``reasoning_effort`` field.
 
     Denylist, not allowlist: within OpenAI's family every model reads the
     field except the known non-reasoning ones, so an unlisted new family
@@ -99,7 +107,7 @@ def is_openai_reasoning_model(model_id: str, *, platform: bool = False) -> bool:
     counts. Proxies fronting mixed catalogs (CLIProxyAPI, Copilot, ACRC) keep
     the family check so a Claude or DeepSeek id never gets the field.
     """
-    normalized = model_id.strip().lower()
+    normalized = _strip_openai_route_prefix(model_id)
     if not normalized:
         return False
     if not platform and not is_openai_family_model(normalized):
@@ -179,7 +187,8 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
     },
     qwen.PROVIDER_ID: {
         "label": "Qwen / DashScope", "aliases": qwen.ALIASES,
-        "api_key_env": "DASHSCOPE_API_KEY", "config_class": "QwenConfig",
+        "api_key_env": qwen.API_KEY_ENVS[0], "api_key_env_aliases": qwen.API_KEY_ENVS[1:],
+        "config_class": "QwenConfig",
         # No endpoint on purpose (see the module): the host depends on the
         # plan, region and workspace, so the flow asks for it.
         "default_base_url": qwen.PRESET.get("base_url", ""),
@@ -234,6 +243,13 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "default_model": anthropic.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
         "models": _static_models(anthropic.MODELS),
+    },
+    zcode.PROVIDER_ID: {
+        "label": "Z.ai GLM Coding Plan", "aliases": zcode.ALIASES,
+        "api_key_env": zcode.API_KEY_ENV, "config_class": "ZCodeConfig",
+        "default_base_url": zcode.BASE_URL, "default_model": zcode.DEFAULT_MODEL,
+        "live_models": False, "allow_manual_model": True, "curated_models": True,
+        "models": _static_models(zcode.MODELS),
     },
 }
 
@@ -406,7 +422,7 @@ def resolve_provider_catalog(provider: str, base_url: str, api_key: str) -> Cata
       list with the error carried along when the call cannot be made.
       OpenAI's is narrowed to chat models; Anthropic's comes from the native
       Models API with its own headers.
-    - Qwen: the module's curated list; nothing is fetched.
+    - Qwen, Zcode: the module's curated list; nothing is fetched.
     - OpenRouter, CLIProxyAPI, Copilot: exactly what the endpoint lists.
     """
     provider = _normalize_provider_key(provider)
@@ -416,6 +432,8 @@ def resolve_provider_catalog(provider: str, base_url: str, api_key: str) -> Cata
         return acrc.resolve_catalog(_fetch_catalog(_fetch_models_sync, base_url, api_key))
     if provider == qwen.PROVIDER_ID:
         return qwen.catalog()
+    if provider == zcode.PROVIDER_ID:
+        return zcode.catalog()
     if provider == openai.PROVIDER_ID:
         return openai.resolve_catalog(_fetch_catalog(_fetch_models_sync, base_url, api_key))
     if provider == anthropic.PROVIDER_ID:

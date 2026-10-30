@@ -6,6 +6,7 @@ import questionary
 
 from git_tools.settings.mappings import PROVIDERS, refresh_live_models
 from git_tools.settings.settings import normalize_provider_name, settings
+from git_tools.navigation import NavigationBack
 
 from .terminal import TYPER_STYLE, console, error, print_panel, success, warning
 from rich.markup import escape
@@ -51,7 +52,8 @@ class ModelSelectionMixin:
         from git_tools.settings.settings import (
             check_api_key_configured,
             provider_label,
-            setup_api_key,
+            provider_api_key_env,
+            save_setting,
         )
 
         provider = normalize_provider_name(provider)
@@ -71,7 +73,8 @@ class ModelSelectionMixin:
         console.print()
         if self.prompt_confirm(f"Set up your {provider_label(provider)} API key now?", default=True):
             from git_tools.settings.settings import DEFAULT_SETTINGS_PATH
-            if setup_api_key(provider):
+            key = self.prompt_password(f"Enter your {provider_label(provider)} API key").strip()
+            if key and save_setting(provider_api_key_env(provider), key):
                 console.print()
                 success(f"API key saved to {DEFAULT_SETTINGS_PATH}")
                 console.print()
@@ -195,7 +198,7 @@ class ModelSelectionMixin:
                 style=TYPER_STYLE, qmark="❯", instruction="",
             ))
         if selected is None or not selected.strip():
-            raise KeyboardInterrupt  # Cancel; never silently pick a different model.
+            raise NavigationBack  # Back is distinct from Ctrl+C; never select a fallback.
         return selected.strip()
 
     def _get_temperature_input(

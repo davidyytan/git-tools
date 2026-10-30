@@ -1,18 +1,13 @@
 """Provider integrations and shared provider infrastructure.
 
-Copied from agent-cli (``agent_cli/providers``), byte for byte where a module
-exists there, so the catalog codecs, endpoint discovery and presets are the
-ones that repo has already proven. One module per provider, each naming its
-``PROVIDER_ID`` (agent-core's canonical key), ``PRESET`` (what a fresh profile
-is seeded with), ``ALIASES`` (what the user may type instead of the id) and any
-catalog logic the provider needs beyond the shared OpenAI-compatible fetch in
-``catalog``:
+Originally lifted from agent-cli (``agent_cli/providers``), with compatible metadata and pure helpers aligned to agent-core. Catalog codecs and endpoint discovery remain in these standalone modules, wrapped by git-tools' registry. Each module names its ``PROVIDER_ID`` (with compatibility aliases where git-tools retains a saved key), ``PRESET`` (fresh profile defaults), ``ALIASES`` (accepted alternate names), and any provider-specific catalog logic beyond the shared OpenAI-compatible fetch in ``catalog``:
 
 - ``cliproxyapi`` — local proxy; plain live ``/models``
 - ``kimi_code``   — account-aware ``/models`` schema, thinking choices, cache
 - ``openrouter``  — upstream endpoint pinning per model
 - ``acrc``        — live ``/models`` with a built-in fallback list
-- ``qwen``        — typed endpoint, curated list (no stable ``/models``)
+- ``qwen``        — typed endpoint, curated list (``qwencode`` compatibility)
+- ``zcode``       — Z.ai GLM Coding Plan endpoint, curated list and effort tiers
 - ``openai``      — live ``/models`` narrowed to chat models, built-in fallback
 - ``anthropic``   — native ``/models`` (its own headers), built-in fallback
 - ``copilot``     — git-tools only; plain live ``/models`` behind a local proxy

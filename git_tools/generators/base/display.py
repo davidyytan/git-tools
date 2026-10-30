@@ -139,9 +139,14 @@ class DisplayMixin:
         Args:
             response: Response dict from LLM invocation
         """
-        reasoning_content = response.get("additional_kwargs", {}).get(
-            "reasoning_content"
-        )
-        if reasoning_content and reasoning_content.strip():
+        additional = response.get("additional_kwargs")
+        if not isinstance(additional, dict):
+            return
+        reasoning_content = additional.get("reasoning_content")
+        if not isinstance(reasoning_content, str) or not reasoning_content.strip():
+            # OpenRouter keeps its upstream wire name; structured/encrypted
+            # reasoning_details remain opaque and are never rendered as text.
+            reasoning_content = additional.get("reasoning")
+        if isinstance(reasoning_content, str) and reasoning_content.strip():
             console.print(Panel(escape(reasoning_content.strip()), title="[bold]Reasoning[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
             console.print()

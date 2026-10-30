@@ -14,7 +14,9 @@ from .catalog import CatalogFetchResult, ModelCatalogEntry
 PROVIDER_ID = "qwen"
 DEFAULT_MODEL = "qwen3.8-max"
 PROFILE = "qwen"
-ALIASES = ("dashscope", "alibaba")
+# Retain git-tools' qwen profile/storage key while accepting agent-core's name.
+ALIASES = ("dashscope", "alibaba", "qwencode")
+API_KEY_ENVS = ("DASHSCOPE_API_KEY", "QWENCODE_API_KEY")
 
 # What /settings provider seeds a fresh profile with. No base_url on purpose:
 # Model Studio's endpoint depends on the plan, region and workspace, so the
@@ -46,6 +48,7 @@ def catalog() -> CatalogFetchResult[ModelCatalogEntry]:
 
 __all__ = [
     "ALIASES",
+    "API_KEY_ENVS",
     "BASE_URL",
     "DEFAULT_MODEL",
     "MODELS",

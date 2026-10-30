@@ -7,16 +7,18 @@ and comprehensive issue/pull request documentation using LLM providers.
 import logging
 import os
 import sys
+from contextvars import ContextVar
 from enum import Enum
 from typing import Annotated, Any, Callable, Optional
 
 import questionary
 import typer
 import typer.rich_utils
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from questionary import Choice
 from rich.console import Console
-from git_tools import __version__
+import git_tools
+from git_tools.build_info import build_info
+from git_tools.navigation import BACK as _BACK, NavigationBack, ask_with_back
 from git_tools.settings.settings import (
     GitToolsSettings,
     normalize_provider_name,
@@ -27,6 +29,10 @@ from git_tools.settings.settings import (
 )
 from git_tools.providers.kimi_code import KimiCodeModelEntry, default_choice_index, thinking_choices
 from git_tools.providers.openrouter import OpenRouterEndpoint
+from git_tools.providers.zcode import (
+    EFFORT_TIERS as ZCODE_EFFORT_TIERS,
+    resolve_reasoning_effort as resolve_zcode_effort,
+)
 from git_tools.settings.mappings import (
     LIVE_MODEL_PROVIDERS,
     PROVIDERS,
@@ -115,8 +121,9 @@ _SOURCE_LABELS = {"b": "Both commits and diffs", "c": "Commit messages", "d": "D
 # Sentinel Choice value that triggers free-text model entry in the settings menu.
 ADD_MODEL_SENTINEL = "__git_tools_add_model__"
 
-# Sentinel Choice value meaning "go up one menu level" in settings menus.
-_BACK = "__git_tools_back__"
+# Track dispatch explicitly: Back cancels a direct command but reopens root
+# when the same command was launched by the interactive menu.
+_ROOT_COMMAND_ACTIVE: ContextVar[bool] = ContextVar("root_command_active", default=False)
 
 
 def _back_choice(*, plain: bool = False) -> Choice:
@@ -134,18 +141,14 @@ def _ask_with_back(question: questionary.Question) -> Any:
     Esc makes the prompt return None, which callers treat like "← Back".
     Ctrl+C still raises KeyboardInterrupt and exits the whole command.
     """
-    esc_bindings = KeyBindings()
+    return ask_with_back(question)
 
-    @esc_bindings.add("escape", eager=True)
-    def _cancel(event: Any) -> None:
-        event.app.exit(result=None)
 
-    application = question.application
-    existing = application.key_bindings
-    application.key_bindings = (
-        merge_key_bindings([existing, esc_bindings]) if existing else esc_bindings
-    )
-    return question.unsafe_ask()
+def _cancel_command() -> None:
+    """Route generator Back to its caller without treating it as Ctrl+C."""
+    if _ROOT_COMMAND_ACTIVE.get():
+        raise NavigationBack
+    raise typer.Exit(0)
 
 
 def _provider_default_model(provider: str) -> str:
@@ -239,9 +242,28 @@ def _effective_effort(
     configured_effort: str | None,
 ) -> str | None:
     """Resolve the effort shown in config: explicit override, then model default."""
+    if normalize_provider_name(provider) == "zcode":
+        # Coding Plan always thinks. Absence is server max; legacy "none" is
+        # the lowest tier, not a thinking-off switch.
+        return resolve_zcode_effort(configured_effort) or "max"
     if configured_effort:
         return configured_effort.strip().lower() or None
     return _model_effort(provider, model)
+
+
+def _effort_picker_default(provider: str, configured_effort: str | None, choices: list[Choice]) -> str:
+    """Select the effective native tier while preserving legacy saved aliases."""
+    configured = (configured_effort or "").strip().lower()
+    if normalize_provider_name(provider) == "zcode" and configured:
+        configured = resolve_zcode_effort(configured) or ""
+    return configured if any(choice.value == configured for choice in choices) else ""
+
+
+def _effort_prompt(provider: str, *, current: str | None = None) -> str:
+    """Do not describe Coding Plan's lowest effort as thinking-off."""
+    if normalize_provider_name(provider) == "zcode":
+        return f"Reasoning effort (thinking always enabled; default: max; current: {current or 'max'}):"
+    return f"Reasoning effort (current: {current or 'unset'}):" if current is not None else "Reasoning effort:"
 
 
 def _format_model_choice(model_config: dict[str, Any]) -> str:
@@ -366,12 +388,19 @@ def _build_effort_choices(
     model_effort = _model_effort(provider, model)
     choices = []
     configured = (configured_effort or "").strip().lower()
+    if normalize_provider_name(provider) == "zcode":
+        configured = resolve_zcode_effort(configured) or ""
 
     def tier(effort: str) -> Choice:
         parts = [fmt_primary(effort)]
         if effort == configured:
             parts.append(fmt_current())
         return Choice(styled(*parts), value=effort)
+
+    if normalize_provider_name(provider) == "zcode":
+        native_tiers = tuple(dict.fromkeys(ZCODE_EFFORT_TIERS.values()))
+        return [Choice(styled(fmt_dim("Server default (max; thinking always enabled)")), value=""),
+                *[tier(effort) for effort in native_tiers]]
 
     declared_efforts = _declared_kimi_efforts(provider, model)
     if declared_efforts:
@@ -435,10 +464,15 @@ def _build_settings_choices(
     effort_capable = (
         is_openai_reasoning_model(state.get("model") or "", platform=provider == "openai")
         if provider in {"openai", "cliproxyapi"}
-        else provider in {"openrouter", "qwen", "acrc", "copilot", "anthropic"}
+        else provider in {"openrouter", "qwen", "acrc", "copilot", "anthropic", "zcode"}
     )
     if provider != "kimicli" and (effort or effort_capable):
         source = "override" if state.get("reasoning_effort") else "model default"
+        if provider == "zcode":
+            configured = (state.get("reasoning_effort") or "").strip().lower()
+            source = (f"override {configured} → {effort}" if configured and configured != effort
+                      else "override" if configured else "server default")
+            source += "; thinking always enabled"
         choices.append(Choice(
             styled("Effort: ", fmt_primary(effort), fmt_dim(f" ({source})")), value="effort",
         ))
@@ -478,10 +512,17 @@ def _build_settings_choices(
 # ============================================================================
 
 
+def _version_line() -> str:
+    """agent-cli's ``version_lines`` row for git-tools' one package:
+    ``git-tools  0.2.0-alpha.3 · tag 0.2.0-alpha.3 · commit 4c75312``."""
+    build = build_info("git-tools", git_tools.__file__)
+    return f"{build.name}  {build.describe()}"
+
+
 def _version_callback(value: bool) -> None:
-    """Report the installed tool version without running a command."""
+    """Report the tool's version, tag and commit without running a command."""
     if value:
-        typer.echo(f"git-tools {__version__}")
+        typer.echo(_version_line())
         raise typer.Exit()
 
 
@@ -490,7 +531,7 @@ def main(
     ctx: typer.Context,
     show_version: Annotated[
         bool,
-        typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help="Show the installed git-tools version and exit"),
+        typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help="Show the git-tools version, tag and commit and exit"),
     ] = False,
 ) -> None:
     """Show interactive menu when no subcommand is provided."""
@@ -502,10 +543,10 @@ def main(
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
 
-    console.print(f"git-tools {__version__}", style="dim", markup=False)
+    console.print(_version_line(), style="dim", markup=False)
     while True:
         try:
-            choice = questionary.select(
+            choice = _ask_with_back(questionary.select(
                 "Select command:",
                 choices=[
                     Choice("commit", value="commit"),
@@ -519,9 +560,9 @@ def main(
                 style=TYPER_STYLE,
                 qmark="❯",
                 pointer="›",
-                instruction="",
-            ).ask()
-        except KeyboardInterrupt:
+                instruction="(↑↓ move · Enter picks · Esc exits)",
+            ))
+        except (KeyboardInterrupt, EOFError):
             warning("Operation cancelled by user.")
             raise typer.Exit(0)
 
@@ -549,7 +590,14 @@ def main(
             "bump": bump,
             "init": init_command,
         }
-        ctx.invoke(command_map[choice], interactive=True)
+        token = _ROOT_COMMAND_ACTIVE.set(True)
+        try:
+            ctx.invoke(command_map[choice], interactive=True)
+        except NavigationBack:
+            console.print()
+            continue
+        finally:
+            _ROOT_COMMAND_ACTIVE.reset(token)
         return
 
 
@@ -643,7 +691,9 @@ def commit(
             interactive=interactive,
         )
         generator.generate_commit()
-    except KeyboardInterrupt:
+    except NavigationBack:
+        _cancel_command()
+    except (KeyboardInterrupt, EOFError):
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
     except typer.Exit:
@@ -724,7 +774,9 @@ def issue(
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
-    except KeyboardInterrupt:
+    except NavigationBack:
+        _cancel_command()
+    except (KeyboardInterrupt, EOFError):
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
     except typer.Exit:
@@ -887,7 +939,9 @@ def pr(
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
-    except KeyboardInterrupt:
+    except NavigationBack:
+        _cancel_command()
+    except (KeyboardInterrupt, EOFError):
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
     except typer.Exit:
@@ -1012,7 +1066,9 @@ def bump(
             interactive=interactive,
         )
         generator.generate_bump()
-    except KeyboardInterrupt:
+    except NavigationBack:
+        _cancel_command()
+    except (KeyboardInterrupt, EOFError):
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
     except BumpError as e:
@@ -1092,7 +1148,9 @@ def init_command(
             interactive=use_interactive,
         )
         generator.generate_init()
-    except KeyboardInterrupt:
+    except NavigationBack:
+        _cancel_command()
+    except (KeyboardInterrupt, EOFError):
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
     except CzInitError as e:
@@ -1324,13 +1382,15 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
                 else:
                     capable = (is_openai_reasoning_model(draft["model"], platform=selection == "openai")
                                if selection in {"openai", "cliproxyapi"}
-                               else selection in {"openrouter", "qwen", "anthropic", "acrc", "copilot"})
+                               else selection in {"openrouter", "qwen", "anthropic", "acrc", "copilot", "zcode"})
                     if capable:
                         choices = _build_effort_choices(selection, draft["model"], draft["reasoning_effort"])
                         current = (draft["reasoning_effort"] or "").strip().lower()
-                        default = current if any(choice.value == current for choice in choices) else ""
+                        default = _effort_picker_default(selection, current, choices)
                         effort = _ask_with_back(questionary.select(
-                            "Reasoning effort:", choices=[*choices, _back_choice()], default=default,
+                            _effort_prompt(selection, current=(
+                                _effective_effort(selection, draft["model"], current) if selection == "zcode" else None
+                            )), choices=[*choices, _back_choice()], default=default,
                             style=TYPER_STYLE, qmark="❯",
                         ))
                         if effort in (None, _BACK):
@@ -1440,29 +1500,32 @@ def _choose_provider_model(provider: str, current_model: str) -> str | None:
     _print_model_catalog_status(provider, live)
     console.print()
     default_model = current_model or _provider_default_model(provider)
-    model_choice = _ask_model_choice(
-        provider,
-        current_model=current_model,
-        default_model=default_model,
-    )
-    if model_choice is None:
-        return None
-    if model_choice == ADD_MODEL_SENTINEL:
-        new_model = _ask_with_back(
-            questionary.text(
-                f"Enter {provider} model ID:",
-                default=current_model,
-                style=TYPER_STYLE,
-                qmark="❯",
-                instruction="",
-            )
+    while True:
+        model_choice = _ask_model_choice(
+            provider,
+            current_model=current_model,
+            default_model=default_model,
         )
-        model_choice = new_model.strip() if new_model and new_model.strip() else None
-        if not model_choice:
+        if model_choice is None:
             return None
-    # A typed id is remembered only as the saved main model (agent-cli pins the
-    # saved model first in the picker; there is no separate list of manual ids).
-    return model_choice
+        if model_choice == ADD_MODEL_SENTINEL:
+            new_model = _ask_with_back(
+                questionary.text(
+                    f"Enter {provider} model ID:",
+                    default=current_model,
+                    style=TYPER_STYLE,
+                    qmark="❯",
+                    instruction="",
+                )
+            )
+            if new_model is None:
+                continue
+            model_choice = new_model.strip() if new_model and new_model.strip() else None
+            if not model_choice:
+                return None
+        # A typed id is remembered only as the saved main model (agent-cli pins the
+        # saved model first in the picker; there is no separate list of manual ids).
+        return model_choice
 
 
 def _list_openrouter_endpoints(model: str) -> list[OpenRouterEndpoint]:
@@ -1530,17 +1593,18 @@ def _prompt_openrouter_upstream(model: str, current: Optional[str]) -> Optional[
     choices.extend([_any_upstream_choice(),
                     Choice(styled(fmt_dim("Enter upstream slug manually")), value=manual), _back_choice()])
     default = current if current and any(choice.value == current for choice in choices) else None
-    value = _ask_with_back(questionary.select(
-        f"OpenRouter upstream for {model}:", choices=choices, default=default,
-        style=TYPER_STYLE, qmark="❯"))
-    if value in (None, _BACK):
-        return None
-    if value == manual:
-        value = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
-        if value is None:
+    while True:
+        value = _ask_with_back(questionary.select(
+            f"OpenRouter upstream for {model}:", choices=choices, default=default,
+            style=TYPER_STYLE, qmark="❯"))
+        if value in (None, _BACK):
             return None
-    pin = value.strip().lower()
-    return "" if pin in {"", "any", "default", "unpinned"} else pin
+        if value == manual:
+            value = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
+            if value is None:
+                continue
+        pin = value.strip().lower()
+        return "" if pin in {"", "any", "default", "unpinned"} else pin
 
 
 def _reconcile_openrouter_upstream(model: str, pin: str) -> str:
@@ -1629,8 +1693,8 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
         # questionary rejects a default outside the list, so fall back to the
         # model default and say why.
         configured = (state["reasoning_effort"] or "").strip().lower()
-        default = configured if any(choice.value == configured for choice in choices) else ""
-        if configured and default != configured:
+        default = _effort_picker_default(state["provider"], configured, choices)
+        if configured and default != configured and normalize_provider_name(state["provider"]) != "zcode":
             console.print()
             warning(
                 f"Saved effort {configured} is not one of this model's tiers; "
@@ -1639,7 +1703,7 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
             console.print()
         effort_choice = _ask_with_back(
             questionary.select(
-                f"Reasoning effort (current: {effective_effort or 'unset'}):",
+                _effort_prompt(state["provider"], current=effective_effort or "unset"),
                 choices=[*choices, _back_choice()],
                 default=default,
                 style=TYPER_STYLE,
@@ -1654,8 +1718,9 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
         effort_choice = value.strip().lower()
         if effort_choice in {"unset", "default"}:
             effort_choice = ""
-        # The direct setter accepts exactly what the picker offers: the model's
-        # catalog efforts when it declares them, otherwise the global ladder.
+        # Kimi uses catalog tiers; other providers use the global ladder.
+        # Zcode also accepts legacy ladder aliases for persisted compatibility,
+        # but the picker offers only native low/high/max and server default.
         declared_efforts = _declared_kimi_efforts(state["provider"], state["model"])
         if effort_choice and declared_efforts and effort_choice not in declared_efforts:
             error(
@@ -1663,16 +1728,22 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
                 f"One of: {', '.join(declared_efforts)} (or 'unset')"
             )
             raise typer.Exit(1)
-        if effort_choice and not declared_efforts and effort_choice not in REASONING_EFFORT_CHOICES:
+        allowed_efforts = (tuple(ZCODE_EFFORT_TIERS) if normalize_provider_name(state["provider"]) == "zcode"
+                           else REASONING_EFFORT_CHOICES)
+        if effort_choice and not declared_efforts and effort_choice not in allowed_efforts:
             error(
-                f"Invalid effort: {value}. One of: {', '.join(REASONING_EFFORT_CHOICES)} (or 'unset')"
+                f"Invalid effort: {value}. One of: {', '.join(allowed_efforts)} (or 'unset')"
             )
             raise typer.Exit(1)
 
     save_setting("GIT_TOOLS_REASONING_EFFORT", effort_choice)
     state["reasoning_effort"] = effort_choice or None
     console.print()
-    if effort_choice:
+    if normalize_provider_name(state["provider"]) == "zcode":
+        effective = resolve_zcode_effort(effort_choice) or "max"
+        source = f"{effort_choice} → {effective}" if effort_choice and effort_choice != effective else effective
+        success(f"Effort {'override set to' if effort_choice else 'reset to server default'} {source}; thinking always enabled")
+    elif effort_choice:
         success(f"Effort override set to {effort_choice}")
     else:
         model_effort = _model_effort(state["provider"], state["model"])

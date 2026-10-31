@@ -7,3 +7,5 @@ mappings.json
 .zed/settings.json
 build/
 *.egg-info/
+.claude
+.agent-cli

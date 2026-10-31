@@ -13,12 +13,12 @@ mkdir -p "$HOME/projects"
 cd "$HOME/projects"
 git clone https://github.com/davidyytan/git-tools.git
 cd git-tools
-./install.sh
+./scripts/install.sh
 ```
 
-Already cloned the tool? Run `./install.sh` from that checkout instead. **Keep the checkout in place:** the installation is editable. David's URL above is the upstream **tool source**, not your application's repository.
+Already cloned the tool? Run `./scripts/install.sh` from that checkout instead. **Keep the checkout in place:** the installation is editable. David's URL above is the upstream **tool source**, not your application's repository.
 
-Restart your shell, then check `git-tools --version`. If the command is not on PATH, run `uv tool update-shell`, restart, then run `git-tools --install-completion`. For dependency or package-metadata changes, rerun `./install.sh --reinstall` from the tool checkout.
+Restart your shell, then check `git-tools --version`. If the command is not on PATH, run `uv tool update-shell`, restart, then run `git-tools --install-completion`. For dependency or package-metadata changes, rerun `./scripts/install.sh --reinstall` from the tool checkout.
 
 ## Already have keys? Copy them into CI
 
@@ -77,7 +77,7 @@ Each complete guide includes the key-copy commands and its flow policy. Fresh-pr
 ## Reference and safety
 
 - [CLI reference](docs/usage.md): commands, options, interactive operation, and side effects.
-- [Configuration](docs/configuration.md): providers, credentials, models, and settings. **Do not use blank endpoints:** known destination/profile defects can send generation requests to an unintended host. Read the [current limitations](docs/configuration.md#current-limitations) before provider use.
+- [Configuration](docs/configuration.md): providers, credentials, models, and settings. **Verify provider endpoints after switching:** missing endpoints are rejected, but saved-profile reset limitations can reactivate an older configured URL. Read the [current limitations](docs/configuration.md#current-limitations) before provider use.
 - [Versioning](docs/versioning.md): `.cz.toml` is the version/tag authority; supported Python, Node, and Rust files sync on a best-effort basis. Review the [current limitations](docs/versioning.md#current-limitations) before custom selectors or bump planning.
 - [Publication and recovery](docs/publication.md): inspect failed publication rather than force-pushing or repeating bootstrap.
 - [Documentation index](docs/README.md): all guides, including optional [DVC](docs/dvc.md).

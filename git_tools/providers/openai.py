@@ -1,16 +1,12 @@
-"""OpenAI platform endpoint, built-in model choices and the live ``/models`` overlay.
+"""OpenAI platform endpoint and a heuristic live ``/models`` overlay.
 
-The platform's ``/models`` lists everything the key can reach: chat models
-beside audio, realtime, image, embedding and moderation ids that no chat
-completion can use. The picker shows the chat families only
-(``resolve_catalog``); the built-in list below is the default and the
-fallback when the call cannot be made. Credentials are entered by the user,
-never bundled.
+``resolve_catalog`` filters live IDs by family names and modality markers; it does not verify ``/chat/completions`` compatibility or account access. Discovery failures and listings with no matching IDs produce no catalog choices, never a static replacement list. Credentials are entered by the user, never bundled.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from .catalog import CatalogFetchResult, ModelCatalogEntry
 
@@ -28,19 +24,18 @@ PRESET: dict[str, str] = {
     "profile": PROFILE,
 }
 
-# Picker order: the default leads; an existing profile's model is pinned first.
-MODELS: tuple[ModelCatalogEntry, ...] = (
-    ModelCatalogEntry(id=DEFAULT_MODEL, display_name="GPT-6 Astra"),
-    ModelCatalogEntry(id="gpt-6.1-sol", display_name="GPT-6.1 Sol"),
-)
+# Compatibility export only: live discovery is the sole source of picker choices.
+MODELS: tuple[ModelCatalogEntry, ...] = ()
 
-_DISPLAY_NAMES = {entry.id: entry.display_name for entry in MODELS}
+# Labels may decorate discovered IDs, but never introduce choices of their own.
+_DISPLAY_NAMES = {
+    DEFAULT_MODEL: "GPT-6 Astra",
+    "gpt-6.1-sol": "GPT-6.1 Sol",
+}
 
-# The families that answer chat completions: ``gpt-*``, ``chatgpt-*`` and the
-# ``o<digit>`` reasoning series. Everything else the platform lists (whisper,
-# tts, dall-e, embeddings, moderation, …) is not a chat model.
+# Candidate family-name prefixes for the picker heuristic, not a chat-completions compatibility guarantee.
 _CHAT_FAMILY = re.compile(r"^(gpt-|chatgpt-|o\d)")
-# Same-family ids that are still not chat models: modality variants.
+# Modality/name markers excluded by the heuristic, not an exhaustive capability inventory.
 _NON_CHAT_MARKERS = (
     "-realtime", "-audio", "-transcribe", "-tts", "-image", "-search",
     "-instruct", "-embedding", "-moderation",
@@ -48,7 +43,10 @@ _NON_CHAT_MARKERS = (
 
 
 def is_chat_model(model_id: str) -> bool:
-    """Whether a listed id can serve ``/chat/completions``."""
+    """Return whether an ID passes the family-name and modality-marker heuristic.
+
+    This is not a ``/chat/completions`` compatibility check; a Responses-only ID can pass if its name matches. It does not verify model availability or account access.
+    """
     normalized = model_id.strip().lower()
     if not _CHAT_FAMILY.match(normalized):
         return False
@@ -56,42 +54,36 @@ def is_chat_model(model_id: str) -> bool:
 
 
 def catalog() -> CatalogFetchResult[ModelCatalogEntry]:
-    """Return the built-in catalog in the picker-compatible result shape."""
-    return CatalogFetchResult(entries=MODELS, source="live")
+    """Return no choices before live discovery; defaults are not a catalog."""
+    return CatalogFetchResult()
 
 
 def resolve_catalog(
     live: CatalogFetchResult[ModelCatalogEntry],
 ) -> CatalogFetchResult[ModelCatalogEntry]:
-    """Prefer the platform's own list, chat models only; else the built-in one.
+    """Return only heuristic-filtered live IDs, never static replacement choices.
 
-    Live ids are kept verbatim (they are what the platform routes), with the
-    built-in display names overlaid where the id matches and the default
-    model pinned first. When the fetch failed, or nothing it listed is a chat
-    model, the built-in list is returned with the live error carried along so
-    the caller can say why.
+    Live IDs are kept verbatim, with display names overlaid only on discovered IDs and the default model pinned first only if present. No endpoint compatibility check is performed.
+
+    Failed or unavailable discovery yields empty entries with the original fetch metadata. A successful listing with no heuristic matches retains its live source and timestamp without inventing a network or authentication error.
     """
-    if live.source == "live" and live.entries:
-        named = [
-            ModelCatalogEntry(
-                id=entry.id,
-                display_name=entry.display_name or _DISPLAY_NAMES.get(entry.id),
-            )
-            for entry in live.entries
-            if is_chat_model(entry.id)
-        ]
-        if named:
-            named.sort(key=lambda entry: entry.id != DEFAULT_MODEL)
-            return CatalogFetchResult(
-                entries=tuple(named), source="live", fetched_at=live.fetched_at,
-            )
-    return CatalogFetchResult(
-        entries=MODELS,
-        source="live",
-        error_kind=live.error_kind,
-        error=live.error,
-        status=live.status,
-    )
+    if (
+        live.source != "live"
+        or live.error_kind is not None
+        or live.error is not None
+        or (live.status is not None and live.status >= 400)
+    ):
+        return replace(live, entries=())
+    named = [
+        ModelCatalogEntry(
+            id=entry.id,
+            display_name=entry.display_name or _DISPLAY_NAMES.get(entry.id),
+        )
+        for entry in live.entries
+        if is_chat_model(entry.id)
+    ]
+    named.sort(key=lambda entry: entry.id != DEFAULT_MODEL)
+    return replace(live, entries=tuple(named))
 
 
 __all__ = [

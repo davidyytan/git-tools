@@ -21,13 +21,13 @@ class LLMInvocationMixin:
 
         Args:
             messages: List of message dicts with 'role' and 'content' keys
-            max_retries: Maximum number of retry attempts (default: from provider config or 1)
-            retry_delay: Delay between retries in seconds (default: from provider config or 1.0)
+            max_retries: Maximum number of retries after the initial attempt (default: global settings.default_max_retries)
+            retry_delay: Delay between retries in seconds (default: global settings.default_retry_delay)
 
         Returns:
             Formatted response dict with 'content', 'response_metadata', 'additional_kwargs'
         """
-        # Get retry settings from settings if not specified
+        # Use global application retry defaults when arguments are omitted.
         if max_retries is None:
             max_retries = settings.default_max_retries
 
@@ -59,7 +59,7 @@ class LLMInvocationMixin:
                     f"LLM invocation attempt {attempt + 1} failed: {type(e).__name__}"
                 )
 
-                # Don't retry on certain errors (e.g., auth errors, invalid requests)
+                # Skip further retries for these authentication-related text markers, not for invalid requests in general.
                 error_str = str(e).lower()
                 if any(
                     term in error_str

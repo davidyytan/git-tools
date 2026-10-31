@@ -1,15 +1,11 @@
-"""Anthropic endpoint, built-in model choices and the live ``/models`` overlay.
+"""Anthropic endpoint and the live ``/models`` overlay.
 
-Claude is reached through Anthropic's OpenAI-compatible endpoint, so the chat
-transport is the shared one and only the catalog call differs: ``GET
-/v1/models`` is the native Models API, which wants the key as ``x-api-key``
-and an ``anthropic-version`` header rather than Bearer auth, so this module
-fetches with those (``fetch_catalog_sync``). The built-in list below is the
-default and the fallback when the call cannot be made. Credentials are
-entered by the user, never bundled.
+Claude is reached through Anthropic's OpenAI-compatible endpoint, so the chat transport is the shared one and only the catalog call differs: ``GET /v1/models`` is the native Models API, which wants the key as ``x-api-key`` and an ``anthropic-version`` header rather than Bearer auth, so this module fetches with those (``fetch_catalog_sync``). Unavailable discovery produces no choices rather than a static replacement list. Credentials are entered by the user, never bundled.
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from .catalog import CatalogFetchResult, ModelCatalogEntry, fetch_model_catalog_sync
 
@@ -21,8 +17,7 @@ ALIASES = ("claude",)
 
 # The Models API refuses a request without a version header.
 API_VERSION = "2023-06-01"
-# It pages at 20 by default, newest first; ask for everything so older
-# built-ins do not silently fall off the picker.
+# It pages at 20 by default, newest first; request older discoverable IDs too.
 CATALOG_QUERY = "limit=1000"
 
 # What /settings provider seeds a fresh profile with.
@@ -33,15 +28,16 @@ PRESET: dict[str, str] = {
     "profile": PROFILE,
 }
 
-# Picker order: the default leads; an existing profile's model is pinned first.
-MODELS: tuple[ModelCatalogEntry, ...] = (
-    ModelCatalogEntry(id=DEFAULT_MODEL, display_name="Claude Opus 5.5"),
-    ModelCatalogEntry(id="claude-sonnet-5-5", display_name="Claude Sonnet 5.5"),
-    ModelCatalogEntry(id="claude-haiku-5-5", display_name="Claude Haiku 5.5"),
-    ModelCatalogEntry(id="claude-fable-5-1", display_name="Claude Fable 5.1"),
-)
+# Compatibility export only: live discovery is the sole source of picker choices.
+MODELS: tuple[ModelCatalogEntry, ...] = ()
 
-_DISPLAY_NAMES = {entry.id: entry.display_name for entry in MODELS}
+# Labels may decorate discovered IDs, but never introduce choices of their own.
+_DISPLAY_NAMES = {
+    DEFAULT_MODEL: "Claude Opus 5.5",
+    "claude-sonnet-5-5": "Claude Sonnet 5.5",
+    "claude-haiku-5-5": "Claude Haiku 5.5",
+    "claude-fable-5-1": "Claude Fable 5.1",
+}
 
 
 def catalog_headers(api_key: str) -> dict[str, str]:
@@ -66,40 +62,33 @@ def fetch_catalog_sync(
 
 
 def catalog() -> CatalogFetchResult[ModelCatalogEntry]:
-    """Return the built-in catalog in the picker-compatible result shape."""
-    return CatalogFetchResult(entries=MODELS, source="live")
+    """Return no choices before live discovery; defaults are not a catalog."""
+    return CatalogFetchResult()
 
 
 def resolve_catalog(
     live: CatalogFetchResult[ModelCatalogEntry],
 ) -> CatalogFetchResult[ModelCatalogEntry]:
-    """Prefer the endpoint's own list; fall back to the built-in one.
+    """Return only the endpoint's live choices, never a static replacement list.
 
-    Live ids are kept verbatim (they are what the server routes), with the
-    server's display names kept, the built-in ones overlaid where it sent
-    none, and the default model pinned first. When the fetch failed the
-    built-in list is returned with the live error carried along so the
-    caller can say why.
+    Live IDs and server display names are kept verbatim, with missing names overlaid only on discovered IDs and the default model pinned first only if present. Failed or unavailable discovery yields empty entries with the original fetch metadata.
     """
-    if live.source == "live" and live.entries:
-        named = [
-            ModelCatalogEntry(
-                id=entry.id,
-                display_name=entry.display_name or _DISPLAY_NAMES.get(entry.id),
-            )
-            for entry in live.entries
-        ]
-        named.sort(key=lambda entry: entry.id != DEFAULT_MODEL)
-        return CatalogFetchResult(
-            entries=tuple(named), source="live", fetched_at=live.fetched_at,
+    if (
+        live.source != "live"
+        or live.error_kind is not None
+        or live.error is not None
+        or (live.status is not None and live.status >= 400)
+    ):
+        return replace(live, entries=())
+    named = [
+        ModelCatalogEntry(
+            id=entry.id,
+            display_name=entry.display_name or _DISPLAY_NAMES.get(entry.id),
         )
-    return CatalogFetchResult(
-        entries=MODELS,
-        source="live",
-        error_kind=live.error_kind,
-        error=live.error,
-        status=live.status,
-    )
+        for entry in live.entries
+    ]
+    named.sort(key=lambda entry: entry.id != DEFAULT_MODEL)
+    return replace(live, entries=tuple(named))
 
 
 __all__ = [

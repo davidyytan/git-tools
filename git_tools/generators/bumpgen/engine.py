@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from difflib import unified_diff
 import os
 from pathlib import Path
+import re
 from typing import Literal
 
 from .config import BumpConfig, load_bump_config, normalize_tag
@@ -44,6 +45,38 @@ class BumpOptions:
     annotated_tag_message: str | None = None
     respect_git_config: bool = True
     major_version_zero: bool | None = None
+    release_target: str | None = None
+
+
+def _parse_release_target(value: str) -> Version:
+    """Accept only a canonical stable tuple for the internal release opener."""
+    if not isinstance(value, str) or re.fullmatch(
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", value
+    ) is None:
+        raise ConfigError("Release target must be a canonical ASCII X.Y.Z tuple.")
+    return Version.parse(value)
+
+
+def _release_target_version(options: BumpOptions, current: Version) -> Version | None:
+    if options.release_target is None:
+        return None
+    target = _parse_release_target(options.release_target)
+    if options.prerelease != "rc" or options.increment_mode != "exact":
+        raise ConfigError("--release-target requires --prerelease rc --increment-mode exact.")
+    if (options.increment is not None or options.default_increment is not None
+            or options.allow_no_commit):
+        raise ConfigError(
+            "--release-target cannot be combined with --increment, "
+            "--default-increment, or --allow-no-commit."
+        )
+    if target.release == current.release:
+        raise ConfigError("--release-target cannot reset the current release line; use normal RC promotion or continuation.")
+    if current.prerelease_type == "rc":
+        raise ConfigError("--release-target cannot retarget an established RC to a different release line.")
+    if not current.is_prerelease and target.release <= current.release:
+        raise ConfigError("--release-target must move a stable source forward.")
+    # Master-relative admissibility is owned by the variant strategy. This operation only opens an absolute RC, preserving the configured scheme.
+    return Version(*target.release, prerelease_type="rc", prerelease_number=0, scheme=current.scheme)
 
 
 def plan_version_file_updates(
@@ -84,6 +117,7 @@ def _compute_bump(options: BumpOptions, *, cwd: Path | None = None) -> tuple[Bum
         raise GitError(f"{root} is not a git repository.")
 
     config = load_bump_config(root)
+    release_version = _release_target_version(options, config.current_version)
     major_version_zero = (
         config.major_version_zero
         if options.major_version_zero is None
@@ -101,6 +135,12 @@ def _compute_bump(options: BumpOptions, *, cwd: Path | None = None) -> tuple[Bum
     )
 
     commit_messages = get_commit_messages(root, start_ref=history_ref)
+    if release_version is not None:
+        # Like an explicit increment, this is an explicit opening operation, but it must not bypass resolution of the current history authority.
+        target_tag = normalize_tag(release_version, config.tag_format)
+        if options.create_tag and target_tag in tag_names:
+            raise GitError(f"Release target tag {target_tag} already exists; refusing to reopen it.")
+        return config, release_version, None
     increment = options.increment
 
     if increment is None:

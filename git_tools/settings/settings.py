@@ -629,7 +629,7 @@ class BaseLLMConfig(EffectiveSettings):
     Attributes:
         api_key: API key for the provider (loaded from environment)
         model: Model name to use (optional)
-        max_tokens: Maximum tokens for completions (1-16384)
+        max_tokens: Requested completion-token cap (positive when set; no application upper bound; endpoint/model limits vary)
         temperature: Sampling temperature (0.0-2.0)
         max_retries: Maximum number of retry attempts
         retry_delay: Delay between retries in seconds

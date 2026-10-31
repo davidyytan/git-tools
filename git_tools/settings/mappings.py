@@ -1,16 +1,8 @@
 """Provider and model definitions.
 
-Provider metadata — API-key env vars, config classes, display details, model
-catalog behavior, and static fallback models — lives in code here. There is no
-external ``mappings.json`` to copy or maintain in the repo.
+Provider metadata — API-key env vars, config classes, display details, and model catalog behavior — lives in code here. There is no external ``mappings.json`` to copy or maintain in the repo.
 
-Live providers expose an OpenAI-compatible ``GET {base_url}/models``
-catalog; ``refresh_live_models`` resolves it exactly as agent-cli's provider
-flow does (``resolve_provider_catalog``) and places the result in
-``PROVIDERS`` for pickers, editors and clients. There is no list of git-tools'
-own: the modules' built-in lists are the only fallback, Kimi Code keeps
-agent-cli's last-known-good cache, and a typed model id is remembered only as
-the saved main model.
+Live catalogs are resolved by ``resolve_provider_catalog`` and placed in ``PROVIDERS`` for pickers, editors and clients. Live-discovery providers start without catalog entries and never substitute a static list for failed or empty discovery. Qwen and Zcode keep curated lists; Kimi Code alone keeps its scoped last-known-good cache. A typed model ID is remembered only as the saved main model, separate from discovered entries.
 
 Endpoints, default models, aliases, curated lists and the catalog codecs come
 from ``git_tools.providers``, the provider package copied from agent-cli; this
@@ -173,17 +165,16 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "config_class": "ACRCConfig",
         "default_base_url": acrc.BASE_URL,
         "default_model": acrc.DEFAULT_MODEL,
-        # Live /models drives the picker; these built-ins lead the list and
-        # are the fallback when the VPN/endpoint cannot be reached.
+        # Only the endpoint's discovered entries populate the catalog.
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(acrc.MODELS),
+        "models": {},
     },
     copilot.PROVIDER_ID: {
         "label": "Copilot proxy", "aliases": copilot.ALIASES, "api_key_env": "COPILOT_API_KEY",
         "config_class": "CopilotConfig", "default_base_url": copilot.BASE_URL,
         "default_model": copilot.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(copilot.MODELS),
+        "models": {},
     },
     qwen.PROVIDER_ID: {
         "label": "Qwen / DashScope", "aliases": qwen.ALIASES,
@@ -224,14 +215,13 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "models": {},
     },
     # OpenAI's own platform, spoken as chat completions like every provider
-    # here. Live /models is narrowed to chat models; the built-ins lead the
-    # picker and are the fallback when the call cannot be made.
+    # here. Live /models is narrowed to chat models; an empty result stays empty.
     openai.PROVIDER_ID: {
         "label": "OpenAI", "aliases": openai.ALIASES, "api_key_env": "OPENAI_API_KEY",
         "config_class": "OpenAIConfig", "default_base_url": openai.BASE_URL,
         "default_model": openai.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(openai.MODELS),
+        "models": {},
     },
     # Anthropic through its OpenAI-compatible endpoint: the Messages API host
     # also answers /v1/chat/completions with Bearer auth. Thinking is adaptive
@@ -242,7 +232,7 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "config_class": "AnthropicConfig", "default_base_url": anthropic.BASE_URL,
         "default_model": anthropic.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(anthropic.MODELS),
+        "models": {},
     },
     zcode.PROVIDER_ID: {
         "label": "Z.ai GLM Coding Plan", "aliases": zcode.ALIASES,
@@ -280,14 +270,8 @@ def _normalize_provider_key(provider: str) -> str:
     return PROVIDER_ALIASES.get(key, key)
 
 
-# Provider map used across the app. ``models`` starts as the module's curated
-# list (empty for the live-only providers) and is replaced by the resolved
-# catalog once ``refresh_live_models`` has asked the endpoint.
+# Provider map used across the app. Only curated providers start with entries; live-discovery catalogs start empty and are replaced by resolved discovery or Kimi's scoped cache.
 PROVIDERS = copy.deepcopy(_BUILTIN_PROVIDERS)
-
-
-def _builtin_models(provider: str) -> Dict[str, Any]:
-    return copy.deepcopy(_BUILTIN_PROVIDERS[provider]["models"])
 
 
 def normalize_catalog_metadata(raw: Any) -> Dict[str, Any]:
@@ -417,11 +401,7 @@ def resolve_provider_catalog(provider: str, base_url: str, api_key: str) -> Cata
     - Kimi Code: the account-aware ``/models``; on failure the last-known-good
       copy for this endpoint and key (``source == "cache"``), unless the
       failure was an HTTP client error.
-    - ACRC, OpenAI, Anthropic: the endpoint's own list with the module's
-      display names overlaid and the default first, or the module's built-in
-      list with the error carried along when the call cannot be made.
-      OpenAI's is narrowed to chat models; Anthropic's comes from the native
-      Models API with its own headers.
+    - ACRC, OpenAI, Anthropic: only the endpoint's own entries, with display names overlaid and the default first when present. Failed or empty discovery never introduces entries. OpenAI's list is narrowed to chat models; Anthropic's comes from the native Models API with its own headers.
     - Qwen, Zcode: the module's curated list; nothing is fetched.
     - OpenRouter, CLIProxyAPI, Copilot: exactly what the endpoint lists.
     """
@@ -509,16 +489,9 @@ def fetch_openrouter_upstreams(base_url: str, api_key: str, model_id: str) -> li
 def refresh_live_models(provider: str, *, force: bool = False) -> bool:
     """Resolve one provider's catalog into ``PROVIDERS[provider]["models"]``.
 
-    ``resolve_provider_catalog`` decides what is shown, exactly as agent-cli's
-    provider flow does; this only places it in the registry the pickers,
-    editors and clients read, and memoizes a successful fetch per process for
-    one endpoint and key. There is no git-tools list of its own: nothing is
-    merged, remembered or retained across a failed fetch beyond the modules'
-    built-in lists and Kimi's on-disk last-known-good copy.
+    ``resolve_provider_catalog`` decides what is shown; this places only its entries in the registry and memoizes successful discovery per process for one endpoint and key, including successful empty catalogs. Saved/manual IDs and the provider's single default configuration are independent of the discovered catalog. Only Kimi may retain its scoped on-disk last-known-good copy after a failed fetch.
 
-    Returns ``True`` when the endpoint answered (or did so earlier in this
-    process for the same endpoint and key); ``False`` for unknown or curated
-    providers, failed fetches, and a stale Kimi copy.
+    Returns ``True`` for successful live discovery, even when no selectable entries remain; ``False`` for unknown or curated providers, failed fetches, and a stale Kimi copy. Failures are retryable rather than memoized.
     """
     provider = _normalize_provider_key(provider)
     if provider not in LIVE_MODEL_PROVIDERS:
@@ -536,7 +509,7 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
             # interactive diagnostic useful without ever retaining credentials.
             message=f"{type(exc).__name__}: provider configuration is invalid or incomplete",
         )
-        PROVIDERS[provider]["models"] = _builtin_models(provider)
+        PROVIDERS[provider]["models"] = {}
         _LIVE_REFRESHED.discard(provider)
         _LIVE_REFRESH_IDENTITIES.pop(provider, None)
         return False
@@ -552,12 +525,19 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         return True
 
     catalog = resolve_provider_catalog(provider, base_url, api_key)
+    live_success = (
+        catalog.source == "live"
+        and catalog.error_kind is None
+        and catalog.error is None
+        and (catalog.status is None or catalog.status < 400)
+    )
+    retained_cache = provider == "kimicli" and catalog.source == "cache" and bool(catalog.entries)
     PROVIDERS[provider]["models"] = (
         {entry.id: _entry_config(entry) for entry in catalog.entries}
-        if catalog.entries
-        else _builtin_models(provider)
+        if live_success or retained_cache
+        else {}
     )
-    if catalog.source == "live" and catalog.error_kind is None:
+    if live_success:
         _LIVE_REFRESH_ERRORS.pop(provider, None)
         _LIVE_REFRESHED.add(provider)
         _LIVE_REFRESH_IDENTITIES[provider] = identity
@@ -566,7 +546,7 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         kind=catalog.error_kind or "unknown",
         message=catalog.error or "live model discovery failed",
         status=catalog.status,
-        retained_live_catalog=catalog.source == "cache",
+        retained_live_catalog=retained_cache,
     )
     _LIVE_REFRESHED.discard(provider)
     _LIVE_REFRESH_IDENTITIES.pop(provider, None)

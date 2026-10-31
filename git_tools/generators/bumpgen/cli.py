@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .engine import BumpOptions, run_bump
+from .engine import BumpOptions, _parse_release_target, run_bump
 from .errors import BumpError
 from .version import Increment, Prerelease
 
@@ -24,12 +24,25 @@ def _parse_prerelease(value: str) -> Prerelease:
     return lower  # type: ignore[return-value]
 
 
+def _parse_release_target_argument(value: str) -> str:
+    try:
+        _parse_release_target(value)
+    except BumpError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="git-tools bump",
         description="Minimal Commitizen-style version bumping.",
     )
     parser.add_argument("--increment", type=_parse_increment, help="Explicit MAJOR, MINOR, or PATCH increment.")
+    parser.add_argument(
+        "--release-target",
+        type=_parse_release_target_argument,
+        help="Internal release-led opener: select an absolute X.Y.Z tuple; requires RC/exact mode.",
+    )
     parser.add_argument(
         "--default-increment",
         type=_parse_increment,
@@ -110,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     namespace = parser.parse_args(argv)
     options = BumpOptions(
         increment=namespace.increment,
+        release_target=namespace.release_target,
         default_increment=namespace.default_increment,
         prerelease=namespace.prerelease,
         increment_mode=namespace.increment_mode,

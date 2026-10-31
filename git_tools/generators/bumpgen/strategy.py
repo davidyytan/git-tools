@@ -71,6 +71,11 @@ def decide_version_strategy(root: Path, branch: str, *, flow: Flow) -> StrategyD
                     "release branches must be named release/<x.y.z>, "
                     f"got {branch}"
                 )
+            elif release_target != str(Version.parse(release_target)):
+                release_branch_error = (
+                    "release-led branch targets must use a canonical ASCII X.Y.Z tuple, "
+                    f"got {release_target}"
+                )
             else:
                 release_increment = infer_release_increment(master_version, release_target) or ""
             if not release_branch_error and not release_increment:

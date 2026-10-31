@@ -179,13 +179,10 @@ def _find_model_config(provider: str, model: str | None) -> dict[str, Any] | Non
 
 
 def _resolve_current_model(provider: str, configured_model: str | None) -> str:
-    """Return a provider-valid model name, falling back to the provider default."""
+    """Keep the configured ID independently of discovery, or use the provider default."""
     provider = normalize_provider_name(provider)
     if configured_model:
-        # Live/manual providers honor any configured model ID as-is. Their real
-        # catalogue is the endpoint's, not the static fallback — displacing a
-        # live-only or explicitly entered model here would show the wrong value
-        # and persist it on the next provider switch.
+        # Live/manual providers honor configured IDs independently of discovery; replacing one merely because it is absent from the catalog would show the wrong value and persist it on the next provider switch.
         if provider in LIVE_MODEL_PROVIDERS or provider_allows_manual_model(provider):
             return configured_model
         provider_model_names = [
@@ -208,23 +205,18 @@ def _model_effort(provider: str, model: str | None) -> str | None:
 
 
 def _ensure_kimi_catalog(provider: str) -> None:
-    """Load the account-aware Kimi catalog once so effort/thinking metadata is current.
+    """Refresh Kimi's account-aware catalog for settings effort/thinking validation.
 
-    Kimi's valid efforts and thinking modes come from its live ``/models``.
-    Without this, a direct ``settings effort`` would validate against the
-    built-in entries, which declare none, and the client would reject the
-    saved value at generation time. The refresh is memoized per process.
+    The picker and direct settings setters use available catalog metadata; refreshing is memoized per process. Runtime request construction intentionally does not validate against the catalog: it forwards resolved thinking/effort controls according to the transport policy, leaving acceptance to the endpoint.
     """
     if provider == "kimicli":
         refresh_live_models(provider)
 
 
 def _declared_kimi_efforts(provider: str, model: str | None) -> list[str]:
-    """Efforts the Kimi catalog declares for ``model``; empty when it declares none.
+    """Return declared Kimi effort tiers for settings validation, or an empty list.
 
-    The account-aware Kimi catalog is authoritative: when it lists efforts, the
-    picker and the direct setter accept exactly those, and the client
-    constructor rejects anything else.
+    When tiers are declared, the effort picker and direct effort setter restrict non-default choices to them. Without declared tiers, the direct setter uses the global effort ladder, while the picker also retains configured/model efforts. This is a settings UI boundary, not a client-constructor check: runtime forwarding is intentionally metadata-independent.
     """
     if provider != "kimicli":
         return []
@@ -305,7 +297,7 @@ def _build_model_choices(
     *,
     current_model: str | None = None,
 ) -> list[Choice]:
-    """Build provider-aware choices with the current model first and marked."""
+    """Keep the current/default ID selectable without presenting it as discovered."""
     provider = normalize_provider_name(provider)
     choices: list[Choice] = []
     current_choice: Choice | None = None
@@ -324,8 +316,12 @@ def _build_model_choices(
     if current_model:
         choices.insert(
             0,
-            current_choice or Choice(f"{current_model} (current)", value=current_model),
+            current_choice or Choice(f"{current_model} (current; not in catalog)", value=current_model),
         )
+    elif not choices:
+        default_model = _provider_default_model(provider)
+        if default_model:
+            choices.append(Choice(f"{default_model} (provider default; not in catalog)", value=default_model))
     if provider_allows_manual_model(provider):
         choices.append(Choice("Enter a model ID manually…", value=ADD_MODEL_SENTINEL))
     return choices
@@ -1453,28 +1449,31 @@ def _apply_provider_updates(state: dict[str, Any], provider: str,
 
 
 def _print_model_catalog_status(provider: str, live: bool) -> None:
-    """Explain whether the interactive model list is live or a fallback."""
+    """Distinguish discovered, empty, curated and genuinely cached model lists."""
     provider = normalize_provider_name(provider)
     if PROVIDERS[provider].get("curated_models"):
         console.print("[dim]model list: curated choices; manual IDs accepted[/dim]")
         return
     if live:
-        console.print("[dim]model list: live from the provider[/dim]")
+        if PROVIDERS[provider]["models"]:
+            console.print("[dim]model list: live from the provider[/dim]")
+        else:
+            console.print("[dim]model list: live discovery succeeded, but no selectable models were returned; configured/provider default IDs and manual entry remain available[/dim]")
         return
 
     failure = get_live_model_refresh_error(provider)
     label = provider_label(provider)
     if failure is None:
         warning(
-            f"Could not load {label}'s live model catalog; "
-            "showing available saved/fallback models."
+            f"No discovered model catalog is available for {label}; "
+            "configured/provider default IDs and manual entry remain available."
         )
         return
 
     available = (
-        "showing the last successful catalog"
+        "showing the last successful cached catalog; configured IDs and manual entry remain available"
         if failure.retained_live_catalog
-        else "showing available saved/fallback models"
+        else "no discovered models available; configured/provider default IDs and manual entry remain available"
     )
     if failure.kind == "auth":
         status = f"HTTP {failure.status}" if failure.status else "authentication failed"

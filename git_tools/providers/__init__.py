@@ -5,15 +5,12 @@ Originally lifted from agent-cli (``agent_cli/providers``), with compatible meta
 - ``cliproxyapi`` — local proxy; plain live ``/models``
 - ``kimi_code``   — account-aware ``/models`` schema, thinking choices, cache
 - ``openrouter``  — upstream endpoint pinning per model
-- ``acrc``        — live ``/models`` with a built-in fallback list
+- ``acrc``        — live ``/models`` only, no static replacement catalog
 - ``qwen``        — typed endpoint, curated list (``qwencode`` compatibility)
 - ``zcode``       — Z.ai GLM Coding Plan endpoint, curated list and effort tiers
-- ``openai``      — live ``/models`` narrowed to chat models, built-in fallback
-- ``anthropic``   — native ``/models`` (its own headers), built-in fallback
+- ``openai``      — heuristic-filtered live ``/models``, no static replacement catalog
+- ``anthropic``   — native ``/models`` (its own headers), no static replacement catalog
 - ``copilot``     — git-tools only; plain live ``/models`` behind a local proxy
 
-git-tools wires these into its own registry in ``git_tools.settings.mappings``
-(credential env vars, config classes, which pickers are live, per-model knobs)
-and into the chat clients in ``git_tools.generators.base.clients``; the
-modules themselves stay free of git-tools imports so they can be re-copied.
+git-tools wires these into its own registry in ``git_tools.settings.mappings`` (credential env vars, config classes, which pickers are live, per-model knobs) and into the chat clients in ``git_tools.generators.base.clients``. Live-discovery catalogs have no static fallback; single profile defaults, Qwen/Zcode curated choices, and Kimi's scoped cache are separate policies. The modules themselves stay independent of settings and client imports.
 """

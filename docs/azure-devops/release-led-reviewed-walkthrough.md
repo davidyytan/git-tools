@@ -26,7 +26,7 @@ mkdir -p "$HOME/projects"
 cd "$HOME/projects"
 git clone https://github.com/davidyytan/git-tools.git
 cd git-tools
-./install.sh
+./scripts/install.sh
 ```
 
 Keep the tool checkout in place: installation is editable. See [installation](../../README.md#install) for PATH/completion help.

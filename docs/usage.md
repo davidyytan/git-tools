@@ -7,11 +7,11 @@ Run `git-tools` in the repository you want to work on. See the [project README](
 ```bash
 git-tools                  # Interactive menu in a terminal
 git-tools --help            # Command overview
-git-tools --version         # Installed git-tools version (also -V)
+git-tools --version         # git-tools version, tag and commit (also -V)
 git-tools commit --help     # Options for one command
 ```
 
-`git-tools --version` prints the installed **tool version**, not your application's release version. Your application version comes from `.cz.toml`.
+`git-tools --version` prints the **tool version**, not your application's release version. Your application version comes from `.cz.toml`. For a checkout install it reads the checkout's `pyproject.toml` and adds the tool checkout's tag and commit, as agent-cli does, for example `git-tools  0.2.0-alpha.3 · tag 0.2.0-alpha.3 · commit 4c75312`. `+N` after the tag counts commits since it, `no tag` means none is reachable, and `(dirty)` marks uncommitted changes to tracked files. An install without a checkout prints the version alone.
 
 <details>
 <summary>How the tool version is displayed</summary>
@@ -57,7 +57,7 @@ These options apply to `commit`, `issue`, and `pr`. They override configured val
 | Option | Meaning and default |
 | --- | --- |
 | `--model`, `-m TEXT` | Model identifier; otherwise the configured/provider default |
-| `--temp`, `-t FLOAT` | Sampling temperature; configured default is `0.6` (settings range `0.0–2.0`; model support varies) |
+| `--temp`, `-t FLOAT` | Sampling temperature; fresh default is `1.0` (settings range `0.0–2.0`; model support varies) |
 | `--max-tokens INTEGER` | Completion token budget; configured default is `32000` |
 | `--token-limit`, `-l INTEGER` | Input diff-processing budget; default is `200000` for commits and independently `200000` for issues/PRs |
 
@@ -249,9 +249,9 @@ For provider choices, credential handling, model discovery, validation, defaults
 
 ## Practical interactive walkthrough
 
-The interactive root menu shows the same `git-tools VERSION` in a dim header once per invocation. Direct subcommand output has no added version header.
+The interactive root menu shows the same version, tag and commit line in a dim header once per invocation. Direct subcommand output has no added version header.
 
-Use **Up/Down** and **Enter** for selections, and type into text prompts/searchable model lists. Yes/No questions are selections too. **Ctrl+C** cancels. In settings, **Esc** or **← Back** returns to the prior level; standalone settings ends with **Done**. Settings opened from the main menu returns to that menu, with saved values reloaded. A content command finishes the invocation; run `git-tools` again for the next operation.
+Use **Up/Down** and **Enter** for selections, and type into text prompts/searchable model lists. Generator selection/confirmation lists include a final **← Back** option in the unfiltered choices; searchable filtering may hide it, but **Esc** still works. Text and masked-key prompts have no Back row; **Esc** cancels them, as well as model and confirmation prompts, without accepting a default. In generators, Back and Esc both cancel the current command, not revisit its previous question: a command launched from the root menu returns there, while a direct `--interactive` command exits cleanly. In settings, **Esc** or **← Back** instead returns one level; standalone settings ends with **Done**, and settings opened from root ends with **← Back** and reloads saved values on return. The root menu's last option is **exit**, and **Esc at root exits**; **Ctrl+C exits the whole invocation**, rather than navigating Back. Prompt cancellation skips the pending write, commit, generation, or clipboard action; it is neither an undo mechanism nor an in-flight request-cancellation control. A successfully completed content command still finishes the invocation.
 
 | Menu choice | Practical sequence |
 | --- | --- |

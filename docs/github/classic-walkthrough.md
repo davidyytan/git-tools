@@ -37,10 +37,10 @@ mkdir -p "$HOME/projects"
 cd "$HOME/projects"
 git clone https://github.com/davidyytan/git-tools.git
 cd git-tools
-./install.sh
+./scripts/install.sh
 ```
 
-Already have the tool checkout? Go to it and rerun `./install.sh` instead of cloning again. **Keep the checkout:** installation is editable. The upstream URL above is the tool source, not your application origin.
+Already have the tool checkout? Go to it and rerun `./scripts/install.sh` instead of cloning again. **Keep the checkout:** installation is editable. The upstream URL above is the tool source, not your application origin.
 
 Restart your shell, then run `git-tools --help`. If it is not on PATH, run `uv tool update-shell` and restart again; see [installation](../../README.md#install) for completion setup.
 

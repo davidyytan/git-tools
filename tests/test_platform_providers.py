@@ -1,8 +1,6 @@
 """OpenAI and Anthropic providers, ported from agent-core/agent-cli.
 
-Both are spoken as OpenAI-compatible chat completions. What differs is the
-catalog: OpenAI's ``/models`` is narrowed to chat models, and Anthropic's
-native Models API wants its own auth and version headers.
+Both use OpenAI-compatible chat completions. Catalogs contain only discovered IDs: OpenAI's ``/models`` uses a naming/modality heuristic, not a compatibility check, and Anthropic's native Models API wants its own auth and version headers.
 """
 
 from __future__ import annotations
@@ -33,10 +31,12 @@ class RegistryTests(unittest.TestCase):
         anthropic = mappings.PROVIDERS["anthropic"]
         self.assertEqual(openai["api_key_env"], "OPENAI_API_KEY")
         self.assertEqual(openai["default_base_url"], "https://api.openai.com/v1")
-        self.assertEqual(next(iter(openai["models"])), "gpt-6-astra")
+        self.assertEqual(openai["default_model"], "gpt-6-astra")
+        self.assertEqual(openai["models"], {})
         self.assertEqual(anthropic["api_key_env"], "ANTHROPIC_API_KEY")
         self.assertEqual(anthropic["default_base_url"], "https://api.anthropic.com/v1")
-        self.assertEqual(next(iter(anthropic["models"])), "claude-opus-5-5")
+        self.assertEqual(anthropic["default_model"], "claude-opus-5-5")
+        self.assertEqual(anthropic["models"], {})
         self.assertIn("openai", mappings.LIVE_MODEL_PROVIDERS)
         self.assertIn("anthropic", mappings.LIVE_MODEL_PROVIDERS)
         self.assertEqual(normalize_provider_name("claude"), "anthropic")
@@ -61,7 +61,7 @@ class RegistryTests(unittest.TestCase):
 
 
 class OpenAICatalogTests(unittest.TestCase):
-    def test_chat_model_filter_matches_agent_cli(self) -> None:
+    def test_chat_model_filter_uses_family_names_and_modality_markers(self) -> None:
         chat = ("gpt-6-astra", "gpt-4.1", "chatgpt-4o-latest", "o3-mini", "GPT-4o",
                 # Responses-API-only ids are listed exactly as agent-cli lists them;
                 # picking one is the user's call (the pinned client speaks chat only).
@@ -106,16 +106,15 @@ class OpenAICatalogTests(unittest.TestCase):
         self.assertEqual(models["gpt-4.1"]["display_name"], "GPT-4.1")
         self.assertEqual(models["gpt-6-astra"]["display_name"], "GPT-6 Astra")
 
-    def test_catalog_without_chat_models_falls_back_to_built_ins(self) -> None:
-        # agent-cli's resolve_catalog: nothing listed is a chat model, so the
-        # built-in list stands in, and no error is reported.
+    def test_catalog_without_heuristic_matches_has_no_static_replacement(self) -> None:
         live = CatalogFetchResult(entries=parse_model_catalog({"data": [
             {"id": "whisper-1"}, {"id": "text-embedding-3-large"}]}), source="live")
         ok, _ = self._refresh("openai", live)
 
+        # Discovery succeeded, but no selectable IDs remain; no replacement choices or invented failures.
         self.assertTrue(ok)
         self.assertIsNone(mappings.get_live_model_refresh_error("openai"))
-        self.assertEqual(list(mappings.PROVIDERS["openai"]["models"]), ["gpt-6-astra", "gpt-6.1-sol"])
+        self.assertEqual(mappings.PROVIDERS["openai"]["models"], {})
 
 
 class AnthropicCatalogTests(unittest.TestCase):
@@ -150,7 +149,7 @@ class AnthropicCatalogTests(unittest.TestCase):
         self.assertEqual(list(models)[0], "claude-opus-5-5")
         self.assertEqual(models["claude-opus-5-5"]["display_name"], "Claude Opus 5.5")
         self.assertEqual(models["claude-opus-5-5-20260301"]["display_name"], "Claude Opus 5.5 (2026-03-01)")
-        # Built-ins the endpoint did not list are dropped, as for every live provider.
+        # IDs the endpoint did not list are never introduced as replacement choices.
         self.assertNotIn("claude-sonnet-5-5", models)
 
     def test_live_fetch_sends_extra_headers_beside_bearer(self) -> None:

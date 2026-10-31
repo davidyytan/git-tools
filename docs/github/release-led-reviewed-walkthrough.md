@@ -665,13 +665,15 @@ Ordinary Conventional Commit PRs into develop create/continue tagged alpha versi
 
 ### Release-Line Policy
 
+Use a canonical ASCII `X.Y.Z` that is exactly the next PATCH, MINOR, or MAJOR step from stable master. On opening, this absolute tuple wins over a carried alpha/beta, even when it is lower: master `0.1.0` with source `0.2.0-alpha.1` and `release/0.1.1` opens `0.1.1-rc.0`. A stable source can open a forward target only from master's tuple. A different established RC or a stable source not on master's tuple is refused before version writes; same-line RCs continue rather than reset. The configured scheme is preserved (`-rc.0` for `semver2`, `-rc0` for `semver`). See [absolute target calculation](../versioning.md#release-led-absolute-targets).
+
 `release/X.Y.Z` selects the final target, validated against stable master. Cutting it alone does not open RC or require a Start PR; develop can continue its alpha line independently. The example's `Start 0.3.0` is optional next-cycle selection, not a requirement after the cut.
 
 When you explicitly want a new develop line, use a real feature/bugfix branch and `git-tools pr --base develop --start-pr --workflow-version A.B.C` with a valid forward tuple. Complete it as `Start A.B.C` for tagged `A.B.C-alpha.0`; do not use a Backmerge title to select a new cycle.
 
 ### Merge Strategy
 
-This mode uses **squash** for ordinary PRs, promotions, and develop/backmerge preparation. Current-master synchronization before promotion is the narrow exception: complete that reviewed inner PR with **Create a merge commit**, not squash or rebase, so master's ancestry survives. Enable repository merge commits and permit them in release/hotfix target rules; a strict squash-only or linear-history policy on those targets is incompatible with this route. Customize the final subject to `chore: merge master for release` or `chore: merge master for hotfix`. Other release/hotfix inner subjects must also be Conventional Commits; a factory-default `Merge pull request #...` subject does not advance RC. The engine ignores GitHub's optional trailing `(#123)` suffix.
+This mode uses **squash** for ordinary PRs, promotions, and develop/backmerge preparation. Current-master synchronization before promotion is the narrow exception: complete that reviewed inner PR with **Create a merge commit**, not squash or rebase, so master's ancestry survives. Enable repository merge commits and permit them in release/hotfix target rules; a strict squash-only or linear-history policy on those targets is incompatible with this route. Customize the final subject to `chore: merge master for release` or `chore: merge master for hotfix`. Other release/hotfix inner subjects must also be Conventional Commits; a factory-default `Merge pull request #...` subject does not follow this convention, but a Conventional Commit line in its body can still make the merge bump-eligible and advance RC because eligibility scans the full commit message. The engine ignores GitHub's optional trailing `(#123)` suffix.
 
 ### Synchronization Policy
 

@@ -129,7 +129,7 @@ class GitFlowStrategyTests(unittest.TestCase):
             self.assertEqual(decision.mode, "start-release-rc")
             self.assertEqual(
                 decision.args,
-                "--yes --increment MAJOR --prerelease rc --increment-mode exact --gpg-sign",
+                "--yes --release-target 1.0.0 --prerelease rc --increment-mode exact --gpg-sign",
             )
             self.assertTrue(decision.branch_has_unique_commits)
             self.assertEqual(decision.branch_gate_ref, "develop")
@@ -155,7 +155,7 @@ class GitFlowStrategyTests(unittest.TestCase):
             self.assertEqual(decision.mode, "start-release-rc")
             self.assertEqual(
                 decision.args,
-                "--yes --increment MAJOR --prerelease rc --increment-mode exact --gpg-sign",
+                "--yes --release-target 1.0.0 --prerelease rc --increment-mode exact --gpg-sign",
             )
 
     def test_variant_release_opener_with_github_pr_suffix_can_start_rc(self) -> None:
@@ -179,7 +179,7 @@ class GitFlowStrategyTests(unittest.TestCase):
             self.assertEqual(decision.mode, "start-release-rc")
             self.assertEqual(
                 decision.args,
-                "--yes --increment MAJOR --prerelease rc --increment-mode exact --gpg-sign",
+                "--yes --release-target 1.0.0 --prerelease rc --increment-mode exact --gpg-sign",
             )
 
     def test_variant_release_branch_uses_exact_mode_for_target_line_jump(self) -> None:
@@ -204,7 +204,7 @@ class GitFlowStrategyTests(unittest.TestCase):
             self.assertEqual(decision.mode, "start-release-rc")
             self.assertEqual(
                 decision.args,
-                "--yes --increment MINOR --prerelease rc --increment-mode exact --gpg-sign",
+                "--yes --release-target 1.1.0 --prerelease rc --increment-mode exact --gpg-sign",
             )
 
     def test_hotfix_branch_cut_does_not_start_rc_without_unique_commit(self) -> None:

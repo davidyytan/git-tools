@@ -77,7 +77,7 @@ Each complete guide includes the key-copy commands and its flow policy. Fresh-pr
 ## Reference and safety
 
 - [CLI reference](docs/usage.md): commands, options, interactive operation, and side effects.
-- [Configuration](docs/configuration.md): providers, credentials, models, and settings. **Verify provider endpoints after switching:** missing endpoints are rejected, but saved-profile reset limitations can reactivate an older configured URL. Read the [current limitations](docs/configuration.md#current-limitations) before provider use.
+- [Configuration](docs/configuration.md): providers, credentials, models, and settings. **Verify provider endpoints before supplying new keys or starting model discovery, and recheck after switching:** discovery can use a newly entered key before setup is saved. Missing endpoints are rejected, but saved-profile reset limitations can reactivate an older configured URL. Read the [current limitations](docs/configuration.md#current-limitations) before provider use.
 - [Versioning](docs/versioning.md): `.cz.toml` is the version/tag authority; supported Python, Node, and Rust files sync on a best-effort basis. Review the [current limitations](docs/versioning.md#current-limitations) before custom selectors or bump planning.
 - [Publication and recovery](docs/publication.md): inspect failed publication rather than force-pushing or repeating bootstrap.
 - [Documentation index](docs/README.md): all guides, including optional [DVC](docs/dvc.md).

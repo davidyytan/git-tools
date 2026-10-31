@@ -41,7 +41,9 @@ class ProviderParityTests(unittest.TestCase):
             generator = BaseGenerator()
             self.assertEqual(generator._get_default_model(mappings.PROVIDERS["qwen"]["models"], "qwen"), "main")
         generator = BaseGenerator(model="explicit")
-        self.assertEqual(generator._resolve_cli_model({}), "explicit")
+        with self.assertLogs(generator.logger, level="WARNING") as logs:
+            self.assertEqual(generator._resolve_cli_model({}), "explicit")
+        self.assertIn("current provider catalog", logs.output[0])
 
     def test_qwen_requires_endpoint_and_all_configs_load(self):
         with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test"}, clear=True):
@@ -188,10 +190,11 @@ class ProviderParityTests(unittest.TestCase):
 
     def test_generation_reports_refresh_failure_and_keeps_explicit_model(self):
         generator = BaseGenerator(model="explicit-model")
-        with patch.object(generator, "get_provider_config", return_value=SimpleNamespace()), patch("git_tools.generators.base.models.refresh_live_models", return_value=False), patch("git_tools.cli._print_model_catalog_status") as status:
+        with patch.object(generator, "get_provider_config", return_value=SimpleNamespace()), patch("git_tools.generators.base.models.refresh_live_models", return_value=False), patch("git_tools.cli._print_model_catalog_status") as status, self.assertLogs(generator.logger, level="WARNING") as logs:
             model, _, _ = generator.select_model_params("kimicli")
         status.assert_called_once_with("kimicli", False)
         self.assertEqual(model, "explicit-model")
+        self.assertIn("using the explicit ID as-is", logs.output[0])
 
     def test_malformed_kimi_metadata_does_not_break_client(self):
         config = SimpleNamespace(api_key="test", base_url="https://test.invalid/v1")

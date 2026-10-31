@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from git_tools.providers import acrc
 from git_tools.providers.catalog import CatalogFetchResult, parse_model_catalog
 
-# Shape of GET /v1/models on the ACRC endpoint (captured 2026-10-15): plain
-# OpenAI list, no display names, and ids the built-in list does not know.
+# Synthetic OpenAI-compatible /models fixture with known and unknown display-name IDs.
 LIVE_PAYLOAD = {
     "object": "list",
     "data": [
@@ -27,15 +27,13 @@ def _live_result() -> CatalogFetchResult:
 
 
 class ACRCProviderTests(unittest.TestCase):
-    def test_acrc_curated_catalog(self) -> None:
-        result = acrc.catalog()
-        self.assertIsNone(result.error)
-        self.assertEqual(result.source, "live")
+    def test_acrc_has_no_catalog_before_discovery(self) -> None:
+        self.assertEqual(acrc.catalog(), CatalogFetchResult())
+        self.assertEqual(acrc.MODELS, ())
         self.assertEqual(acrc.PROVIDER_ID, "acrc")
         self.assertEqual(acrc.BASE_URL, "https://fmodel.ai.acrc.a-star.edu.sg/v1")
-        self.assertEqual([entry.id for entry in result.entries],
-                         ["deepseek-v4.1-flash", "glm-5-3-flash", "mimo-v2.6-pro"])
-        self.assertEqual(result.entries[0].id, acrc.DEFAULT_MODEL)
+        self.assertEqual(acrc.DEFAULT_MODEL, "deepseek-v4.1-flash")
+        self.assertEqual(acrc.PRESET["default_model"], acrc.DEFAULT_MODEL)
 
     def test_acrc_resolve_catalog_uses_live_ids_verbatim_with_default_first(self) -> None:
         live = _live_result()
@@ -46,7 +44,7 @@ class ACRCProviderTests(unittest.TestCase):
         self.assertEqual(resolved.fetched_at, live.fetched_at)
         self.assertEqual([e.id for e in resolved.entries], LIVE_IDS)
         self.assertEqual(resolved.entries[0].id, acrc.DEFAULT_MODEL)
-        # Built-in display names overlay matching ids; unknown ids show as-is.
+        # Static display names overlay discovered IDs only; unknown IDs show as-is.
         self.assertEqual(resolved.entries[0].display_name, "DeepSeek V4.1 Flash")
         self.assertEqual(resolved.entries[1].display_name, "GLM 5-3 Flash")
         self.assertIsNone(resolved.entries[2].display_name)
@@ -57,7 +55,7 @@ class ACRCProviderTests(unittest.TestCase):
         self.assertEqual([e.id for e in acrc.resolve_catalog(shuffled).entries],
                          ["deepseek-v4.1-flash", "mimo-v2.6-pro...temporary", "glm-5-3-flash"])
 
-    def test_acrc_resolve_catalog_falls_back_to_the_builtin_list(self) -> None:
+    def test_acrc_resolve_catalog_has_no_replacement_choices_when_unavailable(self) -> None:
         for live in (
             CatalogFetchResult(error_kind="network", error="connection refused"),
             CatalogFetchResult(error_kind="auth", error="no api key", status=401),
@@ -66,11 +64,7 @@ class ACRCProviderTests(unittest.TestCase):
         ):
             with self.subTest(live=live):
                 resolved = acrc.resolve_catalog(live)
-                self.assertEqual(resolved.entries, acrc.MODELS)
-                self.assertEqual(resolved.source, "live")  # not a stale cache: it is the shipped list
-                self.assertEqual(resolved.error, live.error)
-                self.assertEqual(resolved.error_kind, live.error_kind)
-                self.assertEqual(resolved.status, live.status)
+                self.assertEqual(resolved, replace(live, entries=()))
 
 
 if __name__ == "__main__":

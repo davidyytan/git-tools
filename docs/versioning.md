@@ -17,7 +17,7 @@ Direct `git-tools bump` writes files, commits, and normally tags; it does not pu
 
 ## Authority
 
-**`.cz.toml` is the sole authority for the current version, next version, and Git tag format.** Other files never determine or override these values.
+**`.cz.toml` is the sole configuration authority for the current version, version scheme, and Git tag format.** Auxiliary files never determine or override these values. The next version follows the selected bump controls; release-led opening uses the validated absolute release-branch target described below.
 
 ```toml
 [tool.commitizen]
@@ -41,6 +41,14 @@ Handled auxiliary loading, pattern resolution, reading, updating, and writing fa
 Explicit custom targets resolving outside the physical repository root are configuration errors, not skippable auxiliary warnings (see [extra targets](#explicit-extra-targets)). Core `.cz.toml` errors, invalid core history/configuration, and failed Git operations still stop the operation. `--check-consistency` applies to the authoritative field; it does not turn auxiliary mismatches into hard requirements.
 
 Use `--get-next` for a lightweight version-only calculation. `--dry-run` also runs the in-memory managed-file planner and shows paths/diffs, consistency errors and best-effort warnings without writes, commits, or tags. It cannot validate execution of hooks, signing, or Git writes. Interactive bump offers Preview / Apply / Cancel and applies the same reviewed plan. Snapshot checks cover branch/HEAD, tags, managed-file bytes, target-discovery metadata and selected Git settings. They do **not** currently detect a file's executable-bit change after preview; see [current limitations](#current-limitations).
+
+## Release-led absolute targets
+
+In release-led CI, `release/X.Y.Z` selects an absolute target: `X.Y.Z` must use canonical ASCII digits without leading-zero aliases and be exactly the next PATCH, MINOR, or MAJOR step from stable master. For the first eligible unique stabilization change, a carried alpha/beta can move to that tuple's `rc.0`, even when the tuple is below the carried development line. For example, master `0.1.0`, source `0.2.0-alpha.1`, and `release/0.1.1` open `0.1.1-rc.0`, not `0.2.1-rc.0`. A stable source can open a forward target only when it is on master's tuple. A different established RC or a stable source not on master's tuple is refused rather than silently retargeted. Existing same-line alpha/beta promotion and RC continuation do not reset the RC counter.
+
+The variant strategy owns master-relative admissibility and passes the internal module-only `--release-target X.Y.Z` control to `python -m git_tools.generators.bumpgen`, with `--prerelease rc --increment-mode exact`. This is not a general high-level `git-tools bump` version setter or an interactive choice. It cannot be combined with `--increment`, `--default-increment`, or `--allow-no-commit`, or used to reset the current tuple, retarget an established RC, or move a stable source backwards. The engine still validates the current history anchor before returning a version and refuses an already-existing target tag before file planning when tag creation is requested. It preserves the configured scheme: `semver2` emits `X.Y.Z-rc.0`, while `semver` emits `X.Y.Z-rc0`.
+
+Both `--get-next` and the in-memory planner use this same absolute calculation. Planning freezes the chosen version, message, tag, and file updates; apply does not recompute the target. The target operation adds no independent master-ref read to the engine. Classic, develop, hotfix, master, ordinary linear/exact increments, and backmerge preparation keep their existing calculation paths. Follow the host's [release-led workflow guide](git-flow-guide.md) for stabilization, synchronization, and promotion rather than manually resetting version fields or manufacturing tags.
 
 ## Disabling Auxiliary Sync (Local and CI)
 

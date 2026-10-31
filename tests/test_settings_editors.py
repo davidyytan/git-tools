@@ -246,6 +246,32 @@ class ModelPickerTests(unittest.TestCase):
         self.assertFalse(select.call_args.kwargs["use_search_filter"])
         self.assertEqual(select.call_args.kwargs["default"], "gpt-6-astra")
 
+    def test_retained_current_id_is_not_presented_as_discovered(self) -> None:
+        from git_tools.cli import ADD_MODEL_SENTINEL, _build_model_choices
+
+        with patch.dict(mappings.PROVIDERS["openai"], {"models": {}}):
+            choices = _build_model_choices("openai", current_model="saved-manual-id")
+        self.assertEqual([choice.value for choice in choices], ["saved-manual-id", ADD_MODEL_SENTINEL])
+        self.assertEqual(choices[0].title, "saved-manual-id (current; not in catalog)")
+
+    def test_empty_catalog_without_current_keeps_single_default_and_manual_choice(self) -> None:
+        from git_tools.cli import ADD_MODEL_SENTINEL, _build_model_choices
+
+        for provider in mappings.LIVE_MODEL_PROVIDERS:
+            with self.subTest(provider=provider), patch.dict(mappings.PROVIDERS[provider], {"models": {}}):
+                default = mappings.PROVIDERS[provider]["default_model"]
+                choices = _build_model_choices(provider)
+                self.assertEqual([choice.value for choice in choices], [default, ADD_MODEL_SENTINEL])
+                self.assertEqual(choices[0].title, f"{default} (provider default; not in catalog)")
+                self.assertEqual(mappings.PROVIDERS[provider]["models"], {})
+
+    def test_current_served_model_is_not_marked_absent(self) -> None:
+        from git_tools.cli import _build_model_choices
+
+        with patch.dict(mappings.PROVIDERS["openai"], {"models": {"served": {"model_name": "served"}}}):
+            choices = _build_model_choices("openai", current_model="served")
+        self.assertEqual(choices[0].title, "served (current)")
+
     def test_escape_backs_out_without_a_choice(self) -> None:
         with (patch("git_tools.cli.questionary.select"),
               patch("git_tools.cli._ask_with_back", return_value=None)):
@@ -415,11 +441,9 @@ class DirectEffortCatalogTests(unittest.TestCase):
 
 
 class DirectEffortLiveCatalogTests(unittest.TestCase):
-    """The direct setter loads Kimi's live catalog itself, as the CLI path does.
+    """The direct setter loads Kimi's live catalog without opening the model picker.
 
-    `git-tools settings effort <value>` never opens the model picker, so the
-    account-aware efforts would otherwise never be fetched and the built-in
-    entries (which declare none) would let any tier through.
+    Kimi has no built-in model rows. Without declared effort metadata the setter uses the global ladder, which would accept ``xhigh`` in this fixture instead of enforcing the fetched ``low``/``high`` tiers. This tests settings validation, not metadata-independent runtime forwarding.
     """
 
     def test_direct_effort_is_checked_against_the_freshly_fetched_catalog(self) -> None:

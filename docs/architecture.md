@@ -14,7 +14,7 @@ This guide maps the source tree so changes land in the module that owns them. Fo
 | `git_tools/build_info.py` | Version, tag and commit for `--version` and the interactive header; copied byte for byte from agent-cli's `agent_cli/build_info.py` and wrapped by `_version_line` in `cli.py` |
 | `git_tools/navigation.py` | Stdlib-importable Back signal and lazy Questionary Esc wrapper, shared by the CLI and generator prompts |
 | `scripts/install.sh` | Editable checkout installation and completion setup; resolves the checkout's project root before installing, regardless of the caller's working directory |
-| `git_tools/settings/mappings.py` | Provider registry wrapping `git_tools/providers/` with git-tools' wiring (credential env vars, config classes, picker flags, per-model knobs), and the catalog resolution that calls the modules the way agent-cli's provider flow does |
+| `git_tools/settings/mappings.py` | Provider registry wrapping `git_tools/providers/` with git-tools' wiring (credential env vars, config classes, picker flags, per-model knobs); live discovery never substitutes static catalogs, while Qwen/Zcode curated choices and Kimi's scoped cache remain separate |
 | `git_tools/utils/io.py` | Atomic JSON helpers the provider package depends on, copied from agent-cli |
 | `git_tools/prompts/` | System and user prompt text files, loaded by name |
 | `git_tools/templates/` | Commit, issue, and PR output templates with their loader |

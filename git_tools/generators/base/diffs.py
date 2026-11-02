@@ -9,7 +9,7 @@ from .tokens import _ENCODER, _escape_special_tokens, count_tokens
 
 
 class DiffProcessingMixin:
-    """Fetch staged or branch diffs and fit them into a token budget per file."""
+    """Fetch staged or branch diffs and apply best-effort token budgeting."""
 
     def get_staged_diff(self) -> Optional[str]:
         """Get staged changes using git diff.
@@ -35,13 +35,13 @@ class DiffProcessingMixin:
     ) -> Tuple[str, List[str]]:
         """Process a diff with optional size limiting and quota allocation.
 
-        When context limit is exceeded, drops the smallest files above min_file_token_threshold
-        first, working up the list until we fit within the limit. Then applies proportional
-        allocation to remaining files.
+        With a token budget, excludes file diffs with added or removed LFS pointer version lines; without a limit, returns the raw diff unchanged.
+
+        Uses shared cl100k_base estimates across providers and models. When retained content exceeds the target, drops eligible files smallest-first and proportionally allocates content quotas to the rest. Protected files remain represented; minimum-one-token quotas, truncation annotations, and join separators mean the rendered diff can exceed the target. This is not a provider-specific context-window limit.
 
         Args:
             full_diff: The complete diff content
-            max_token_count: If set, truncates diffs to stay within this token count
+            max_token_count: Optional approximate diff-content budget, not a hard cap on rendered output or the complete request
 
         Returns:
             Tuple of (processed_diff, quota_breakdown)
@@ -56,13 +56,13 @@ class DiffProcessingMixin:
         # Calculate total token count
         total_tokens = sum(count_tokens(diff) for _, diff in file_diffs)
 
-        # If under limit, return full diff with quota breakdown (no dropping needed)
+        # If under limit, return the retained diff with quota breakdown
         if total_tokens <= max_token_count:
             return self._create_quota_breakdown_for_full_diff(
                 file_diffs, max_token_count, full_diff, dropped_lfs_files
             )
 
-        # Drop files to fit within context limit and calculate quotas
+        # Drop eligible files and calculate best-effort diff-content quotas.
         file_quotas, dropped_files = self._calculate_proportional_quotas(
             file_diffs, max_token_count
         )
@@ -136,7 +136,7 @@ class DiffProcessingMixin:
         full_diff: str,
         dropped_lfs_files: List[str],
     ) -> Tuple[str, List[str]]:
-        """Create quota breakdown when full diff is under the token limit."""
+        """Create quota breakdown and apply any LFS exclusions to an under-budget diff."""
         quota_breakdown = []
 
         if dropped_lfs_files:
@@ -156,16 +156,16 @@ class DiffProcessingMixin:
                 f"- {display_name}: Original diff size: {diff_tokens} tokens, Quota allocated: {quota} tokens"
             )
 
+        if dropped_lfs_files:
+            full_diff = "\n".join(diff for _, diff in file_diffs)
         return full_diff, quota_breakdown
 
     def _calculate_proportional_quotas(
         self, file_diffs: List[Tuple[str, str]], max_token_count: int
     ) -> Tuple[Dict[str, int], List[str]]:
-        """Calculate quotas using proportional mode with smart file dropping.
+        """Allocate best-effort content quotas after dropping eligible files.
 
-        When total tokens exceed max_token_count, drops the smallest files above
-        min_file_token_threshold first, working up the list until we fit within
-        the limit. Files below min_file_token_threshold are never dropped.
+        When local token estimates exceed max_token_count, drops files at or above min_file_token_threshold smallest-first unless their extension is protected. Files below the threshold and protected extensions are never dropped, but their content can be truncated. Every retained file receives at least one token, so quotas can exceed a target smaller than the retained file count. Annotations and separators are not included in these quotas; this value does not hard-cap the rendered diff or complete request.
 
         Returns:
             Tuple of (file_quotas, dropped_files)
@@ -176,7 +176,7 @@ class DiffProcessingMixin:
 
         dropped_files = []
 
-        # If we're over the limit, drop files starting from smallest above threshold
+        # If we're over the target, drop eligible files smallest-first.
         if total_tokens > max_token_count:
             # Helper to check if file has protected extension
             protected_extensions = set(settings.protected_file_extensions)
@@ -202,7 +202,7 @@ class DiffProcessingMixin:
             # Sort droppable files by size (smallest first)
             droppable_files.sort(key=lambda x: x[1])
 
-            # Drop files one at a time starting from smallest until under limit
+            # Drop eligible files while retained content exceeds the target.
             for filename, size in droppable_files:
                 if total_tokens <= max_token_count:
                     break
@@ -239,9 +239,9 @@ class DiffProcessingMixin:
     def _truncate_diffs_to_quotas(
         self, file_diffs: List[Tuple[str, str]], file_quotas: Dict[str, int]
     ) -> List[str]:
-        """Truncate each file's diff to its allocated quota.
+        """Truncate retained diff content to local quotas, then add unbudgeted labels.
 
-        Only processes files that exist in file_quotas (dropped files are skipped).
+        Only processes files that exist in file_quotas (dropped files are skipped). The quota applies to escaped diff content, not the added annotation or final join separators.
         """
         truncated_diffs = []
         for filename, diff in file_diffs:
@@ -303,7 +303,7 @@ class DiffProcessingMixin:
 
         Args:
             base_branch: The base branch to compare against
-            max_token_count: If set, enables size-aware mode and truncates diffs to stay within this token count
+            max_token_count: If set, enables best-effort size-aware processing using an approximate cl100k_base diff-content budget
         """
         comparison = getattr(self, "_comparison_commit_info", None)
         diff_range = f"{base_branch}...HEAD"
@@ -327,7 +327,7 @@ class DiffProcessingMixin:
         """Get staged changes with optional size limiting and advanced processing.
 
         Args:
-            max_token_count: If set, enables size-aware mode and truncates diffs to stay within this token count
+            max_token_count: If set, enables best-effort size-aware processing using an approximate cl100k_base diff-content budget
         """
         try:
             full_diff = subprocess.check_output(

@@ -1,16 +1,8 @@
 """Provider and model definitions.
 
-Provider metadata — API-key env vars, config classes, display details, model
-catalog behavior, and static fallback models — lives in code here. There is no
-external ``mappings.json`` to copy or maintain in the repo.
+Provider metadata — API-key env vars, config classes, display details, and model catalog behavior — lives in code here. There is no external ``mappings.json`` to copy or maintain in the repo.
 
-Live providers expose an OpenAI-compatible ``GET {base_url}/models``
-catalog; ``refresh_live_models`` resolves it exactly as agent-cli's provider
-flow does (``resolve_provider_catalog``) and places the result in
-``PROVIDERS`` for pickers, editors and clients. There is no list of git-tools'
-own: the modules' built-in lists are the only fallback, Kimi Code keeps
-agent-cli's last-known-good cache, and a typed model id is remembered only as
-the saved main model.
+Live catalogs are resolved by ``resolve_provider_catalog`` and placed in ``PROVIDERS`` for pickers, editors and clients. Live-discovery providers start without catalog entries and never substitute a static list for failed or empty discovery. Qwen and Zcode keep curated lists; Kimi Code alone keeps its scoped last-known-good cache. A typed model ID is remembered only as the saved main model, separate from discovered entries.
 
 Endpoints, default models, aliases, curated lists and the catalog codecs come
 from ``git_tools.providers``, the provider package copied from agent-cli; this
@@ -25,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen
+from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen, zcode
 from git_tools.providers.catalog import (
     MODEL_CATALOG_FILENAME,
     CatalogFetchResult,
@@ -49,11 +41,10 @@ MODEL_CATALOG_PATH = Path.home() / ".git-tools" / MODEL_CATALOG_FILENAME
 
 # OpenAI models known to reject the native ``reasoning_effort`` field with
 # HTTP 400: the pre-reasoning chat lines and the ``*-chat`` variants
-# (gpt-5-chat-latest). They take a temperature, where the reasoning models
-# accept only the server's default. This is a denylist on purpose, as in
-# agent-core: a new family defaults to reasoning, so the tier works on release
-# day, and a wrong guess costs one 400 that one more entry here fixes. agent-core
-# reaches the same temperature outcome by sending OpenAI's default of 1.
+# (gpt-5-chat-latest). This classifies effort support, not temperature:
+# configured temperature is forwarded just as in agent-core. The denylist
+# defaults a new OpenAI family to reasoning; endpoint parameter acceptance
+# remains model-dependent.
 _OPENAI_NON_REASONING_PREFIXES = (
     "gpt-3",
     "gpt-4",
@@ -73,9 +64,18 @@ ANTHROPIC_API_VERSION = anthropic.API_VERSION
 anthropic_catalog_headers = anthropic.catalog_headers
 
 
+def _strip_openai_route_prefix(model_name: str | None) -> str:
+    """Lower-case the id and drop OpenRouter's ``openai/`` prefix so routed
+    ids classify the same way as the platform's own."""
+    normalized = (model_name or "").strip().lower()
+    if normalized.startswith("openai/"):
+        normalized = normalized[len("openai/"):]
+    return normalized
+
+
 def is_openai_family_model(model_id: str) -> bool:
     """Whether an id looks like one of OpenAI's own models."""
-    normalized = model_id.strip().lower()
+    normalized = _strip_openai_route_prefix(model_id)
     if normalized.startswith(_OPENAI_FAMILY_PREFIXES):
         return True
     return len(normalized) >= 2 and normalized[0] == "o" and normalized[1].isdigit()
@@ -83,14 +83,14 @@ def is_openai_family_model(model_id: str) -> bool:
 
 def is_known_non_reasoning_openai_model(model_id: str) -> bool:
     """Whether an OpenAI id is on the list that rejects ``reasoning_effort``."""
-    normalized = model_id.strip().lower()
+    normalized = _strip_openai_route_prefix(model_id)
     if normalized.startswith(_OPENAI_NON_REASONING_PREFIXES):
         return True
     return any(marker in normalized for marker in _OPENAI_NON_REASONING_MARKERS)
 
 
 def is_openai_reasoning_model(model_id: str, *, platform: bool = False) -> bool:
-    """Whether a model reads ``reasoning_effort`` (and refuses a temperature).
+    """Whether a model reads OpenAI's native ``reasoning_effort`` field.
 
     Denylist, not allowlist: within OpenAI's family every model reads the
     field except the known non-reasoning ones, so an unlisted new family
@@ -99,7 +99,7 @@ def is_openai_reasoning_model(model_id: str, *, platform: bool = False) -> bool:
     counts. Proxies fronting mixed catalogs (CLIProxyAPI, Copilot, ACRC) keep
     the family check so a Claude or DeepSeek id never gets the field.
     """
-    normalized = model_id.strip().lower()
+    normalized = _strip_openai_route_prefix(model_id)
     if not normalized:
         return False
     if not platform and not is_openai_family_model(normalized):
@@ -165,21 +165,21 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "config_class": "ACRCConfig",
         "default_base_url": acrc.BASE_URL,
         "default_model": acrc.DEFAULT_MODEL,
-        # Live /models drives the picker; these built-ins lead the list and
-        # are the fallback when the VPN/endpoint cannot be reached.
+        # Only the endpoint's discovered entries populate the catalog.
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(acrc.MODELS),
+        "models": {},
     },
     copilot.PROVIDER_ID: {
         "label": "Copilot proxy", "aliases": copilot.ALIASES, "api_key_env": "COPILOT_API_KEY",
         "config_class": "CopilotConfig", "default_base_url": copilot.BASE_URL,
         "default_model": copilot.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(copilot.MODELS),
+        "models": {},
     },
     qwen.PROVIDER_ID: {
         "label": "Qwen / DashScope", "aliases": qwen.ALIASES,
-        "api_key_env": "DASHSCOPE_API_KEY", "config_class": "QwenConfig",
+        "api_key_env": qwen.API_KEY_ENVS[0], "api_key_env_aliases": qwen.API_KEY_ENVS[1:],
+        "config_class": "QwenConfig",
         # No endpoint on purpose (see the module): the host depends on the
         # plan, region and workspace, so the flow asks for it.
         "default_base_url": qwen.PRESET.get("base_url", ""),
@@ -215,14 +215,13 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "models": {},
     },
     # OpenAI's own platform, spoken as chat completions like every provider
-    # here. Live /models is narrowed to chat models; the built-ins lead the
-    # picker and are the fallback when the call cannot be made.
+    # here. Live /models is narrowed to chat models; an empty result stays empty.
     openai.PROVIDER_ID: {
         "label": "OpenAI", "aliases": openai.ALIASES, "api_key_env": "OPENAI_API_KEY",
         "config_class": "OpenAIConfig", "default_base_url": openai.BASE_URL,
         "default_model": openai.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(openai.MODELS),
+        "models": {},
     },
     # Anthropic through its OpenAI-compatible endpoint: the Messages API host
     # also answers /v1/chat/completions with Bearer auth. Thinking is adaptive
@@ -233,7 +232,14 @@ _BUILTIN_PROVIDERS: Dict[str, Any] = {
         "config_class": "AnthropicConfig", "default_base_url": anthropic.BASE_URL,
         "default_model": anthropic.DEFAULT_MODEL,
         "live_models": True, "allow_manual_model": True,
-        "models": _static_models(anthropic.MODELS),
+        "models": {},
+    },
+    zcode.PROVIDER_ID: {
+        "label": "Z.ai GLM Coding Plan", "aliases": zcode.ALIASES,
+        "api_key_env": zcode.API_KEY_ENV, "config_class": "ZCodeConfig",
+        "default_base_url": zcode.BASE_URL, "default_model": zcode.DEFAULT_MODEL,
+        "live_models": False, "allow_manual_model": True, "curated_models": True,
+        "models": _static_models(zcode.MODELS),
     },
 }
 
@@ -264,14 +270,8 @@ def _normalize_provider_key(provider: str) -> str:
     return PROVIDER_ALIASES.get(key, key)
 
 
-# Provider map used across the app. ``models`` starts as the module's curated
-# list (empty for the live-only providers) and is replaced by the resolved
-# catalog once ``refresh_live_models`` has asked the endpoint.
+# Provider map used across the app. Only curated providers start with entries; live-discovery catalogs start empty and are replaced by resolved discovery or Kimi's scoped cache.
 PROVIDERS = copy.deepcopy(_BUILTIN_PROVIDERS)
-
-
-def _builtin_models(provider: str) -> Dict[str, Any]:
-    return copy.deepcopy(_BUILTIN_PROVIDERS[provider]["models"])
 
 
 def normalize_catalog_metadata(raw: Any) -> Dict[str, Any]:
@@ -401,12 +401,8 @@ def resolve_provider_catalog(provider: str, base_url: str, api_key: str) -> Cata
     - Kimi Code: the account-aware ``/models``; on failure the last-known-good
       copy for this endpoint and key (``source == "cache"``), unless the
       failure was an HTTP client error.
-    - ACRC, OpenAI, Anthropic: the endpoint's own list with the module's
-      display names overlaid and the default first, or the module's built-in
-      list with the error carried along when the call cannot be made.
-      OpenAI's is narrowed to chat models; Anthropic's comes from the native
-      Models API with its own headers.
-    - Qwen: the module's curated list; nothing is fetched.
+    - ACRC, OpenAI, Anthropic: only the endpoint's own entries, with display names overlaid and the default first when present. Failed or empty discovery never introduces entries. OpenAI's list is narrowed to chat models; Anthropic's comes from the native Models API with its own headers.
+    - Qwen, Zcode: the module's curated list; nothing is fetched.
     - OpenRouter, CLIProxyAPI, Copilot: exactly what the endpoint lists.
     """
     provider = _normalize_provider_key(provider)
@@ -416,6 +412,8 @@ def resolve_provider_catalog(provider: str, base_url: str, api_key: str) -> Cata
         return acrc.resolve_catalog(_fetch_catalog(_fetch_models_sync, base_url, api_key))
     if provider == qwen.PROVIDER_ID:
         return qwen.catalog()
+    if provider == zcode.PROVIDER_ID:
+        return zcode.catalog()
     if provider == openai.PROVIDER_ID:
         return openai.resolve_catalog(_fetch_catalog(_fetch_models_sync, base_url, api_key))
     if provider == anthropic.PROVIDER_ID:
@@ -491,16 +489,9 @@ def fetch_openrouter_upstreams(base_url: str, api_key: str, model_id: str) -> li
 def refresh_live_models(provider: str, *, force: bool = False) -> bool:
     """Resolve one provider's catalog into ``PROVIDERS[provider]["models"]``.
 
-    ``resolve_provider_catalog`` decides what is shown, exactly as agent-cli's
-    provider flow does; this only places it in the registry the pickers,
-    editors and clients read, and memoizes a successful fetch per process for
-    one endpoint and key. There is no git-tools list of its own: nothing is
-    merged, remembered or retained across a failed fetch beyond the modules'
-    built-in lists and Kimi's on-disk last-known-good copy.
+    ``resolve_provider_catalog`` decides what is shown; this places only its entries in the registry and memoizes successful discovery per process for one endpoint and key, including successful empty catalogs. Saved/manual IDs and the provider's single default configuration are independent of the discovered catalog. Only Kimi may retain its scoped on-disk last-known-good copy after a failed fetch.
 
-    Returns ``True`` when the endpoint answered (or did so earlier in this
-    process for the same endpoint and key); ``False`` for unknown or curated
-    providers, failed fetches, and a stale Kimi copy.
+    Returns ``True`` for successful live discovery, even when no selectable entries remain; ``False`` for unknown or curated providers, failed fetches, and a stale Kimi copy. Failures are retryable rather than memoized.
     """
     provider = _normalize_provider_key(provider)
     if provider not in LIVE_MODEL_PROVIDERS:
@@ -518,7 +509,7 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
             # interactive diagnostic useful without ever retaining credentials.
             message=f"{type(exc).__name__}: provider configuration is invalid or incomplete",
         )
-        PROVIDERS[provider]["models"] = _builtin_models(provider)
+        PROVIDERS[provider]["models"] = {}
         _LIVE_REFRESHED.discard(provider)
         _LIVE_REFRESH_IDENTITIES.pop(provider, None)
         return False
@@ -534,12 +525,19 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         return True
 
     catalog = resolve_provider_catalog(provider, base_url, api_key)
+    live_success = (
+        catalog.source == "live"
+        and catalog.error_kind is None
+        and catalog.error is None
+        and (catalog.status is None or catalog.status < 400)
+    )
+    retained_cache = provider == "kimicli" and catalog.source == "cache" and bool(catalog.entries)
     PROVIDERS[provider]["models"] = (
         {entry.id: _entry_config(entry) for entry in catalog.entries}
-        if catalog.entries
-        else _builtin_models(provider)
+        if live_success or retained_cache
+        else {}
     )
-    if catalog.source == "live" and catalog.error_kind is None:
+    if live_success:
         _LIVE_REFRESH_ERRORS.pop(provider, None)
         _LIVE_REFRESHED.add(provider)
         _LIVE_REFRESH_IDENTITIES[provider] = identity
@@ -548,7 +546,7 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
         kind=catalog.error_kind or "unknown",
         message=catalog.error or "live model discovery failed",
         status=catalog.status,
-        retained_live_catalog=catalog.source == "cache",
+        retained_live_catalog=retained_cache,
     )
     _LIVE_REFRESHED.discard(provider)
     _LIVE_REFRESH_IDENTITIES.pop(provider, None)

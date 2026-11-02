@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from git_tools.providers import anthropic
 from git_tools.providers.catalog import CatalogFetchResult, parse_model_catalog
 
-# Shape of GET /v1/models on api.anthropic.com: typed entries with display
-# names, including a dated snapshot the built-in list does not know.
+# Synthetic native /models fixture with server display names, an unnamed ID, and a dated snapshot.
 LIVE_PAYLOAD = {
     "data": [
         {"type": "model", "id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5",
@@ -24,8 +24,7 @@ LIVE_PAYLOAD = {
     "first_id": "claude-sonnet-5-5",
     "last_id": "claude-haiku-5-5",
 }
-# Default first, then the parser's label order (the unnamed haiku sorts by its
-# id, after the display names); the server's own names kept.
+# Default first, then the parser's label order (the unnamed haiku sorts by its ID, after the display names); the server's own names are kept.
 LIVE_IDS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5-5-20260601", "claude-haiku-5-5"]
 
 
@@ -35,15 +34,13 @@ def _live_result() -> CatalogFetchResult:
 
 
 class AnthropicProviderTests(unittest.TestCase):
-    def test_anthropic_curated_catalog(self) -> None:
-        result = anthropic.catalog()
-        self.assertIsNone(result.error)
-        self.assertEqual(result.source, "live")
+    def test_anthropic_has_no_catalog_before_discovery(self) -> None:
+        self.assertEqual(anthropic.catalog(), CatalogFetchResult())
+        self.assertEqual(anthropic.MODELS, ())
         self.assertEqual(anthropic.PROVIDER_ID, "anthropic")
         self.assertEqual(anthropic.BASE_URL, "https://api.anthropic.com/v1")
-        self.assertEqual([entry.id for entry in result.entries],
-                         ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"])
-        self.assertEqual(result.entries[0].id, anthropic.DEFAULT_MODEL)
+        self.assertEqual(anthropic.DEFAULT_MODEL, "claude-opus-5-5")
+        self.assertEqual(anthropic.PRESET["default_model"], anthropic.DEFAULT_MODEL)
 
     def test_anthropic_fetch_sends_its_own_auth_and_version_headers(self) -> None:
         calls = []
@@ -71,8 +68,7 @@ class AnthropicProviderTests(unittest.TestCase):
         self.assertEqual(resolved.fetched_at, live.fetched_at)
         self.assertEqual([e.id for e in resolved.entries], LIVE_IDS)
         self.assertEqual(resolved.entries[0].id, anthropic.DEFAULT_MODEL)
-        # The server's display names win; the built-in one fills a missing name;
-        # an unknown id without a name shows as-is.
+        # The server's display names win; static labels fill missing names on discovered IDs only; unknown IDs without names show as-is.
         self.assertEqual(resolved.entries[0].display_name, "Claude Opus 5.5")
         self.assertEqual(resolved.entries[1].display_name, "Claude Sonnet 5.5")
         self.assertEqual(resolved.entries[2].display_name, "Claude Sonnet 5.5 (2026-06-01)")
@@ -81,7 +77,7 @@ class AnthropicProviderTests(unittest.TestCase):
                                      source="live")
         self.assertEqual(anthropic.resolve_catalog(unnamed).entries[0].label, "claude-next-fixture")
 
-    def test_anthropic_resolve_catalog_falls_back_to_the_builtin_list(self) -> None:
+    def test_anthropic_resolve_catalog_has_no_replacement_choices_when_unavailable(self) -> None:
         for live in (
             CatalogFetchResult(error_kind="network", error="connection refused"),
             CatalogFetchResult(error_kind="auth", error="invalid x-api-key", status=401),
@@ -90,11 +86,19 @@ class AnthropicProviderTests(unittest.TestCase):
         ):
             with self.subTest(live=live):
                 resolved = anthropic.resolve_catalog(live)
-                self.assertEqual(resolved.entries, anthropic.MODELS)
-                self.assertEqual(resolved.source, "live")  # not a stale cache: it is the shipped list
-                self.assertEqual(resolved.error, live.error)
-                self.assertEqual(resolved.error_kind, live.error_kind)
-                self.assertEqual(resolved.status, live.status)
+                self.assertEqual(resolved, replace(live, entries=()))
+
+    def test_anthropic_fetch_preserves_native_auth_failure(self) -> None:
+        failed = CatalogFetchResult(error_kind="auth", error="invalid x-api-key", status=403)
+        with patch.object(anthropic, "fetch_model_catalog_sync", return_value=failed) as fetch:
+            result = anthropic.fetch_catalog_sync(anthropic.BASE_URL, "sk-ant-fixture")
+        fetch.assert_called_once_with(
+            anthropic.BASE_URL, "sk-ant-fixture", timeout=4.0,
+            headers={"anthropic-version": anthropic.API_VERSION, "x-api-key": "sk-ant-fixture"},
+            query=anthropic.CATALOG_QUERY,
+        )
+        self.assertIs(result, failed)
+        self.assertEqual(anthropic.resolve_catalog(result), failed)
 
 
 if __name__ == "__main__":

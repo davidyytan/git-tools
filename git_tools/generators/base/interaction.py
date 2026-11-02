@@ -3,6 +3,8 @@
 from typing import List, Optional
 
 import questionary
+from questionary import Choice
+from git_tools.navigation import BACK, ask_with_back, require_answer
 from rich.markup import escape
 from rich.panel import Panel
 
@@ -24,16 +26,22 @@ class InteractionMixin:
 
     def prompt_text(self, message: str, default: str = "") -> str:
         """Prompt for text; cancellation aborts rather than accepting the default."""
-        result = questionary.text(
+        return require_answer(ask_with_back(questionary.text(
             _prompt_label(message),
             default=default,
             style=TYPER_STYLE,
             qmark="❯",
-            instruction="",
-        ).ask()
-        if result is None:
-            raise KeyboardInterrupt
-        return result
+            instruction="(Esc back)",
+        )))
+
+    def prompt_password(self, message: str) -> str:
+        """Prompt for a masked secret with the same cancellation semantics."""
+        return require_answer(ask_with_back(questionary.password(
+            _prompt_label(message),
+            style=TYPER_STYLE,
+            qmark="❯",
+            instruction="(Esc back)",
+        )))
 
     def prompt_confirm(self, message: str, default: bool = True) -> bool:
         """Prompt for yes/no confirmation; cancellation never implies consent."""
@@ -56,17 +64,14 @@ class InteractionMixin:
         if default and default in choices:
             choices = [default] + [c for c in choices if c != default]
 
-        result = questionary.select(
+        return require_answer(ask_with_back(questionary.select(
             _prompt_label(message),
-            choices=choices,
+            choices=[*choices, Choice("← Back", value=BACK)],
             style=TYPER_STYLE,
             qmark="❯",
             pointer="›",
-            instruction="",
-        ).ask()
-        if result is None:
-            raise KeyboardInterrupt
-        return result
+            instruction="(↑↓ move · Enter picks · Esc back)",
+        )))
 
     def get_user_input(self, prompt: str, default: Optional[str] = None) -> str:
         """Get input from user with default value support (legacy wrapper)."""

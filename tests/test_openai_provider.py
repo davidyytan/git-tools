@@ -1,14 +1,14 @@
-"""OpenAI catalog: the platform's models, chat ones only (agent-cli's tests, as unittest)."""
+"""Offline OpenAI catalog tests for heuristic filtering without static fallback."""
 
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from git_tools.providers import openai
 from git_tools.providers.catalog import CatalogFetchResult, parse_model_catalog
 
-# Shape of GET /v1/models on the platform: a plain OpenAI list without display
-# names, chat models beside ids no chat completion can use.
+# Synthetic /v1/models-shaped fixture with IDs accepted/rejected by the naming/modality heuristic; it does not establish availability or transport compatibility.
 LIVE_PAYLOAD = {
     "object": "list",
     "data": [
@@ -27,7 +27,7 @@ LIVE_PAYLOAD = {
         {"id": "tts-1", "object": "model", "owned_by": "openai-internal"},
     ],
 }
-CHAT_IDS = ["gpt-6-astra", "gpt-6.1-sol", "o3-pro"]  # default first, then by label
+CHAT_IDS = ["gpt-6-astra", "gpt-6.1-sol", "o3-pro"]  # heuristic matches: default first, then parsed order
 
 
 def _live_result() -> CatalogFetchResult:
@@ -36,16 +36,16 @@ def _live_result() -> CatalogFetchResult:
 
 
 class OpenAIProviderTests(unittest.TestCase):
-    def test_openai_curated_catalog(self) -> None:
-        result = openai.catalog()
-        self.assertIsNone(result.error)
-        self.assertEqual(result.source, "live")
+    def test_openai_has_no_catalog_before_discovery(self) -> None:
+        self.assertEqual(openai.catalog(), CatalogFetchResult())
+        self.assertEqual(openai.MODELS, ())
         self.assertEqual(openai.PROVIDER_ID, "openai")
         self.assertEqual(openai.BASE_URL, "https://api.openai.com/v1")
-        self.assertEqual([entry.id for entry in result.entries], ["gpt-6-astra", "gpt-6.1-sol"])
-        self.assertEqual(result.entries[0].id, openai.DEFAULT_MODEL)
+        self.assertEqual(openai.DEFAULT_MODEL, "gpt-6-astra")
+        self.assertEqual(openai.PRESET["default_model"], openai.DEFAULT_MODEL)
 
     def test_is_chat_model(self) -> None:
+        """Exercise the naming/modality heuristic, not endpoint compatibility."""
         for model_id, expected in [
             ("gpt-6-astra", True), ("gpt-6.1-sol", True), ("chatgpt-6-latest", True),
             ("o3-pro", True), ("o4-mini", True),
@@ -59,6 +59,7 @@ class OpenAIProviderTests(unittest.TestCase):
                 self.assertIs(openai.is_chat_model(model_id), expected)
 
     def test_openai_resolve_catalog_keeps_chat_models_verbatim_with_default_first(self) -> None:
+        """Keep heuristic matches verbatim without asserting chat-completions support."""
         live = _live_result()
         self.assertEqual(len(live.entries), len(LIVE_PAYLOAD["data"]))
         resolved = openai.resolve_catalog(live)
@@ -66,7 +67,7 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertIsNone(resolved.error)
         self.assertEqual(resolved.fetched_at, live.fetched_at)
         self.assertEqual([e.id for e in resolved.entries], CHAT_IDS)
-        # Built-in display names overlay matching ids; unknown ids show as-is.
+        # Static display names overlay discovered IDs only; unknown IDs show as-is.
         self.assertEqual(resolved.entries[0].display_name, "GPT-6 Astra")
         self.assertEqual(resolved.entries[1].display_name, "GPT-6.1 Sol")
         self.assertIsNone(resolved.entries[2].display_name)
@@ -77,7 +78,7 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual([e.id for e in openai.resolve_catalog(shuffled).entries],
                          ["gpt-6-astra", "o3-pro", "gpt-6.1-sol"])
 
-    def test_openai_resolve_catalog_falls_back_to_the_builtin_list(self) -> None:
+    def test_openai_resolve_catalog_has_no_replacement_choices_when_unavailable(self) -> None:
         for live in (
             CatalogFetchResult(error_kind="network", error="connection refused"),
             CatalogFetchResult(error_kind="auth", error="Incorrect API key provided", status=401),
@@ -86,17 +87,15 @@ class OpenAIProviderTests(unittest.TestCase):
         ):
             with self.subTest(live=live):
                 resolved = openai.resolve_catalog(live)
-                self.assertEqual(resolved.entries, openai.MODELS)
-                self.assertEqual(resolved.source, "live")  # not a stale cache: it is the shipped list
-                self.assertEqual(resolved.error, live.error)
-                self.assertEqual(resolved.error_kind, live.error_kind)
-                self.assertEqual(resolved.status, live.status)
+                self.assertEqual(resolved, replace(live, entries=()))
 
-    def test_openai_resolve_catalog_falls_back_when_nothing_listed_is_a_chat_model(self) -> None:
+    def test_openai_resolve_catalog_preserves_success_when_the_heuristic_filters_every_id(self) -> None:
         live = CatalogFetchResult(entries=parse_model_catalog({"data": [{"id": "whisper-1"}, {"id": "tts-1"}]}),
-                                  source="live")
+                                  source="live", status=200, fetched_at="2026-10-15T00:00:00+00:00")
         resolved = openai.resolve_catalog(live)
-        self.assertEqual(resolved.entries, openai.MODELS)
+        self.assertEqual(resolved, replace(live, entries=()))
+        self.assertEqual(resolved.source, "live")
+        self.assertIsNone(resolved.error_kind)
         self.assertIsNone(resolved.error)
 
 

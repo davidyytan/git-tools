@@ -12,6 +12,7 @@ from git_tools.generators.base import plain_title
 from git_tools.settings import mappings
 
 from git_tools.cli import (
+    ADD_MODEL_SENTINEL,
     app,
     _build_model_choices,
     _build_provider_choices,
@@ -438,7 +439,7 @@ class CliTests(unittest.TestCase):
         titles = [plain_title(choice.title) for choice in choices]
         values = [choice.value for choice in choices]
 
-        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic"})
+        self.assertEqual(set(values), {"openrouter", "kimicli", "cliproxyapi", "acrc", "copilot", "qwen", "openai", "anthropic", "zcode"})
         self.assertIn(
             "OpenRouter [openrouter] — https://openrouter.ai/api/v1", titles[0]
         )
@@ -447,24 +448,27 @@ class CliTests(unittest.TestCase):
         self.assertIn("CLIProxyAPI [cliproxyapi]", titles[values.index("cliproxyapi")])
 
     def test_model_choices_mark_and_reorder_listed_current_model(self) -> None:
-        choices = _build_model_choices(
-            "kimicode",
-            current_model="kimi-k2.5",
-        )
+        discovered = {
+            "other-kimi": {"model_name": "other-kimi"},
+            "kimi-k2.5": {"model_name": "kimi-k2.5"},
+        }
+        with patch.dict(mappings.PROVIDERS["kimicli"], {"models": discovered}):
+            choices = _build_model_choices("kimicode", current_model="kimi-k2.5")
+            self.assertEqual(choices[0].title, "kimi-k2.5 (current)")
+            self.assertEqual([choice.value for choice in choices], ["kimi-k2.5", "other-kimi", ADD_MODEL_SENTINEL])
+            self.assertEqual(list(discovered), ["other-kimi", "kimi-k2.5"])
 
-        self.assertEqual(choices[0].title, "kimi-k2.5 (current)")
-        self.assertEqual(choices[0].value, "kimi-k2.5")
-
-    def test_model_choices_insert_unlisted_current_model_above_fallbacks(self) -> None:
-        # A provider with a curated list (Kimi's catalog is live-only now).
-        choices = _build_model_choices(
-            "anthropic",
-            current_model="account-only-claude",
-        )
-
-        self.assertEqual(choices[0].title, "account-only-claude (current)")
-        self.assertEqual(choices[0].value, "account-only-claude")
-        self.assertEqual(choices[1].title, "Claude Opus 5.5 (claude-opus-5-5)")
+    def test_model_choices_insert_unlisted_current_model_above_discovered_rows(self) -> None:
+        for discovered in ({}, {"served-claude": {"model_name": "served-claude", "display_name": "Served Claude"}}):
+            with self.subTest(discovered=list(discovered)), patch.dict(mappings.PROVIDERS["anthropic"], {"models": discovered}):
+                choices = _build_model_choices("anthropic", current_model="account-only-claude")
+                self.assertEqual(choices[0].title, "account-only-claude (current; not in catalog)")
+                self.assertEqual([choice.value for choice in choices], ["account-only-claude", *discovered, ADD_MODEL_SENTINEL])
+                self.assertEqual(choices[-1].title, "Enter a model ID manually…")
+                self.assertNotIn("account-only-claude", discovered)
+                if discovered:
+                    self.assertEqual(choices[1].title, "Served Claude (served-claude)")
+                    self.assertEqual(list(discovered), ["served-claude"])
 
     def test_model_catalog_auth_failure_names_the_key_to_fix(self) -> None:
         from git_tools.settings.mappings import LiveModelRefreshError
@@ -486,9 +490,11 @@ class CliTests(unittest.TestCase):
         message = warn.call_args.args[0]
         self.assertIn("Kimi Code model auto-detection failed (HTTP 401)", message)
         self.assertIn("KIMICODE_API_KEY in the process environment", message)
-        self.assertIn("showing available saved/fallback models", message)
+        self.assertIn("no discovered models available", message)
+        self.assertIn("configured/provider default IDs and manual entry remain available", message)
+        self.assertNotIn("fallback", message)
 
-    def test_model_catalog_failure_reports_retained_live_catalog(self) -> None:
+    def test_model_catalog_failure_reports_retained_cached_catalog(self) -> None:
         from git_tools.settings.mappings import LiveModelRefreshError
 
         with (
@@ -502,27 +508,26 @@ class CliTests(unittest.TestCase):
             ),
             patch("git_tools.cli.warning") as warn,
         ):
-            _print_model_catalog_status("openrouter", False)
+            _print_model_catalog_status("kimicode", False)
 
-        self.assertIn("showing the last successful catalog", warn.call_args.args[0])
+        message = warn.call_args.args[0]
+        self.assertIn("Kimi Code model auto-detection failed (network: timed out)", message)
+        self.assertIn("showing the last successful cached catalog", message)
+        self.assertIn("configured IDs and manual entry remain available", message)
+        self.assertNotIn("live from the provider", message)
 
-    def test_model_choices_show_effort_and_manual_entry_for_all_providers(self) -> None:
-        cliproxy_titles = [
-            choice.title for choice in _build_model_choices("cliproxyapi")
-        ]
-        kimi_titles = [choice.title for choice in _build_model_choices("kimicode")]
-        openrouter_titles = [
-            choice.title for choice in _build_model_choices("openrouter")
-        ]
-
-        # Live-only providers (as in agent-cli) ship no static rows; the saved
-        # model leads and manual entry closes every list.
-        for titles in (cliproxy_titles, kimi_titles, openrouter_titles):
-            self.assertEqual(titles[-1], "Enter a model ID manually…")
-        self.assertEqual(
-            _build_model_choices("cliproxyapi", current_model="gpt-6-astra")[0].title,
-            "gpt-6-astra (current)",
-        )
+    def test_live_model_choices_keep_current_and_manual_entry_without_catalog_rows(self) -> None:
+        for provider in mappings.LIVE_MODEL_PROVIDERS:
+            with self.subTest(provider=provider), patch.dict(mappings.PROVIDERS[provider], {"models": {}}):
+                choices = _build_model_choices(provider, current_model="account-only-model")
+                self.assertEqual([choice.value for choice in choices], ["account-only-model", ADD_MODEL_SENTINEL])
+                self.assertEqual(choices[0].title, "account-only-model (current; not in catalog)")
+                self.assertEqual(choices[-1].title, "Enter a model ID manually…")
+                defaults = _build_model_choices(provider)
+                self.assertEqual(defaults[-1].value, ADD_MODEL_SENTINEL)
+                self.assertEqual(defaults[0].value, mappings.PROVIDERS[provider]["default_model"])
+                self.assertIn("provider default; not in catalog", defaults[0].title)
+                self.assertEqual(mappings.PROVIDERS[provider]["models"], {})
 
 
 if __name__ == "__main__":

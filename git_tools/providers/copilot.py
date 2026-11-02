@@ -1,9 +1,6 @@
 """Copilot OpenAI-compatible proxy (run and authenticate it separately).
 
-Nothing provider-specific to parse: the picker lists whatever its ``/models``
-returns through the shared catalog fetch, with the one built-in below as the
-default and the offline fallback. git-tools only: agent-cli has no Copilot
-module, so this one follows the shape of its ``cliproxyapi``.
+Nothing provider-specific to parse: the picker lists whatever its ``/models`` returns through the shared catalog fetch, with no static replacement list when discovery is unavailable. The single profile default is not a catalog choice. git-tools only: agent-cli has no Copilot module, so this one follows the shape of its ``cliproxyapi``.
 """
 
 from __future__ import annotations
@@ -24,13 +21,13 @@ PRESET: dict[str, str] = {
     "profile": PROFILE,
 }
 
-# Picker order: the default leads; an existing profile's model is pinned first.
-MODELS: tuple[ModelCatalogEntry, ...] = (ModelCatalogEntry(id=DEFAULT_MODEL),)
+# Compatibility export only: live discovery is the sole source of picker choices.
+MODELS: tuple[ModelCatalogEntry, ...] = ()
 
 
 def catalog() -> CatalogFetchResult[ModelCatalogEntry]:
-    """Return the built-in catalog in the picker-compatible result shape."""
-    return CatalogFetchResult(entries=MODELS, source="live")
+    """Return no choices before live discovery; defaults are not a catalog."""
+    return CatalogFetchResult()
 
 
 __all__ = [

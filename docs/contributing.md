@@ -25,7 +25,7 @@ uv sync
 uv run git-tools settings
 ```
 
-Use Python **3.12** (the package requires `>=3.12,<3.13`) and Git. `uv run git-tools` exercises the working checkout. The settings command writes user-wide settings under `~/.git-tools/`; generation commands may send repository content to the configured provider. For an editable tool installation with shell completion, use [`./install.sh`](../README.md#install); `uv tool install -e .` alone does not run the completion step.
+Use Python **3.12** (the package requires `>=3.12,<3.13`) and Git. `uv run git-tools` exercises the working checkout. The settings command writes user-wide settings under `~/.git-tools/`; generation commands may send repository content to the configured provider. For an editable tool installation with shell completion, use [`./scripts/install.sh`](../README.md#install); `uv tool install -e .` alone does not run the completion step.
 
 For provider configuration, environment files, and interactive settings, see [Configuration](configuration.md). Provider modules live in `git_tools/providers/` (upstream-derived modules plus git-tools' `copilot.py`) and are wired into the registry in `git_tools/settings/mappings.py`; there is no `mappings.json` to copy.
 
@@ -94,7 +94,7 @@ When you change one of these areas, update the others in the same PR when needed
 
 - generator packages in `git_tools/generators/<name>/`; keep each package's `__init__.py` re-exports stable, because `cli.py`, the CI adapters, and tests import `git_tools.generators.<name>` by that path (see [code layout](architecture.md))
 - provider settings in `git_tools/settings/`
-- provider modules in `git_tools/providers/` (keep upstream-derived modules aligned with agent-cli; `copilot.py` is git-tools-specific, and git-tools registry wiring belongs in `git_tools/settings/mappings.py`)
+- provider modules in `git_tools/providers/` and request/response helpers in `git_tools/generators/base/transport.py` (lift compatible agent-core metadata and transport policy through the git-tools wrapper; preserve catalog/profile compatibility, keep `copilot.py` git-tools-specific, and retain registry wiring in `git_tools/settings/mappings.py`)
 - user-facing env examples in `git-tools.env.example`
 - prompt files in `git_tools/prompts/`
 - workflow examples in `.github/workflows/` and `.azure/workflows/`

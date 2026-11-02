@@ -6,6 +6,7 @@ import questionary
 
 from git_tools.settings.mappings import PROVIDERS, refresh_live_models
 from git_tools.settings.settings import normalize_provider_name, settings
+from git_tools.navigation import NavigationBack
 
 from .terminal import TYPER_STYLE, console, error, print_panel, success, warning
 from rich.markup import escape
@@ -51,7 +52,8 @@ class ModelSelectionMixin:
         from git_tools.settings.settings import (
             check_api_key_configured,
             provider_label,
-            setup_api_key,
+            provider_api_key_env,
+            save_setting,
         )
 
         provider = normalize_provider_name(provider)
@@ -71,7 +73,8 @@ class ModelSelectionMixin:
         console.print()
         if self.prompt_confirm(f"Set up your {provider_label(provider)} API key now?", default=True):
             from git_tools.settings.settings import DEFAULT_SETTINGS_PATH
-            if setup_api_key(provider):
+            key = self.prompt_password(f"Enter your {provider_label(provider)} API key").strip()
+            if key and save_setting(provider_api_key_env(provider), key):
                 console.print()
                 success(f"API key saved to {DEFAULT_SETTINGS_PATH}")
                 console.print()
@@ -103,11 +106,10 @@ class ModelSelectionMixin:
         """
         provider = normalize_provider_name(provider)
         self.get_provider_config(provider)
-        # Live providers resolve models against the endpoint's real catalogue
-        # (one fetch per process; static fallback when the endpoint is down).
+        # Live catalogs contain only discovered entries (or Kimi's scoped cache); saved/manual IDs and the provider's single default remain independent of discovery.
         live = refresh_live_models(provider)
-        # Share diagnostics with settings so stale/fallback choices are explicit.
-        if self._interactive or not live:
+        # Show empty successful catalogs even in noninteractive generation, without misreporting them as failed discovery.
+        if self._interactive or not live or not PROVIDERS[provider]["models"]:
             from git_tools.cli import _print_model_catalog_status
 
             _print_model_catalog_status(provider, live)
@@ -135,7 +137,7 @@ class ModelSelectionMixin:
         return selected_model, temperature, max_tokens
 
     def _get_default_model(self, models: Dict[str, Any], provider: str = "") -> str:
-        """Get the default model - from settings first, then first available."""
+        """Resolve the configured ID, then the provider's single default, independently of discovery."""
         # Check if settings default_model exists in available models
         if settings.effective_main_model:
             # Check if it's a model key
@@ -145,15 +147,11 @@ class ModelSelectionMixin:
             for model_data in models.values():
                 if model_data["model_name"] == settings.effective_main_model:
                     return settings.effective_main_model
-            # Open-ended (OpenRouter) and live-discovered providers trust the
-            # configured model as-is: the endpoint validates it, not the
-            # static fallback list.
+            # Manual/live providers trust the configured ID even when discovery is empty or omits it; the endpoint validates generation requests.
             provider_lower = normalize_provider_name(provider)
             if PROVIDERS[provider_lower].get("allow_manual_model"):
                 return settings.effective_main_model
-        # Fallback to the provider module's default model (its curated list
-        # leads with it; live-only providers have no list to lead), then to
-        # the first listed model.
+        # A provider's single default is configuration, not a discovered catalog entry; curated providers also lead their list with it.
         if provider:
             default = PROVIDERS[normalize_provider_name(provider)].get("default_model")
             if default:
@@ -176,7 +174,7 @@ class ModelSelectionMixin:
 
         # Model not found, log warning and use as-is (provider will validate)
         self.logger.warning(
-            f"Model '{self._cli_model}' not found in configured models, using as-is"
+            f"Model '{self._cli_model}' is not in the current provider catalog; using the explicit ID as-is"
         )
         return self._cli_model
 
@@ -195,7 +193,7 @@ class ModelSelectionMixin:
                 style=TYPER_STYLE, qmark="❯", instruction="",
             ))
         if selected is None or not selected.strip():
-            raise KeyboardInterrupt  # Cancel; never silently pick a different model.
+            raise NavigationBack  # Back is distinct from Ctrl+C; never select a fallback.
         return selected.strip()
 
     def _get_temperature_input(

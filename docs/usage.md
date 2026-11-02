@@ -7,16 +7,16 @@ Run `git-tools` in the repository you want to work on. See the [project README](
 ```bash
 git-tools                  # Interactive menu in a terminal
 git-tools --help            # Command overview
-git-tools --version         # Installed git-tools version (also -V)
+git-tools --version         # git-tools version, tag and commit (also -V)
 git-tools commit --help     # Options for one command
 ```
 
-`git-tools --version` prints the installed **tool version**, not your application's release version. Your application version comes from `.cz.toml`.
+`git-tools --version` prints the **tool version**, not your application's release version. Your application version comes from `.cz.toml`. For a checkout install it reads the checkout's `pyproject.toml` and adds the tool checkout's tag and commit, as agent-cli does, for example `git-tools  0.2.0-alpha.3 · tag 0.2.0-alpha.3 · commit 4c75312`. `+N` after the tag counts commits since it, `no tag` means none is reachable, and `(dirty)` marks uncommitted changes to tracked files. An install without a checkout prints the version alone.
 
 <details>
 <summary>How the tool version is displayed</summary>
 
-The value comes from `importlib.metadata.version("git-tools")`, using metadata built from `pyproject.toml`. Package metadata may normalize `0.2.0-alpha.1` to `0.2.0a1`. An uninstalled checkout without package metadata shows `git-tools unknown`.
+A recognized source checkout uses the version in its own `pyproject.toml` first, even without Git or installed package metadata. Otherwise, the value comes from `importlib.metadata.version("git-tools")`; that metadata may normalize `0.2.0-alpha.1` to `0.2.0a1`. Only when neither a recognized checkout version nor installed metadata is available does it show `git-tools unknown`.
 
 </details>
 
@@ -29,7 +29,7 @@ Bare `git-tools` requires both stdin and stdout to be terminals to open the menu
 | `pr` | Generates a PR description and title guidance | Prints/copies text; does not submit or merge a PR |
 | `bump` | Computes the next version from Conventional Commits | Normally updates managed files, commits them, and creates a tag; does not push |
 | `init` | Writes Commitizen-compatible `.cz.toml` | Does not initialize Git, create branches, commit, tag, or push |
-| `settings` | Edits saved user settings | Writes `~/.git-tools/settings.env`; model discovery can contact the provider |
+| `settings` | Edits saved user settings | Writes `~/.git-tools/settings.env`; model discovery can contact the provider before the wizard saves |
 
 Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first, and check the [current destination/profile limitations](configuration.md#current-limitations) before sending it. Initialization and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
 
@@ -57,11 +57,11 @@ These options apply to `commit`, `issue`, and `pr`. They override configured val
 | Option | Meaning and default |
 | --- | --- |
 | `--model`, `-m TEXT` | Model identifier; otherwise the configured/provider default |
-| `--temp`, `-t FLOAT` | Sampling temperature; configured default is `0.6` (settings range `0.0–2.0`; model support varies) |
+| `--temp`, `-t FLOAT` | Sampling temperature; fresh default is `1.0` (settings range `0.0–2.0`; model support varies) |
 | `--max-tokens INTEGER` | Completion token budget; configured default is `32000` |
 | `--token-limit`, `-l INTEGER` | Input diff-processing budget; default is `200000` for commits and independently `200000` for issues/PRs |
 
-Large inputs may be reduced during processing. A processing budget is not a guarantee that the provider accepts that many input/output tokens. Model-specific capabilities and parameter handling are described in [configuration](configuration.md).
+Large inputs may be reduced during processing. Input budgets are best-effort diff-content targets using the shared `cl100k_base` estimate across providers/models, not hard caps on rendered output or exact provider token counts. Protected-file retention, minimum quotas, truncation labels, and separators can make the returned diff exceed its target; prompts and other request content add further overhead. A processing budget does not guarantee that the provider accepts that many input/output tokens. Model-specific capabilities and parameter handling are described in [configuration](configuration.md).
 
 ## `commit`
 
@@ -245,13 +245,15 @@ git-tools settings issue-pr-source b
 
 Supported names: `provider`, `main-model` (`model` alias), `api-base` (`endpoint` alias), `openrouter-provider`, `kimi-thinking`, `effort`, `api-key`, `temperature`, `max-tokens` (`output-budget` alias), `commit-input-budget` (`token-limit` alias), `issue-pr-input-budget` (`issue-pr-token-limit` alias), `commit-format` (interactive group), `commit-scope`, `commit-body`, `commit-body-style`, `commit-footer`, `issue-pr-source`, `max-retries`, `pr-limit`, and `pr-max-chars`. The removed `support-model` / `sub-model` editors (also `support_model` / `sub_model`) are unknown settings, not deprecated no-ops. PR limit settings also accept `azure-pr-limit` and `azure-pr-max-chars`. Underscores in names are normalized to hyphens. Bare settings and edits without a value require an interactive terminal. The command is `settings`, not the removed `config` command.
 
-For provider choices, credential handling, model discovery, validation, defaults, and setting precedence, use [configuration](configuration.md). Prefer the masked API-key prompt over passing secrets as command arguments (which may enter shell history/process listings).
+For provider choices, credential handling, model discovery, validation, defaults, and setting precedence, use [configuration](configuration.md). **Verify the endpoint before supplying a new key or opening a model picker** using the [provider setup order](configuration.md#configure-a-provider): discovery can authenticate with an existing or newly entered key before the wizard saves. Canceling discards pending wizard settings and reverts temporary process endpoint/key changes, but does not undo discovery requests already sent or guarantee rollback of catalog-cache writes. Separately completed settings edits remain saved. Prefer the masked API-key prompt over passing secrets as command arguments (which may enter shell history/process listings).
+
+Live-discovery catalogs never substitute shipped model lists after failed or empty discovery. Configured/manual IDs and a provider's single default remain available, but an ID absent from the catalog is labeled **not in catalog**, not live-discovered. A successful filtered-empty OpenAI result gets an explicit empty-success message; failures retain their actual diagnostics. Qwen/Zcode curated choices and Kimi's scoped last-known-good cache keep their separate policies; see [model catalogs](configuration.md#models-and-reasoning).
 
 ## Practical interactive walkthrough
 
-The interactive root menu shows the same `git-tools VERSION` in a dim header once per invocation. Direct subcommand output has no added version header.
+The interactive root menu shows the same version, tag and commit line in a dim header once per invocation. Direct subcommand output has no added version header.
 
-Use **Up/Down** and **Enter** for selections, and type into text prompts/searchable model lists. Yes/No questions are selections too. **Ctrl+C** cancels. In settings, **Esc** or **← Back** returns to the prior level; standalone settings ends with **Done**. Settings opened from the main menu returns to that menu, with saved values reloaded. A content command finishes the invocation; run `git-tools` again for the next operation.
+Use **Up/Down** and **Enter** for selections, and type into text prompts/searchable model lists. Generator selection/confirmation lists include a final **← Back** option in the unfiltered choices; searchable filtering may hide it, but **Esc** still works. Text and masked-key prompts have no Back row; **Esc** cancels them, as well as model and confirmation prompts, without accepting a default. In generators, Back and Esc both cancel the current command, not revisit its previous question: a command launched from the root menu returns there, while a direct `--interactive` command exits cleanly. In settings, **Esc** or **← Back** instead returns one level; standalone settings ends with **Done**, and settings opened from root ends with **← Back** and reloads saved values on return. The root menu's last option is **exit**, and **Esc at root exits**; **Ctrl+C exits the whole invocation**, rather than navigating Back. Prompt cancellation skips the pending write, commit, generation, or clipboard action; it is neither an undo mechanism nor an in-flight request-cancellation control. A successfully completed content command still finishes the invocation.
 
 | Menu choice | Practical sequence |
 | --- | --- |

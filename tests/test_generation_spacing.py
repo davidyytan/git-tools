@@ -57,7 +57,7 @@ def captured_console(width, answers=()):
             console.print(f"❯ {message} {answer}", markup=False, soft_wrap=False)
             return answer
 
-        return SimpleNamespace(ask=ask)
+        return SimpleNamespace(application=SimpleNamespace(key_bindings=None), unsafe_ask=ask)
 
     with ExitStack() as stack:
         for module in CONSOLES:
@@ -195,7 +195,7 @@ class RenderedSpacingTests(unittest.TestCase):
         self.assert_panel_gaps(output.getvalue())
         self.assertIn("using commit messages only.\n\n❯ Additional context", output.getvalue())
 
-    def test_direct_catalog_fallback_separates_status_from_generated_panel(self):
+    def test_direct_catalog_failure_separates_status_from_generated_panel(self):
         for width in (48, 120):
             with self.subTest(width=width), captured_console(width) as (output, _, _, stack):
                 generator = CommitGenerator(auto_commit=False, copy_clipboard=False)
@@ -204,7 +204,10 @@ class RenderedSpacingTests(unittest.TestCase):
                 generator.generate_commit()
                 rendered = output.getvalue()
                 self.assert_panel_gaps(rendered)
-                self.assertRegex(rendered, r"(?:models\.|accepted)\n\n╭")
+                self.assertIn("No discovered model catalog is available for OpenRouter", rendered)
+                self.assertIn("manual entry remain available.\n\n╭", rendered)
+                self.assertIn("fix: retained output", rendered)
+                self.assertNotIn("fallback models", rendered)
 
     def test_local_decline_and_missing_credentials_do_not_double_panel_copy_gap(self):
         for width in (48, 120):

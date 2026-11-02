@@ -26,7 +26,7 @@ mkdir -p "$HOME/projects"
 cd "$HOME/projects"
 git clone https://github.com/davidyytan/git-tools.git
 cd git-tools
-./install.sh
+./scripts/install.sh
 ```
 
 Keep the tool checkout in place: installation is editable. See [installation](../../README.md#install) for PATH/completion help.
@@ -504,6 +504,8 @@ Release-led lets `release/X.Y.Z` select the final release line; human stabilizat
 Most feature/bugfix PRs into develop use Conventional Commit titles and create/continue tagged alphas. On a fresh develop branch matching stable, the first real PR may instead use `Start X.Y.Z` while its source commit remains Conventional Commit based. An ordinary `feat` from stable also selects the next minor alpha, as demonstrated above.
 
 ### Release-Line Policy
+
+Use a canonical ASCII `X.Y.Z` that is exactly the next PATCH, MINOR, or MAJOR step from stable master. On opening, this absolute tuple wins over a carried alpha/beta, even when it is lower: master `0.1.0` with source `0.2.0-alpha.1` and `release/0.1.1` opens `0.1.1-rc.0`. A stable source can open a forward target only from master's tuple. A different established RC or a stable source not on master's tuple is refused before version writes; same-line RCs continue rather than reset. The configured scheme is preserved (`-rc.0` for `semver2`, `-rc0` for `semver`). See [absolute target calculation](../versioning.md#release-led-absolute-targets).
 
 The **release branch name selects the target tuple**. Creation alone does not open RC. Unlike classic, cutting a release does **not require** a next-cycle Start on develop: develop can continue its current alpha line independently. To explicitly isolate the next cycle, use a real develop PR with `git-tools pr --base develop --start-pr --workflow-version A.B.C`, where `A.B.C` is an exact valid forward tuple. Complete it as `Start A.B.C` to obtain tagged `A.B.C-alpha.0`; a Backmerge title must not be used to open a cycle.
 

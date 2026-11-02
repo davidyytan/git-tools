@@ -11,12 +11,12 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen
+from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen, zcode
 from git_tools.providers.catalog import CatalogFetchResult, ModelCatalogEntry, parse_model_catalog
 from git_tools.providers.openrouter import OpenRouterEndpoint
 from git_tools.settings import mappings
 
-MODULES = (openrouter, acrc, copilot, qwen, kimi_code, cliproxyapi, openai, anthropic)
+MODULES = (openrouter, acrc, copilot, qwen, kimi_code, cliproxyapi, openai, anthropic, zcode)
 # git-tools stores Kimi under its historical key and keeps the module id as an alias.
 REGISTRY_KEYS = {kimi_code.PROVIDER_ID: "kimicli"}
 
@@ -35,10 +35,18 @@ class ProviderModuleShapeTests(unittest.TestCase):
                 self.assertIsInstance(module.ALIASES, tuple)
 
     def test_curated_lists_lead_with_the_default_model(self) -> None:
-        for module in (acrc, copilot, qwen, openai, anthropic):
+        for module in (qwen, zcode):
             with self.subTest(module=module.PROVIDER_ID):
                 self.assertEqual(module.MODELS[0].id, module.DEFAULT_MODEL)
                 self.assertEqual(module.catalog().entries, module.MODELS)
+
+    def test_live_provider_modules_have_no_static_catalog(self) -> None:
+        for module in (acrc, copilot, openai, anthropic):
+            with self.subTest(module=module.PROVIDER_ID):
+                self.assertEqual(module.MODELS, ())
+                result = module.catalog()
+                self.assertEqual((result.entries, result.source), ((), "none"))
+                self.assertIsNone(result.error_kind)
 
 
 class RegistryWrapsModulesTests(unittest.TestCase):
@@ -71,18 +79,16 @@ class RegistryWrapsModulesTests(unittest.TestCase):
                 self.assertEqual(mappings.PROVIDERS[key]["default_model"], module.DEFAULT_MODEL)
 
     def test_curated_lists_and_defaults_come_from_the_modules(self) -> None:
-        # The built-in table, not PROVIDERS: that one also carries the ids the
-        # user saved manually and whatever a live refresh merged in.
+        # Initial catalog definitions contain curated rows only; runtime discovery replaces catalog state without inserting saved/manual IDs.
         builtin = mappings._BUILTIN_PROVIDERS
-        for module in (acrc, copilot, qwen, openai, anthropic):
+        for module in (qwen, zcode):
             with self.subTest(provider=module.PROVIDER_ID):
                 models = builtin[module.PROVIDER_ID]["models"]
                 self.assertEqual(list(models), [entry.id for entry in module.MODELS])
                 for entry in module.MODELS:
                     self.assertEqual(models[entry.id].get("model_name"), entry.id)
                     self.assertEqual(models[entry.id].get("display_name"), entry.display_name)
-        # Live-only in agent-cli, so no static list here either.
-        for key in ("openrouter", "kimicli", "cliproxyapi"):
+        for key in mappings.LIVE_MODEL_PROVIDERS:
             self.assertEqual(builtin[key]["models"], {}, key)
         self.assertEqual(mappings.DEFAULT_OPENROUTER_MODEL, openrouter.DEFAULT_MODEL)
 

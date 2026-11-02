@@ -2,7 +2,7 @@
 # Install git-tools from this checkout and enable shell completion.
 set -euo pipefail
 
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 if ! command -v uv >/dev/null 2>&1; then
     printf '%s\n' 'Error: uv is required. Install it first: https://docs.astral.sh/uv/getting-started/installation/' >&2

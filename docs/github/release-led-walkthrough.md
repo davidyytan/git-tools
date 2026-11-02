@@ -37,10 +37,10 @@ mkdir -p "$HOME/projects"
 cd "$HOME/projects"
 git clone https://github.com/davidyytan/git-tools.git
 cd git-tools
-./install.sh
+./scripts/install.sh
 ```
 
-Already have the tool checkout? Go to it and rerun `./install.sh` instead of cloning again. **Keep the checkout:** installation is editable. The upstream URL above is the tool source, not your application origin.
+Already have the tool checkout? Go to it and rerun `./scripts/install.sh` instead of cloning again. **Keep the checkout:** installation is editable. The upstream URL above is the tool source, not your application origin.
 
 Restart your shell, then run `git-tools --help`. If it is not on PATH, run `uv tool update-shell` and restart again; see [installation](../../README.md#install) for completion setup.
 
@@ -569,6 +569,8 @@ Use these rules outside the concrete timeline; commands run in your application 
 Ordinary feature/bugfix PRs into develop use Conventional Commit titles and create/continue tagged alpha versions. A real first PR on a fresh develop line may optionally use `Start X.Y.Z` while branch commits remain Conventional Commits. Unlike Classic, release-led does not require this Start title after a release cut.
 
 ### Release-Line Policy
+
+Use a canonical ASCII `X.Y.Z` that is exactly the next PATCH, MINOR, or MAJOR step from stable master. On opening, this absolute tuple wins over a carried alpha/beta, even when it is lower: master `0.1.0` with source `0.2.0-alpha.1` and `release/0.1.1` opens `0.1.1-rc.0`. A stable source can open a forward target only from master's tuple. A different established RC or a stable source not on master's tuple is refused before version writes; same-line RCs continue rather than reset. The configured scheme is preserved (`-rc.0` for `semver2`, `-rc0` for `semver`). See [absolute target calculation](../versioning.md#release-led-absolute-targets).
 
 `release/X.Y.Z` selects the target tuple, validated against stable master; cutting it alone does not open `rc.0`. Develop may continue its existing alpha independently. The worked journey optionally uses `Start 0.3.0` to separate next-cycle work; that is a choice, not a release-led requirement.
 

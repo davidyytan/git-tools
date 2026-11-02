@@ -14,7 +14,7 @@ from typing import Any, Literal, Optional, Tuple
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, DotEnvSettingsSource
 
-from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter
+from git_tools.providers import acrc, anthropic, cliproxyapi, copilot, kimi_code, openai, openrouter, qwen, zcode
 
 from .mappings import PROVIDER_ALIASES, PROVIDERS
 
@@ -22,7 +22,7 @@ from .mappings import PROVIDER_ALIASES, PROVIDERS
 ALLOWED_CONFIG_CLASSES = {
     "OpenRouterConfig", "KimiCLIConfig", "CLIProxyAPIConfig",
     "ACRCConfig", "CopilotConfig", "QwenConfig",
-    "OpenAIConfig", "AnthropicConfig",
+    "OpenAIConfig", "AnthropicConfig", "ZCodeConfig",
 }
 
 # Providers whose API key is a fixed placeholder rather than a secret (local
@@ -114,7 +114,7 @@ def _get_provider_api_key_envs(provider: str) -> list[str]:
     primary_env = provider_def.get("api_key_env")
     if not primary_env:
         raise ValueError(f"Provider '{provider}' must define api_key_env")
-    return [primary_env]
+    return [primary_env, *provider_def.get("api_key_env_aliases", ())]
 
 
 def provider_label(provider: str) -> str:
@@ -131,9 +131,13 @@ def provider_base_url_env(provider: str) -> str:
     key second; the settings editors use it to remember a custom endpoint per
     provider, the way agent-cli keeps a base URL per provider profile.
     """
+    return _provider_base_url_envs(provider)[1]
+
+
+def _provider_base_url_envs(provider: str) -> tuple[str, ...]:
+    """Endpoint aliases in precedence order, including shared and legacy keys."""
     alias = _provider_config_class(provider).model_fields["base_url"].validation_alias
-    choices = [str(choice) for choice in getattr(alias, "choices", [])]
-    return next(choice for choice in choices if choice != "GIT_TOOLS_API_BASE")
+    return tuple(str(choice) for choice in getattr(alias, "choices", []))
 
 
 def effective_value(*keys: str, default: str | None = None) -> tuple[str | None, str]:
@@ -169,7 +173,7 @@ def _saved_value(key: str) -> str | None:
 def effective_provider_base_url(provider: str) -> tuple[str | None, str]:
     """Resolve an endpoint without constructing a credential-requiring config."""
     value, source = effective_value(
-        "GIT_TOOLS_API_BASE", provider_base_url_env(provider),
+        *_provider_base_url_envs(provider),
         default=PROVIDERS[normalize_provider_name(provider)].get("default_base_url") or None,
     )
     return value or None, source
@@ -250,7 +254,7 @@ class EffectiveSettings(BaseSettings):
 
 def saved_provider_base_url(provider: str) -> str | None:
     """A custom endpoint remembered for ``provider``, from its own key."""
-    value = (_saved_value(provider_base_url_env(provider)) or "").strip()
+    value = (effective_value(*_provider_base_url_envs(provider)[1:])[0] or "").strip()
     return value or None
 
 
@@ -271,7 +275,7 @@ _PROFILE_FIELDS = {
 # An assigned blank for these file controls is an explicit reset, not absence.
 # Process-environment blanks and saved credentials still fall through normally.
 _FILE_CLEAR_KEYS = {
-    "GIT_TOOLS_API_BASE", *_PROFILE_FIELDS,
+    "GIT_TOOLS_API_BASE", "QWENCODE_BASE_URL", *_PROFILE_FIELDS,
     *(f"{provider.upper()}_BASE_URL" for provider in PROVIDERS),
     *(f"GIT_TOOLS_{provider.upper()}_{field}"
       for provider in PROVIDERS for field in set(_PROFILE_FIELDS.values())),
@@ -475,7 +479,7 @@ class GitToolsSettings(EffectiveSettings):
         default=None,
         validation_alias=AliasChoices("GIT_TOOLS_REASONING_EFFORT"),
     )
-    default_temperature: float = Field(default=0.6, ge=0.0, le=2.0)
+    default_temperature: float = Field(default=1.0, ge=0.0, le=2.0)
     default_max_tokens: int = Field(default=32000, ge=1)
     default_max_retries: int = Field(default=1, ge=0)
     default_retry_delay: float = Field(default=1.0, ge=0.0)
@@ -625,7 +629,7 @@ class BaseLLMConfig(EffectiveSettings):
     Attributes:
         api_key: API key for the provider (loaded from environment)
         model: Model name to use (optional)
-        max_tokens: Maximum tokens for completions (1-16384)
+        max_tokens: Requested completion-token cap (positive when set; no application upper bound; endpoint/model limits vary)
         temperature: Sampling temperature (0.0-2.0)
         max_retries: Maximum number of retry attempts
         retry_delay: Delay between retries in seconds
@@ -754,9 +758,9 @@ class CopilotConfig(BaseLLMConfig):
 class QwenConfig(BaseLLMConfig):
     """DashScope requires the account's explicit plan/region endpoint."""
 
-    api_key: str = Field(..., min_length=1, validation_alias="DASHSCOPE_API_KEY")
+    api_key: str = Field(..., min_length=1, validation_alias=AliasChoices(*qwen.API_KEY_ENVS))
     base_url: str = Field(..., min_length=1, validation_alias=AliasChoices(
-        "GIT_TOOLS_API_BASE", "QWEN_BASE_URL"))
+        "GIT_TOOLS_API_BASE", "QWEN_BASE_URL", "QWENCODE_BASE_URL"))
 
     @field_validator("base_url")
     @classmethod
@@ -797,6 +801,20 @@ class AnthropicConfig(BaseLLMConfig):
     base_url: Optional[str] = Field(
         default=anthropic.BASE_URL,
         validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "ANTHROPIC_BASE_URL"),
+    )
+
+    class Config:
+        env_file = _INITIAL_ENV_FILE_PATHS
+        extra = "ignore"
+
+
+class ZCodeConfig(BaseLLMConfig):
+    """Z.ai GLM Coding Plan; use a plan key, not a general Z.ai API key."""
+
+    api_key: str = Field(..., min_length=1, validation_alias=zcode.API_KEY_ENV)
+    base_url: Optional[str] = Field(
+        default=zcode.BASE_URL,
+        validation_alias=AliasChoices("GIT_TOOLS_API_BASE", "ZCODE_BASE_URL"),
     )
 
     class Config:

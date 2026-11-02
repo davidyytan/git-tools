@@ -74,7 +74,7 @@ class TestResolveProviderCatalog(CatalogStateCase):
                 self.assertEqual(failed.entries, ())
                 self.assertEqual((failed.error_kind, failed.error), ("network", "VPN down"))
 
-    def test_module_resolvers_overlay_names_pin_the_default_and_fall_back(self) -> None:
+    def test_module_resolvers_overlay_names_pin_served_default_and_never_invent_entries(self) -> None:
         with patch.object(mappings, "_fetch_models_sync",
                           return_value=_live("glm-5-3-flash", "deepseek-v4.1-flash", "qwen3.6-plus")):
             served = resolve_provider_catalog("acrc", "http://x/v1", "k")
@@ -83,9 +83,9 @@ class TestResolveProviderCatalog(CatalogStateCase):
         self.assertIsNone(served.entries[2].display_name)
 
         with patch.object(mappings, "_fetch_models_sync", return_value=NETWORK_DOWN):
-            fallback = resolve_provider_catalog("acrc", "http://x/v1", "k")
-        self.assertEqual(fallback.entries, acrc.MODELS)
-        self.assertEqual(fallback.error_kind, "network")
+            failed = resolve_provider_catalog("acrc", "http://x/v1", "k")
+        self.assertEqual(failed.entries, ())
+        self.assertEqual((failed.error_kind, failed.error, failed.source), ("network", "VPN down", "none"))
 
         with patch.object(mappings, "_fetch_models_sync", return_value=_live("whisper-1", "gpt-4.1", "gpt-6-astra")):
             chat_only = resolve_provider_catalog("openai", "http://x/v1", "k")
@@ -104,7 +104,7 @@ class TestResolveProviderCatalog(CatalogStateCase):
         self.assertEqual(calls, [("https://api.anthropic.com/v1", "sk-ant", 4.0,
                                   {"anthropic-version": "2023-06-01", "x-api-key": "sk-ant"}, "limit=1000")])
         self.assertEqual([e.id for e in served.entries], ["claude-opus-5-5", "claude-haiku-5-5"])
-        self.assertEqual(served.entries[1].display_name, "Claude Haiku 5.5")  # built-in name overlaid
+        self.assertEqual(served.entries[1].display_name, "Claude Haiku 5.5")  # display label overlaid on a served ID
 
     def test_qwen_is_curated_and_never_fetched(self) -> None:
         with patch.object(mappings, "_fetch_models_sync") as fetch:
@@ -145,7 +145,7 @@ class TestResolveProviderCatalog(CatalogStateCase):
 
 class TestRefreshLiveModels(CatalogStateCase):
     def test_every_live_provider_places_the_served_catalog_in_the_registry(self) -> None:
-        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS) - {"qwen"})
+        self.assertEqual(set(LIVE_MODEL_PROVIDERS), set(PROVIDERS) - {"qwen", "zcode"})
         self.configure()
         for provider in LIVE_MODEL_PROVIDERS:
             with self.subTest(provider=provider):
@@ -163,7 +163,7 @@ class TestRefreshLiveModels(CatalogStateCase):
             self.assertFalse(refresh_live_models("qwen", force=True))
         fetch.assert_not_called()
 
-    def test_failed_fetch_shows_the_builtins_records_the_error_and_is_not_memoized(self) -> None:
+    def test_failed_fetch_leaves_catalog_empty_records_the_error_and_is_not_memoized(self) -> None:
         self.configure()
         with patch.object(mappings, "_fetch_models_sync", return_value=NETWORK_DOWN) as fetch:
             self.assertFalse(refresh_live_models("cliproxyapi"))
@@ -175,7 +175,7 @@ class TestRefreshLiveModels(CatalogStateCase):
 
         with patch.object(mappings, "_fetch_models_sync", return_value=NETWORK_DOWN):
             self.assertFalse(refresh_live_models("acrc"))
-        self.assertEqual(list(PROVIDERS["acrc"]["models"]), [entry.id for entry in acrc.MODELS])
+        self.assertEqual(PROVIDERS["acrc"]["models"], {})
         self.assertEqual(mappings.get_live_model_refresh_error("acrc").message, "VPN down")
 
         with patch.object(mappings, "_fetch_models_sync", return_value=_live("gpt-5.6-sol")):
@@ -243,7 +243,7 @@ class TestRefreshLiveModels(CatalogStateCase):
         with patch.object(mappings, "_fetch_models_sync", return_value=_live("vendor/new-model")):
             self.assertTrue(refresh_live_models("openrouter"))
         self.assertEqual(PROVIDERS["openrouter"]["models"]["vendor/new-model"], {"model_name": "vendor/new-model"})
-        with patch("langchain_openai.ChatOpenAI") as client:
+        with patch("git_tools.generators.base.clients.create_chat_client") as client:
             BaseGenerator()._create_openrouter_client(
                 "vendor/new-model", SimpleNamespace(api_key="k", base_url="http://x/v1"), 0.6, 100)
         self.assertEqual(client.call_args.kwargs["extra_body"]["provider"]["data_collection"], "deny")
@@ -259,7 +259,7 @@ class TestLiveProviderModelTrust(unittest.TestCase):
             with self.subTest(provider=provider):
                 self.assertEqual(_resolve_current_model(provider, "provider-live-only"), "provider-live-only")
 
-    def test_unset_model_still_uses_provider_fallback_default(self) -> None:
+    def test_unset_model_still_uses_single_provider_default(self) -> None:
         from git_tools.cli import _resolve_current_model
 
         self.assertEqual(_resolve_current_model("cliproxyapi", None), "gpt-6-astra")

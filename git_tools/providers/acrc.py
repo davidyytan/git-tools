@@ -1,12 +1,11 @@
-"""ACRC endpoint, built-in model choices and the live ``/models`` overlay.
+"""ACRC endpoint and the live ``/models`` overlay.
 
-VPN connectivity is managed externally. The picker asks the endpoint for its
-current model list (``resolve_catalog``); the built-in list below is the
-default and the fallback when that call cannot be made. Credentials are
-entered by the user, never bundled.
+VPN connectivity is managed externally. The picker asks the endpoint for its current model list (``resolve_catalog``); unavailable discovery produces no choices rather than a static replacement list. Credentials are entered by the user, never bundled.
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from .catalog import CatalogFetchResult, ModelCatalogEntry
 
@@ -24,50 +23,45 @@ PRESET: dict[str, str] = {
     "profile": PROFILE,
 }
 
-# Picker order: the default leads; an existing profile's model is pinned first.
-MODELS: tuple[ModelCatalogEntry, ...] = (
-    ModelCatalogEntry(id=DEFAULT_MODEL, display_name="DeepSeek V4.1 Flash"),
-    ModelCatalogEntry(id="glm-5-3-flash", display_name="GLM 5-3 Flash"),
-    ModelCatalogEntry(id="mimo-v2.6-pro", display_name="MiMo V2.6 Pro"),
-)
+# Compatibility export only: live discovery is the sole source of picker choices.
+MODELS: tuple[ModelCatalogEntry, ...] = ()
 
-_DISPLAY_NAMES = {entry.id: entry.display_name for entry in MODELS}
+# Labels may decorate discovered IDs, but never introduce choices of their own.
+_DISPLAY_NAMES = {
+    DEFAULT_MODEL: "DeepSeek V4.1 Flash",
+    "glm-5-3-flash": "GLM 5-3 Flash",
+    "mimo-v2.6-pro": "MiMo V2.6 Pro",
+}
 
 
 def catalog() -> CatalogFetchResult[ModelCatalogEntry]:
-    """Return the built-in catalog in the picker-compatible result shape."""
-    return CatalogFetchResult(entries=MODELS, source="live")
+    """Return no choices before live discovery; defaults are not a catalog."""
+    return CatalogFetchResult()
 
 
 def resolve_catalog(
     live: CatalogFetchResult[ModelCatalogEntry],
 ) -> CatalogFetchResult[ModelCatalogEntry]:
-    """Prefer the endpoint's own list; fall back to the built-in one.
+    """Return only the endpoint's live choices, never a static replacement list.
 
-    Live ids are kept verbatim (they are what the server routes), with the
-    built-in display names overlaid where the id matches and the default
-    model pinned first. When the fetch failed the built-in list is returned
-    with the live error carried along so the caller can say why.
+    Live IDs are kept verbatim, with display names overlaid only on discovered IDs and the default model pinned first only if present. Failed or unavailable discovery yields empty entries with the original fetch metadata.
     """
-    if live.source == "live" and live.entries:
-        named = [
-            ModelCatalogEntry(
-                id=entry.id,
-                display_name=entry.display_name or _DISPLAY_NAMES.get(entry.id),
-            )
-            for entry in live.entries
-        ]
-        named.sort(key=lambda entry: entry.id != DEFAULT_MODEL)
-        return CatalogFetchResult(
-            entries=tuple(named), source="live", fetched_at=live.fetched_at,
+    if (
+        live.source != "live"
+        or live.error_kind is not None
+        or live.error is not None
+        or (live.status is not None and live.status >= 400)
+    ):
+        return replace(live, entries=())
+    named = [
+        ModelCatalogEntry(
+            id=entry.id,
+            display_name=entry.display_name or _DISPLAY_NAMES.get(entry.id),
         )
-    return CatalogFetchResult(
-        entries=MODELS,
-        source="live",
-        error_kind=live.error_kind,
-        error=live.error,
-        status=live.status,
-    )
+        for entry in live.entries
+    ]
+    named.sort(key=lambda entry: entry.id != DEFAULT_MODEL)
+    return replace(live, entries=tuple(named))
 
 
 __all__ = [

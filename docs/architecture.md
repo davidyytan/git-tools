@@ -10,8 +10,11 @@ This guide maps the source tree so changes land in the module that owns them. Fo
 | --- | --- |
 | `git_tools/cli.py` | Typer application: the `commit`, `issue`, `pr`, `bump`, `init`, and `settings` commands, the interactive menu, and the settings editors |
 | `git_tools/settings/settings.py` | Pydantic settings, provider configuration classes, credential checks, and `~/.git-tools/settings.env` persistence |
-| `git_tools/providers/` | One module per provider, copied from agent-cli: endpoint, default model, aliases, curated models, and catalog codecs (`catalog.py` is the shared `/models` transport and cache; `copilot.py` is the one git-tools-only module) |
-| `git_tools/settings/mappings.py` | Provider registry wrapping `git_tools/providers/` with git-tools' wiring (credential env vars, config classes, picker flags, per-model knobs), and the catalog resolution that calls the modules the way agent-cli's provider flow does |
+| `git_tools/providers/` | Standalone provider metadata and catalogs, originally copied from agent-cli and aligned with agent-core: endpoint, default model, aliases, curated models, and catalog codecs (`catalog.py` is the shared `/models` transport and cache; Copilot remains git-tools-only) |
+| `git_tools/build_info.py` | Version, tag and commit for `--version` and the interactive header; copied byte for byte from agent-cli's `agent_cli/build_info.py` and wrapped by `_version_line` in `cli.py` |
+| `git_tools/navigation.py` | Stdlib-importable Back signal and lazy Questionary Esc wrapper, shared by the CLI and generator prompts |
+| `scripts/install.sh` | Editable checkout installation and completion setup; resolves the checkout's project root before installing, regardless of the caller's working directory |
+| `git_tools/settings/mappings.py` | Provider registry wrapping `git_tools/providers/` with git-tools' wiring (credential env vars, config classes, picker flags, per-model knobs); live discovery never substitutes static catalogs, while Qwen/Zcode curated choices and Kimi's scoped cache remain separate |
 | `git_tools/utils/io.py` | Atomic JSON helpers the provider package depends on, copied from agent-cli |
 | `git_tools/prompts/` | System and user prompt text files, loaded by name |
 | `git_tools/templates/` | Commit, issue, and PR output templates with their loader |
@@ -31,11 +34,12 @@ A generator class is composed from small mixins plus `BaseGenerator`. Mixins hol
 | --- | --- |
 | `terminal.py` | The shared Rich console, `STYLE_*` constants, `info`/`success`/`warning`/`error`, `print_panel`, and `TYPER_STYLE` |
 | `tokens.py` | tiktoken encoder and `count_tokens` |
-| `openrouter.py` | OpenRouter `extra_body` provider-routing helpers |
+| `openrouter.py` | Legacy exported OpenRouter routing helpers; runtime routing now follows `transport.py` and the explicit saved pin |
 | `prompts.py` | `PROMPTS_DIR` and prompt-template loading |
 | `interaction.py` | Questionary prompts and clipboard handoff |
 | `models.py` | Provider selection, API-key precheck, model and sampling-parameter resolution |
-| `clients.py` | LangChain `ChatOpenAI` construction per provider |
+| `clients.py` | Thin mapping from resolved git-tools settings, budgets, and invocation IDs into the provider transport |
+| `transport.py` | Compatible request policy and non-streaming reasoning capture/replay lifted from agent-core, adapted to the pinned OpenAI/LangChain SDK |
 | `diffs.py` | Staged and branch diff retrieval, token budgeting, per-file quotas |
 | `display.py` | Quota, token-usage, and reasoning panels |
 | `llm.py` | `invoke_llm` with retry handling |
@@ -102,7 +106,7 @@ Dependency layers run from low-level to high-level: `errors` → `version` → `
 
 | Change | Edit |
 | --- | --- |
-| Add or adjust a provider | `providers/<name>.py` (copy agent-cli's module when one exists), its wiring in `settings/mappings.py`, `settings/settings.py`, `base/clients.py`, and the `settings` command in `cli.py` |
+| Add or adjust a provider | Align or lift compatible agent-core metadata/helpers into `providers/<name>.py` and `base/transport.py`; map settings through `settings/mappings.py`, `settings/settings.py`, `base/clients.py`, and the settings UI in `cli.py` |
 | Model picker or default resolution | `base/models.py`; shared picker helpers live in `cli.py` |
 | Diff budgeting or truncation | `base/diffs.py`; its panel in `base/display.py` |
 | Commit prompt or message parsing | `commitgen/messages.py` and `prompts/commitgen_*.txt` |
@@ -128,6 +132,10 @@ Auxiliary version-sync warnings log under the `git_tools.generators.bumpgen` log
 | CI strategy and templates | `tests/test_git_flow_strategy.py`, `tests/test_pipeline_safety.py`, `tests/test_publish.py` |
 | Commit generation and interaction | `tests/test_commitgen.py`, `tests/test_generation_flow.py` |
 | Console spacing and rendered generator flows | `tests/test_cli_spacing.py`, `tests/test_generation_spacing.py` |
+| Version, tag and commit display | `tests/test_build_info.py`, `tests/test_version_display.py` |
+| Back/Esc routing and real keybindings | `tests/test_navigation.py`, `tests/test_navigation_zcode_ui.py` |
+| Provider source parity and HTTP payloads | `tests/test_provider_registry_alignment.py`, `tests/test_agent_core_transport_parity.py` |
+| Installer cwd, arguments, and completion | `tests/test_install_script.py` (fake commands only) |
 | Issue and PR generation | `tests/test_issuepr_prompt.py`, `tests/test_pr_comparison.py`, `tests/test_pr_content_safety.py`, `tests/test_azure_pr_settings.py` |
 | Init | `tests/test_initgen.py` |
 | Providers, models, settings UI | `tests/test_effective_settings.py`, `tests/test_provider_config.py`, `tests/test_provider_parity.py`, `tests/test_live_models.py`, `tests/test_openrouter_provider_config.py`, `tests/test_cli.py` |

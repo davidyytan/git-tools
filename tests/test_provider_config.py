@@ -110,7 +110,7 @@ class ProviderConfigTests(unittest.TestCase):
         # The settings singleton reads ~/.git-tools/settings.env at import, so
         # a saved tier or thinking choice must be patched out for "nothing
         # configured" to hold on every machine.
-        with (patch("langchain_openai.ChatOpenAI") as chat_openai,
+        with (patch("git_tools.generators.base.clients.create_chat_client") as chat_openai,
               patch.object(settings_module.settings, "default_reasoning_effort", None),
               patch.object(settings_module.settings, "kimi_thinking", None)):
             generator._create_kimicli_client(
@@ -124,9 +124,10 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(kwargs["model"], "kimi-k2.5")
         self.assertEqual(kwargs["api_key"], "sk-kimi-test")
         self.assertEqual(kwargs["base_url"], "https://api.kimi.com/coding/v1")
-        self.assertEqual(kwargs["default_headers"], {"User-Agent": "KimiCLI/1.3"})
-        # Nothing configured: nothing thinking-related is sent (agent-core).
-        self.assertEqual(kwargs["extra_body"], {})
+        self.assertEqual(kwargs["default_headers"], {"User-Agent": "KimiCLI/1.52.0"})
+        # Nothing configured: only the invocation cache key, no thinking knob.
+        self.assertEqual(set(kwargs["extra_body"]), {"prompt_cache_key"})
+        self.assertRegex(kwargs["extra_body"]["prompt_cache_key"], r"^[0-9a-f]{32}$")
         # The configured temperature goes through, as for every provider.
         self.assertEqual(kwargs["temperature"], 0.2)
 
@@ -183,7 +184,7 @@ class ProviderConfigTests(unittest.TestCase):
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
         provider_config = CLIProxyAPIConfig(CLIPROXYAPI_API_KEY="cliproxyapi")
 
-        with (patch("langchain_openai.ChatOpenAI") as chat_openai,
+        with (patch("git_tools.generators.base.clients.create_chat_client") as chat_openai,
               patch.object(settings_module.settings, "default_reasoning_effort", "xhigh")):
             generator._create_cliproxy_client(
                 "gpt-5.5",
@@ -215,7 +216,7 @@ class ProviderConfigTests(unittest.TestCase):
         provider_config = CLIProxyAPIConfig(CLIPROXYAPI_API_KEY="cliproxyapi")
 
         with patch.object(settings_module.settings, "default_reasoning_effort", "low"):
-            with patch("langchain_openai.ChatOpenAI") as chat_openai:
+            with patch("git_tools.generators.base.clients.create_chat_client") as chat_openai:
                 generator._create_cliproxy_client(
                     "gpt-5.5",
                     provider_config,
@@ -248,10 +249,10 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(fresh.default_reasoning_effort, "medium")
 
     @patch.dict(os.environ, {"GIT_TOOLS_DEFAULT_TEMPERATURE": ""}, clear=False)
-    def test_settings_default_temperature_is_point_six(self) -> None:
+    def test_settings_default_temperature_matches_agent_core(self) -> None:
         from git_tools.settings.settings import GitToolsSettings
 
-        self.assertEqual(GitToolsSettings().default_temperature, 0.6)
+        self.assertEqual(GitToolsSettings(_env_file=None).default_temperature, 1.0)
 
     @patch.dict(os.environ, {"GIT_TOOLS_DEFAULT_MAX_TOKENS": ""}, clear=False)
     def test_settings_default_max_tokens_is_32k(self) -> None:

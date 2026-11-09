@@ -58,7 +58,7 @@ typer.rich_utils.MAX_WIDTH = _typer_width + _width_offset if _typer_width else 8
 # ============================================================================
 
 app = typer.Typer(
-    help="AI-powered tool for commit messages, issue/PR documentation, version bumping, and Commitizen-style init.",
+    help="AI-powered commit and issue/PR helpers, read-only Git history, version bumping, and Commitizen-style init.",
     invoke_without_command=True,
     no_args_is_help=False,
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -551,6 +551,7 @@ def main(
                     Choice("bump", value="bump"),
                     Choice("init", value="init"),
                     Choice("settings", value="settings"),
+                    Choice("log", value="log"),
                     Choice("exit", value="exit"),
                 ],
                 style=TYPER_STYLE,
@@ -585,6 +586,7 @@ def main(
             "pr": pr,
             "bump": bump,
             "init": init_command,
+            "log": log,
         }
         token = _ROOT_COMMAND_ACTIVE.set(True)
         try:
@@ -595,6 +597,134 @@ def main(
         finally:
             _ROOT_COMMAND_ACTIVE.reset(token)
         return
+
+
+# ============================================================================
+# Log Command
+# ============================================================================
+
+
+@app.command()
+def log(
+    base: Annotated[Optional[str], typer.Option("--base", "-b", help="Base ref (defaults to local develop, then origin/develop)")] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", min=1, help="Maximum commits to show per view")] = 30,
+    all_branches: Annotated[bool, typer.Option("--all", help="Show all refs, including branches, cached remote branches, and tags")] = False,
+    compare: Annotated[bool, typer.Option("--compare", help="Compare base-only and current-branch-only commits")] = False,
+    first_parent: Annotated[bool, typer.Option("--first-parent/--all-parents", help="Follow only first parents, or include merged side commits")] = True,
+    interactive: Annotated[Optional[bool], typer.Option("--interactive/--no-interactive", "-i", help="Browse interactively (default: only with terminal stdin and stdout)")] = None,
+) -> None:
+    """Show a bounded, read-only Git graph and cached branch/commit counts."""
+    if all_branches and compare:
+        raise typer.BadParameter("--all and --compare cannot be used together.")
+    use_interactive = _has_interactive_terminal() if interactive is None else interactive
+    if use_interactive and not _has_interactive_terminal():
+        console.print("Interactive log browsing requires an interactive terminal (stdin and stdout). Use --no-interactive for redirected output.", style="red" if sys.stdout.isatty() else None, markup=False, highlight=False, emoji=False)
+        raise typer.Exit(1)
+
+    # Keep help/version independent of Git, and never initialize a provider.
+    from .history import HistoryError, LogView, history_snapshot, render_log
+
+    view = LogView.ALL if all_branches else LogView.COMPARE if compare else LogView.BRANCH
+    visible_limit = limit
+
+    def literal(text: str, *, style: str | None = None) -> None:
+        console.print(text, style=style if sys.stdout.isatty() else None, markup=False, highlight=False, emoji=False)
+
+    def commit_count(value: int | None) -> str:
+        return f"{'N/A' if value is None else value} commit{'' if value == 1 else 's'}"
+
+    try:
+        snapshot = history_snapshot(base)
+        if view == LogView.COMPARE and snapshot.base_ref is None:
+            if not use_interactive:
+                raise HistoryError("Compare view requires a base. Use --base REF to select one.")
+            literal("Compare view requires a base. Showing the current branch; choose Compare or Change base to select one.", style="yellow")
+            view = LogView.BRANCH
+
+        def change_base(target_view: LogView) -> bool:
+            nonlocal base, snapshot
+            while True:
+                candidate = _ask_with_back(questionary.text(
+                    "Base ref (blank uses develop):",
+                    default=base or snapshot.base_ref or "",
+                    style=TYPER_STYLE,
+                    qmark="❯",
+                ))
+                if candidate is None or candidate == _BACK:
+                    return False
+                candidate = candidate.strip() or None
+                try:
+                    updated = history_snapshot(candidate)
+                    if target_view == LogView.COMPARE and updated.base_ref is None:
+                        raise HistoryError("Compare view requires a base. Enter an existing branch, tag, or commit.")
+                except HistoryError as exc:
+                    literal(str(exc), style="red")
+                    continue
+                base, snapshot = candidate, updated
+                return True
+
+        while True:
+            graph = render_log(snapshot, view, limit=visible_limit, first_parent=first_parent)
+            literal(f"Branch: {snapshot.branch}")
+            resolved_base = snapshot.base_ref or "not found (develop)"
+            if snapshot.base_sha:
+                resolved_base += f" ({snapshot.base_sha[:7]})"
+            literal(f"Base: {resolved_base}")
+            literal(f"Ahead: {commit_count(snapshot.ahead)} · Behind: {commit_count(snapshot.behind)}")
+            if first_parent and snapshot.ahead is not None:
+                literal("Ahead/behind counts include merged commits.", style="dim")
+            literal(f"Branches: {snapshot.local_branches} local · {snapshot.remote_branches} remote-tracking (cached; no fetch)")
+            if snapshot.base_ref is None:
+                literal("No default develop base found; use --base REF to compare.")
+            parents = "first-parent" if first_parent else "all parents"
+            literal(f"View: {view.value} · {parents} · limit {visible_limit}")
+            if view == LogView.COMPARE:
+                literal("< base-only commits · > current-branch-only commits")
+            literal(graph if graph else "No commits yet." if snapshot.head is None else "No matching commits.")
+            if not use_interactive:
+                return
+            console.print()
+            choice = _ask_with_back(questionary.select(
+                "Log options:",
+                choices=[
+                    Choice("Current branch", value=LogView.BRANCH),
+                    Choice("Compare with base", value=LogView.COMPARE),
+                    Choice("All branches", value=LogView.ALL),
+                    Choice(f"Show more (+{limit})", value="more"),
+                    Choice("Show all parents" if first_parent else "Use first-parent", value="parents"),
+                    Choice("Change base", value="base"),
+                    _back_choice(),
+                ],
+                default=view,
+                style=TYPER_STYLE,
+                qmark="❯",
+                pointer="›",
+                instruction="(↑↓ move · Enter picks · Esc goes back)",
+            ))
+            if choice is None or choice == _BACK:
+                _cancel_command()
+            if choice == "more":
+                visible_limit += limit
+            elif choice == "parents":
+                first_parent = not first_parent
+            elif choice == "base":
+                change_base(view)
+            else:
+                selected_view = LogView(choice)
+                if selected_view == LogView.COMPARE and snapshot.base_ref is None:
+                    literal("Compare view requires a base; select one below.", style="yellow")
+                    if not change_base(selected_view):
+                        continue
+                view = selected_view
+            console.print()
+    except NavigationBack:
+        _cancel_command()
+    except (KeyboardInterrupt, EOFError):
+        warning("Operation cancelled by user.")
+        raise typer.Exit(0)
+    except HistoryError as exc:
+        literal(str(exc), style="red")
+        raise typer.Exit(1)
 
 
 # ============================================================================

@@ -56,7 +56,10 @@ class PipelineSafetyTests(unittest.TestCase):
 
     def test_standalone_guides_distinguish_stable_catchup_from_ahead_alpha(self):
         for platform in ('github', 'azure-devops'):
-            paths = sorted((ROOT / 'docs' / platform).glob('*-walkthrough.md'))
+            docs = ROOT / 'docs' / platform
+            if platform == 'github':
+                docs /= 'actions'
+            paths = sorted(docs.glob('*-walkthrough.md'))
             self.assertEqual(len(paths), 4)
             for path in paths:
                 text = path.read_text()
@@ -240,7 +243,7 @@ with open(os.environ['FAKE_CAPTURE'], 'a', encoding='utf-8') as stream:
                 self.assertNotIn('git check-ignore', text)
 
     def test_github_standalone_guides_include_existing_key_copy_block(self):
-        docs = ROOT / 'docs/github'
+        docs = ROOT / 'docs/github/actions'
         paths = [ROOT / 'README.md', docs / 'setup.md', docs / 'quickstart.md',
                  *sorted(docs.glob('*-walkthrough.md'))]
         self.assertEqual(len(paths), 7)

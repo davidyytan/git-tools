@@ -2,16 +2,16 @@
 
 [Project README](../README.md) · [Documentation index](README.md) · [Flow comparison](git-flow-guide.md)
 
-Each guide below contains an existing-key copy block, a complete worked release/hotfix process, and its flow policy. **Already have keys or an initialized project?** Use the copy block and jump to the relevant stage; do not rerun fresh-project bootstrap. For CI configuration without the full example, use [GitHub setup](github/setup.md) or [Azure setup](azure-devops/setup.md).
+Each guide below contains an existing-key copy block, a complete worked release/hotfix process, and its flow policy. **Already have keys or an initialized project?** Use the copy block and jump to the relevant stage; do not rerun fresh-project bootstrap. For CI configuration without the full example, use [GitHub setup](github/actions/setup.md) or [Azure setup](azure-devops/setup.md).
 
 Choose your hosting platform and **one** mode:
 
 | Mode | When to choose it | GitHub walkthrough | Azure DevOps walkthrough |
 | --- | --- | --- | --- |
-| Classic | Develop selects the release line; explicitly open the next develop cycle after cutting a release | [Start to finish](github/classic-walkthrough.md) | [Start to finish](azure-devops/classic-walkthrough.md) |
-| Classic — Reviewed | Classic, with human stabilization and synchronization changes reviewed through inner PRs | [Start to finish](github/classic-reviewed-walkthrough.md) | [Start to finish](azure-devops/classic-reviewed-walkthrough.md) |
-| Release-led | The release branch selects its target; no mandatory next-cycle Start PR after the cut | [Start to finish](github/release-led-walkthrough.md) | [Start to finish](azure-devops/release-led-walkthrough.md) |
-| Release-led — Reviewed | Release-led, with human stabilization and synchronization changes reviewed through inner PRs | [Start to finish](github/release-led-reviewed-walkthrough.md) | [Start to finish](azure-devops/release-led-reviewed-walkthrough.md) |
+| Classic | Develop selects the release line; explicitly open the next develop cycle after cutting a release | [Start to finish](github/actions/classic-walkthrough.md) | [Start to finish](azure-devops/classic-walkthrough.md) |
+| Classic — Reviewed | Classic, with human stabilization and synchronization changes reviewed through inner PRs | [Start to finish](github/actions/classic-reviewed-walkthrough.md) | [Start to finish](azure-devops/classic-reviewed-walkthrough.md) |
+| Release-led | The release branch selects its target; no mandatory next-cycle Start PR after the cut | [Start to finish](github/actions/release-led-walkthrough.md) | [Start to finish](azure-devops/release-led-walkthrough.md) |
+| Release-led — Reviewed | Release-led, with human stabilization and synchronization changes reviewed through inner PRs | [Start to finish](github/actions/release-led-reviewed-walkthrough.md) | [Start to finish](azure-devops/release-led-reviewed-walkthrough.md) |
 
 ## What each walkthrough covers
 

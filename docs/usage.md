@@ -8,6 +8,7 @@ Run `git-tools` in the repository you want to work on. See the [project README](
 git-tools                  # Interactive menu in a terminal
 git-tools --help            # Command overview
 git-tools --version         # git-tools version, tag and commit (also -V)
+git-tools log               # Read-only history browser; compares with develop
 git-tools commit --help     # Options for one command
 ```
 
@@ -20,7 +21,7 @@ A recognized source checkout uses the version in its own `pyproject.toml` first,
 
 </details>
 
-Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. The `settings` command has its own terminal-dependent setup/edit behavior described below.
+Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. `log` automatically opens its browser only when both streams are terminals; otherwise it prints once. The `settings` command has its own terminal-dependent setup/edit behavior described below.
 
 | Command | What it does | Important side effects |
 | --- | --- | --- |
@@ -29,15 +30,17 @@ Bare `git-tools` requires both stdin and stdout to be terminals to open the menu
 | `pr` | Generates a PR description and title guidance | Prints/copies text; does not submit or merge a PR |
 | `bump` | Computes the next version from Conventional Commits | Normally updates managed files, commits them, and creates a tag; does not push |
 | `init` | Writes Commitizen-compatible `.cz.toml` | Does not initialize Git, create branches, commit, tag, or push |
+| `log` | Shows a Git graph, branch counts, and commits ahead/behind a base | Read-only; no fetch, checkout, repository writes, provider calls, or clipboard changes |
 | `settings` | Edits saved user settings | Writes `~/.git-tools/settings.env`; model discovery can contact the provider before the wizard saves |
 
-Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first, and check the [current destination/profile limitations](configuration.md#current-limitations) before sending it. Initialization and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
+Commit/issue/PR generation normally sends selected diffs, commit messages, and context to the configured LLM provider. Review the input for confidential data first, and check the [current destination/profile limitations](configuration.md#current-limitations) before sending it. History browsing, initialization, and bumping do not require an LLM. Interactive generation can instead prepare a prompt for use elsewhere; unavailable provider credentials can also cause a local-prompt fallback rather than generated output.
 
 ## Everyday commands
 
 Run these in the application repository. Stage only the changes you intend to describe:
 
 ```bash
+git-tools log                             # Inspect history without changing the repository.
 git status --short
 git add path/to/reviewed-file             # Replace with your actual reviewed path.
 git-tools commit --no-commit --no-copy    # Preview; still sends content to your provider.
@@ -46,9 +49,44 @@ git-tools pr --base develop               # Generate PR text; create the hosted 
 git-tools bump --dry-run                  # Preview version changes without writing.
 ```
 
-Configure a provider with `git-tools settings` before AI generation. Do not run both `git-tools commit` and a separate `git commit` for the same change. AI generation may send repository content to the provider; init and bump do not need a provider.
+Configure a provider with `git-tools settings` before AI generation. Do not run both `git-tools commit` and a separate `git commit` for the same change. AI generation may send repository content to the provider; log, init, and bump do not need a provider.
 
-The sections below are reference material: go directly to [`commit`](#commit), [`issue` / `pr`](#issue-and-pr), [`bump`](#bump), [`init`](#init), or [`settings`](#settings-name-value).
+The sections below are reference material: go directly to [`log`](#log), [`commit`](#commit), [`issue` / `pr`](#issue-and-pr), [`bump`](#bump), [`init`](#init), or [`settings`](#settings-name-value).
+
+## `log`
+
+Show a graph similar to `git log --graph --oneline --first-parent`, with a summary of the current branch, comparison base, and branch counts:
+
+```bash
+git-tools log                              # Interactive in a terminal; latest 30 commits.
+git-tools log --compare                    # Commits unique to the base or current branch.
+git-tools log --all                        # All local refs, including cached remotes and tags.
+git-tools log --base master --limit 50     # Choose another base and initial display limit.
+git-tools log --all-parents                 # Include merged side-branch commits.
+git-tools log --no-interactive              # Print one view, even in a terminal.
+git-tools log --no-interactive > history.txt
+```
+
+The default base is the local `develop` branch, falling back to cached `origin/develop` only if the local branch is absent. **Nothing is fetched.** Use `--base origin/develop` to request the cached remote comparison. Explicit branch names prefer local branches; fully qualified refs such as `refs/remotes/origin/develop`, tags, commit hashes, and Git revisions such as `HEAD~1` are also accepted. Invalid explicit bases fail clearly. If neither default base exists, ordinary history still works and ahead/behind counts show **N/A**, not zero; choose a base to use Compare.
+
+**Ahead/behind counts are commits, not branches.** They include all reachable commits, including merged side commits that first-parent display hides. Local and remote-tracking branch counts are separate; symbolic remote `HEAD` aliases are not counted as extra branches. A shallow or partial repository can show only locally available history; missing required objects produce an error rather than a lazy fetch.
+
+| Option | Behavior |
+| --- | --- |
+| `--base`, `-b TEXT` | Choose the comparison base; otherwise local `develop`, then cached `origin/develop` |
+| `--limit`, `-n INTEGER` | Maximum commits displayed; positive integer, default `30` |
+| `--all` | Start in the all-branches view; includes all Git refs, including tags |
+| `--compare` | Start with commits unique to either the base or current branch; cannot combine with `--all` |
+| `--first-parent` / `--all-parents` | Follow first parents by default, or include merged side history |
+| `--interactive` / `--no-interactive`, `-i` | Default: browse only with terminal stdin **and** stdout. Explicit interactive mode requires both; `--no-interactive` always prints once |
+
+In Compare view, **`<` means base-only** and **`>` means current-branch-only**. Common history is omitted. No differing commits is a successful empty result, not an error.
+
+The graph appears immediately. The interactive menu lets you switch between **Current branch**, **Compare with base**, and **All branches**, **Show more** in initial-limit increments, toggle parents, or change the base. An invalid base can be corrected without losing the previous valid selection. Current/compare graphs use the captured commit SHAs so paging through more history stays consistent; restart the command to refresh after Git changes made elsewhere.
+
+**Esc / Back** leaves direct log browsing, or returns to the root menu if log was launched there. Esc inside the base prompt returns to the log menu. **Ctrl+C** exits the command instead of reopening the root menu. Pipes and redirected output never open prompts unless explicitly requested, and explicit interactive mode without terminals errors rather than hanging.
+
+The command does not require `.cz.toml`, provider credentials, or an LLM. It does not fetch, checkout, stage, commit, tag, push, save settings, or copy output to the clipboard. Empty repositories and detached HEADs are supported.
 
 ## Shared generation options
 
@@ -155,7 +193,7 @@ git-tools pr --base origin/develop --backmerge-hotfix-pr --workflow-version 1.6.
 
 Hotfix backmerge uses the **already-promoted** hotfix version, not the next patch. Supply it with `--workflow-version`; interactive mode asks for it without a guessed default. Neither latest master nor a source version synchronized with develop reliably identifies that earlier promotion, so this mode does not infer a version.
 
-Review generated titles and the final merge/squash subject: those subjects drive CI strategy decisions. These flags generate guidance, not hosting actions or branch transitions. See [GitHub flows](github/README.md) or [Azure DevOps flows](azure-devops/README.md) for completion policy.
+Review generated titles and the final merge/squash subject: those subjects drive CI strategy decisions. These flags generate guidance, not hosting actions or branch transitions. See [GitHub flows](github/actions/README.md) or [Azure DevOps flows](azure-devops/README.md) for completion policy.
 
 ### PR-description length handling
 

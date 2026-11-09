@@ -8,14 +8,14 @@ Choose your platform and **one** mode. Each link below is a complete guide with 
 
 | Mode | Who chooses the release line? | Human stabilization changes | GitHub | Azure DevOps |
 | --- | --- | --- | --- | --- |
-| Classic | `develop` selects it first; explicitly open the next cycle after cutting a release | Direct commits allowed | [Complete guide](github/classic-walkthrough.md) | [Complete guide](azure-devops/classic-walkthrough.md) |
-| Classic — Reviewed | Same as Classic | Inner PRs required | [Complete guide](github/classic-reviewed-walkthrough.md) | [Complete guide](azure-devops/classic-reviewed-walkthrough.md) |
-| Release-led | `release/X.Y.Z` selects it | Direct commits allowed | [Complete guide](github/release-led-walkthrough.md) | [Complete guide](azure-devops/release-led-walkthrough.md) |
-| Release-led — Reviewed | Same as release-led | Inner PRs required | [Complete guide](github/release-led-reviewed-walkthrough.md) | [Complete guide](azure-devops/release-led-reviewed-walkthrough.md) |
+| Classic | `develop` selects it first; explicitly open the next cycle after cutting a release | Direct commits allowed | [Complete guide](github/actions/classic-walkthrough.md) | [Complete guide](azure-devops/classic-walkthrough.md) |
+| Classic — Reviewed | Same as Classic | Inner PRs required | [Complete guide](github/actions/classic-reviewed-walkthrough.md) | [Complete guide](azure-devops/classic-reviewed-walkthrough.md) |
+| Release-led | `release/X.Y.Z` selects it | Direct commits allowed | [Complete guide](github/actions/release-led-walkthrough.md) | [Complete guide](azure-devops/release-led-walkthrough.md) |
+| Release-led — Reviewed | Same as release-led | Inner PRs required | [Complete guide](github/actions/release-led-reviewed-walkthrough.md) | [Complete guide](azure-devops/release-led-reviewed-walkthrough.md) |
 
 For the closest classic Git Flow experience, choose Classic with merge commits for feature, release, and hotfix PRs. The serialized GitHub examples use squash; reviewed current-master synchronization before promotion instead requires an ancestry-preserving merge commit. Follow the chosen guide's method at each checkpoint.
 
-**Only configuring CI or copying existing keys?** Go straight to [GitHub setup](github/setup.md) or [Azure setup](azure-devops/setup.md). You do not need to repeat fresh-repository bootstrap.
+**Only configuring CI or copying existing keys?** Go straight to [GitHub setup](github/actions/setup.md) or [Azure setup](azure-devops/setup.md). You do not need to repeat fresh-repository bootstrap.
 
 ## Before following a complete example
 

@@ -1,6 +1,6 @@
 # Azure DevOps Git Flow Guides
 
-[Documentation index](../README.md) · [All platforms and modes](../git-flow-guide.md) · [GitHub](../github/README.md)
+[Documentation index](../README.md) · [All platforms and modes](../git-flow-guide.md) · [GitHub](../github/actions/README.md)
 
 ## Existing Keys or Pipeline? Start Here
 

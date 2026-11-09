@@ -1,6 +1,6 @@
-# Release-led: complete GitHub guide
+# Classic: complete GitHub guide
 
-[GitHub guides](README.md) · [Platform setup](setup.md) · [CLI reference](../usage.md)
+[GitHub guides](README.md) · [Platform setup](setup.md) · [CLI reference](../../usage.md)
 
 ## Already have keys? Copy these into CI
 
@@ -35,20 +35,21 @@ Install Git, Python **3.12**, [uv](https://docs.astral.sh/uv/getting-started/ins
 ```bash
 mkdir -p "$HOME/projects"
 cd "$HOME/projects"
-git clone https://github.com/davidyytan/git-tools.git
+# Replace the source placeholder with the upstream git-tools clone URL, not your application origin.
+git clone YOUR_GIT_TOOLS_SOURCE_URL git-tools
 cd git-tools
 ./scripts/install.sh
 ```
 
 Already have the tool checkout? Go to it and rerun `./scripts/install.sh` instead of cloning again. **Keep the checkout:** installation is editable. The upstream URL above is the tool source, not your application origin.
 
-Restart your shell, then run `git-tools --help`. If it is not on PATH, run `uv tool update-shell` and restart again; see [installation](../../README.md#install) for completion setup.
+Restart your shell, then run `git-tools --help`. If it is not on PATH, run `uv tool update-shell` and restart again; see [installation](../../../README.md#install) for completion setup.
 
 In **your own** GitHub account or organization, create an **empty** `greeting-demo` repository: no generated README, license, or `.gitignore`. The next section creates its local checkout and configures Actions before the first push.
 
-**Optional generated prose:** the fixed `git commit -m` commands and CI need no LLM. If you use `git-tools commit` or `git-tools pr`, configure a provider/model with `git-tools settings` before the first use; prefer its masked credential prompt. See [configuration](../configuration.md).
+**Optional generated prose:** the fixed `git commit -m` commands and CI need no LLM. If you use `git-tools commit` or `git-tools pr`, configure a provider/model with `git-tools settings` before the first use; prefer its masked credential prompt. See [configuration](../../configuration.md).
 
-**Working rule:** keep one version adapter, full history, and current tags. After each version-producing push/merge, wait for publication, pull the bot commit, and fetch tags. A follow-up bot run may skip. On failure, stop and use [recovery](../publication.md), not force-push or another bootstrap.
+**Working rule:** keep one version adapter, full history, and current tags. After each version-producing push/merge, wait for publication, pull the bot commit, and fetch tags. A follow-up bot run may skip. On failure, stop and use [recovery](../../publication.md), not force-push or another bootstrap.
 
 ## 2. Seed master at the required baseline and publish 0.1.0
 
@@ -64,12 +65,12 @@ git config user.email 'YOUR_EMAIL'
 git remote add origin git@github.com:YOUR_USERNAME_OR_ORG/greeting-demo.git
 git-tools init --version 0.0.1 --tag-format '$version'
 mkdir -p .github/workflows
-cp "$HOME/projects/git-tools/.github/workflows/version-bump-git-flow-variant-release-led.yml.example" .github/workflows/version-bump-git-flow-variant-release-led.yml
+cp "$HOME/projects/git-tools/.github/workflows/version-bump-git-flow-classic.yml.example" .github/workflows/version-bump-git-flow-classic.yml
 ```
 
 **Before the first push, complete [GitHub setup](setup.md):**
 
-1. In the copied YAML `env:`, set `GIT_BOT_NAME` / `GIT_BOT_EMAIL` to **your dedicated automation identity**, not your human identity or David's. Keep the upstream `GIT_TOOLS_REPO`; choose a supported engine branch/tag in `GIT_TOOLS_REF` (not a bare SHA). Local installation does not change CI's engine clone.
+1. In the copied YAML `env:`, set `GIT_BOT_NAME` / `GIT_BOT_EMAIL` to **your dedicated automation identity**, not your human identity. Keep the upstream `GIT_TOOLS_REPO`; choose a supported engine branch/tag in `GIT_TOOLS_REF` (not a bare SHA). Local installation does not change CI's engine clone.
 2. Follow [key setup](setup.md#prepare-keys-and-set-the-exact-secrets): use an existing dedicated automation GPG key **or create one first**, print its private block and paste it into Actions secret **`BOT_GPG_SECRETKEY`**, and read the dedicated SSH private key into **`BOT_SSH_SECRETKEY`** using the copy block above. Register matching public keys separately **only if not already configured**. Do not save a private-key export file.
 3. Use PR-title squash messages, disable rebase, and add separate read-only PR tests. Grant the SSH identity write access and narrow bot protection exceptions; `GITHUB_TOKEN` permission alone is insufficient. Plan the one-time seed exception before final protections.
 
@@ -134,9 +135,9 @@ Wait for the feature-branch workflow: version stays **`0.1.0`**, **no tag** (fea
 
 ```bash
 git fetch origin --tags
-git-tools pr --base develop
+git-tools pr --base develop --start-pr --workflow-version 0.2.0
 ```
-In GitHub, create **`feature/greeting` → `develop`**, title **`feat: add named greeting`**. Request review, wait for PR checks, then squash-merge with that final subject. This deliberately uses an ordinary `feat:` from stable `0.1.0`: normal minor detection opens `0.2.0-alpha.0`. Release-led does not require a Start title for this first feature.
+In GitHub, create **`feature/greeting` → `develop`**, title **`Start 0.2.0`**. The body describes the real greeting feature; the fixed title opens the selected classic line. Request review, wait for PR checks, then squash-merge with final subject `Start 0.2.0`.
 
 The CLI only generates text: it neither creates nor merges the hosted PR. Inspect/paste its body and enforce the exact title/final subject in GitHub. Wait for develop's post-merge Actions run: expect **`0.2.0-alpha.0`**, tag **`0.2.0-alpha.0`**.
 
@@ -178,7 +179,7 @@ git push -u origin release/0.2.0
 ```
 **Transition:** `develop` at `0.2.0-alpha.1` → new `release/0.2.0`; no PR/title and no new human commit. Wait for the workflow: it should skip (there is no unique human stabilization commit), leaving **`0.2.0-alpha.1`**, **no new tag**. Merely naming/creating the branch does not open RC.
 
-The release-led adapter validates `release/0.2.0` against stable master `0.1.0`: this is a valid minor step. It could select another valid next release line, but this example deliberately retains `0.2.0` to match the feature's normal alpha line. **Optional example choice, not a release-led requirement:** we use `Start 0.3.0` below to select a separate next-cycle develop line explicitly. Unlike classic, release-led does not require this Start PR after the cut: ordinary Conventional Commit PRs can continue develop's existing alpha line while `release/0.2.0` independently selects and stabilizes its target. Choosing that alternative changes the later alpha versions and synchronization resolutions; the rest of this concrete walkthrough follows the optional Start choice.
+Classic has already selected `0.2.0` on develop, so the release branch must match that prerelease line. As a process policy, the next develop PR must explicitly open a forward cycle with `Start`. In this illustrated minor-alpha sequence, ordinary feature/fix PRs would continue `0.2.0-alpha.N` while release stabilizes it; that is not a universal rule for every patch-alpha state or semantic increment.
 
 ```bash
 git switch develop
@@ -554,7 +555,7 @@ git fetch origin --tags
 git switch -c release/0.3.0
 git push -u origin release/0.3.0
 ```
-**Transition:** current develop → next `release/0.3.0`; no PR/title, no unique human change yet, **no new tag**, still `0.3.0-alpha.4`. Wait for the skip job. You are now at the next release cut. Release-led validates `0.3.0` as the next minor step from stable master `0.2.1`; the patch hotfix did not force the next release to `0.2.2`. To repeat this example's optional explicit next-cycle choice (not a release-led requirement), a real feature PR titled `Start 0.4.0` opens `0.4.0-alpha.0` on develop, while a real stabilization change on release opens `0.3.0-rc.0`. Use permitted direct stabilization commits just as above. Then promote, wait for stable, and backmerge before deleting the source.
+**Transition:** current develop → next `release/0.3.0`; no PR/title, no unique human change yet, **no new tag**, still `0.3.0-alpha.4`. Wait for the skip job. You are now at the next release cut. Classic must keep this release on its selected `0.3.0` line. Repeat the same actual-work pattern: a real feature PR titled `Start 0.4.0` opens `0.4.0-alpha.0` on develop, while a real stabilization change on release opens `0.3.0-rc.0`. Use permitted direct stabilization commits just as above. Then promote, wait for stable, and backmerge before deleting the source.
 
 ## Why the expected results are conditional
 
@@ -562,39 +563,35 @@ The engine's behavior is covered by `tests/test_git_flow_strategy.py`, `tests/te
 
 ## Flow policy and edge cases
 
-Use these rules outside the concrete timeline; commands run in your application checkout. Release-led lets the **release branch** select the final release line.
+Use these rules when your repository differs from the worked timeline. Commands throughout this guide run in the **application checkout**, not the retained tool checkout.
 
 ### Feature and Bugfix Policy
 
-Ordinary feature/bugfix PRs into develop use Conventional Commit titles and create/continue tagged alpha versions. A real first PR on a fresh develop line may optionally use `Start X.Y.Z` while branch commits remain Conventional Commits. Unlike Classic, release-led does not require this Start title after a release cut.
+Ordinary feature/bugfix PRs into `develop` use Conventional Commit titles and produce tagged alpha versions. On a fresh develop line matching stable master, a real feature PR may use `Start X.Y.Z` to select the next line; its branch commits still use Conventional Commits.
 
 ### Release-Line Policy
 
-Use a canonical ASCII `X.Y.Z` that is exactly the next PATCH, MINOR, or MAJOR step from stable master. On opening, this absolute tuple wins over a carried alpha/beta, even when it is lower: master `0.1.0` with source `0.2.0-alpha.1` and `release/0.1.1` opens `0.1.1-rc.0`. A stable source can open a forward target only from master's tuple. A different established RC or a stable source not on master's tuple is refused before version writes; same-line RCs continue rather than reset. The configured scheme is preserved (`-rc.0` for `semver2`, `-rc0` for `semver`). See [absolute target calculation](../versioning.md#release-led-absolute-targets).
-
-`release/X.Y.Z` selects the target tuple, validated against stable master; cutting it alone does not open `rc.0`. Develop may continue its existing alpha independently. The worked journey optionally uses `Start 0.3.0` to separate next-cycle work; that is a choice, not a release-led requirement.
-
-To explicitly open a new cycle later, use a real feature/bugfix branch and `git-tools pr --base develop --start-pr --workflow-version A.B.C`, replacing `A.B.C` with a valid forward tuple. Complete it as `Start A.B.C` for tagged `A.B.C-alpha.0`. A Backmerge title never opens a new cycle.
+Classic selects the release line on `develop`. As a process policy, after cutting `release/X.Y.Z`, the next develop PR must use `Start A.B.C`, a valid forward line, producing tagged `A.B.C-alpha.0`. In the illustrated minor-alpha sequence, ordinary feature/fix PRs would continue `X.Y.Z-alpha.N` and collide with the line being stabilized. Do not generalize that arithmetic to every patch-alpha state: a different semantic increment can select a different tuple. Explicit `Start` remains the policy for deliberate next-cycle selection; its PR may carry real work and is not an extra empty step.
 
 ### Merge Strategy
 
-This journey uses PR-title **squash merges**. Direct release-led also supports merge commits with the final subject equal to the PR title; see [merge settings](setup.md#merge-settings). Do not use rebase, the factory-default `Merge pull request #...` subject, or switch styles midway through the example.
+This worked journey uses PR-title **squash merges**. Classic also supports merge commits when the final subject is the PR title; see [merge settings](setup.md#merge-settings). Do not use rebase or the factory-default `Merge pull request #...` subject. Do not switch completion styles midway through the example.
 
 ### Synchronization Policy
 
-Direct stabilization/synchronization pushes are permitted on release/hotfix lines in this mode. Current-master synchronization before promotion still matters. If every human change needs review, use the [release-led reviewed guide](release-led-reviewed-walkthrough.md), including its inner synchronization PRs.
+This direct-change mode allows human stabilization and synchronization pushes on release/hotfix branches. That does **not** make current-master synchronization optional before promotion. If your policy requires review for these changes, use the [Classic reviewed guide](classic-reviewed-walkthrough.md) instead.
 
 ### Release Stabilization and Promotion
 
-Branch creation does not open RC. The first meaningful Conventional Commit opens the branch-selected `X.Y.Z-rc.0`; later eligible commits continue that line. If genuinely no stabilization change is needed, an approved direct empty `git commit --allow-empty -m "chore: open release"` is an alternative initialization, not an additional required step. Push, wait for CI, and use its actual version; this changes the sample timeline.
-
-Include current master and the expected RC, synchronize/re-test if master advances, and promote into master with `Release X.Y.Z`. Wait for stable publication before backmerge.
+- Branch creation alone does not open RC. The first meaningful Conventional Commit opens `X.Y.Z-rc.0`; later eligible commits continue `rc.N`, without choosing a new release tuple.
+- If there is genuinely no stabilization change, an approved direct empty commit can initialize RC instead of the real-fix step: `git commit --allow-empty -m "chore: open release"`. Push once, wait for CI, and use its actual version. This changes the example timeline; do not add it on top of the demonstrated fixes.
+- Promote only a tested candidate containing current master and the expected RC. The promotion into master is titled `Release X.Y.Z`; wait for stable publication before backmerge.
 
 ### Release Backmerge
 
-Use `Backmerge Release X.Y.Z` into develop. Preserve an ahead alpha line; meaningful unique fixes advance it once without tagging. No-op/version-only changes do not advance it. Develop not yet ahead may catch up to stable `X.Y.Z` without a tag; open a later real cycle with `Start A.B.C` when wanted.
+The final develop PR is titled `Backmerge Release X.Y.Z`. Keep an ahead develop alpha line; meaningful unique fixes advance it once, without a tag. Version-only/no-op changes do not advance it. If develop is not ahead, backmerge may catch it up to stable `X.Y.Z` without tagging; open a later real cycle with `Start A.B.C` when ready.
 
-Follow the [source synchronization](#9-synchronize-the-retained-release-source-for-backmerge) and [develop-based integration PR](#10-backmerge-through-a-develop-based-integration-pr) rather than squashing the retained source directly. Preserve develop's current version in the integration diff **only when its alpha release tuple is ahead of the promoted target**, not an untagged preparation version. Otherwise use the [stable-catch-up procedure](#stable-catch-up-when-develop-is-not-ahead). Keep `.cz.toml` and managed manifest versions consistent with the intended target line; never resolve versions by lexical string order.
+Use the [source synchronization](#9-synchronize-the-retained-release-source-for-backmerge) and [develop-based integration PR](#10-backmerge-through-a-develop-based-integration-pr) steps, not a naive squash of the retained source. Resolve version fields consistently in `.cz.toml` and managed manifests, preserving the intended target line; never choose a version by lexical string order. In this squash recipe the integration PR preserves develop's pre-merge version **only when its alpha release tuple is ahead of the promoted target**, not the source's untagged preparation version. Otherwise use the [stable-catch-up procedure](#stable-catch-up-when-develop-is-not-ahead).
 
 ### Stable catch-up when develop is not ahead
 
@@ -608,10 +605,10 @@ The numbered `0.3.0-alpha.*` backmerge is the **ahead-alpha case only**. Compare
 
 ### Hotfix Stabilization and Promotion
 
-Start from published stable master. Creating `hotfix/*` alone does not open RC; the first meaningful Conventional Commit selects the next patch `rc.0`, and later eligible commits continue it. The same optional direct empty `chore: open release` initialization is available only as an alternative to real stabilization work.
+A hotfix starts from published stable master. Branch creation alone does not open RC; the first meaningful Conventional Commit opens the next patch `rc.0`, with later eligible commits continuing that line. A direct empty `chore: open release` commit is the same optional initialization alternative described above, not an additional required step.
 
-Include current master, re-test if it moves, and reassess the patch target if necessary. Promote with `Hotfix X.Y.Z`, then wait for stable publication.
+Include current master, re-test, and reassess the patch target if master advances. Promote with `Hotfix X.Y.Z`, then wait for stable publication before backmerge.
 
 ### Hotfix Backmerge
 
-Use `Backmerge Hotfix X.Y.Z` into develop. The helper's explicit `--workflow-version` is the **already-promoted patch**, not master's next patch or the synchronized source's alpha. Ahead-alpha, stable-catch-up, no-op, no-tag, and version-resolution rules match release backmerge. Follow the [hotfix synchronization](#13-synchronize-the-retained-hotfix-source-through-the-proper-lane) and [integration PR](#14-backmerge-the-hotfix-without-downgrading-develop); never promote the combined source again.
+Use `Backmerge Hotfix X.Y.Z` into develop, where the explicit helper's `--workflow-version` is the **already-promoted hotfix**, not the synchronized source version or master's next patch. The same ahead-alpha, stable-catch-up, no-op, no-tag, and version-resolution rules apply as for release backmerge. Follow the [hotfix source synchronization](#13-synchronize-the-retained-hotfix-source-through-the-proper-lane) and [integration PR](#14-backmerge-the-hotfix-without-downgrading-develop) steps; do not promote the combined source to master again.

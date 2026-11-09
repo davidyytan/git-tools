@@ -8,7 +8,7 @@ python -m git_tools.generators.publish --branch develop --create-tag true
 
 Run the publisher from the **application repository checkout**, with the git-tools engine available on Python's import path. CI templates set `PYTHONPATH` to their cloned engine directory. Both adapters use the selected remote git-tools engine ref: that ref must contain the publisher and required strategy implementation. Editing a local git-tools checkout does not update the remote engine clone.
 
-For installation/configuration, see the [project README](../README.md) and [configuration guide](configuration.md). For pipeline activation, credentials, signing, and branch policy, use the [GitHub](github/README.md) or [Azure DevOps](azure-devops/README.md) guides rather than treating this helper as a full release workflow.
+For installation/configuration, see the [project README](../README.md) and [configuration guide](configuration.md). For pipeline activation, credentials, signing, and branch policy, use the [GitHub](github/actions/README.md) or [Azure DevOps](azure-devops/README.md) guides rather than treating this helper as a full release workflow.
 
 ## Publisher interface
 

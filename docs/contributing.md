@@ -71,7 +71,7 @@ The commit-side workflow helper is the empty release opener, `git-tools commit -
 
 Describe the change, its motivation, and how you validated it. PR output should not include `## Related Issue` or `Issue: #...` placeholders.
 
-For platform setup, branch policies, and complete workflow procedures, use the [GitHub guides](github/README.md) or [Azure DevOps guides](azure-devops/README.md). Avoid duplicating their command sequences here.
+For platform setup, branch policies, and complete workflow procedures, use the [GitHub guides](github/actions/README.md) or [Azure DevOps guides](azure-devops/README.md). Avoid duplicating their command sequences here.
 
 ## Validation
 

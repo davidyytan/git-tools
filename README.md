@@ -6,17 +6,17 @@ CLI for AI-assisted Conventional Commits, issue/PR text, and Git Flow versioning
 
 Requires **Python 3.12**, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/). Install GnuPG too if you need GPG signing.
 
-Choose a directory **outside your application repository**. This example uses `$HOME/projects`:
+Choose a directory **outside your application repository**. This example uses `$HOME/projects`. Replace `YOUR_GIT_TOOLS_SOURCE_URL` with the clone URL copied from this git-tools repository's **Code** button, not your application repository's URL:
 
 ```bash
 mkdir -p "$HOME/projects"
 cd "$HOME/projects"
-git clone https://github.com/davidyytan/git-tools.git
+git clone YOUR_GIT_TOOLS_SOURCE_URL git-tools
 cd git-tools
 ./scripts/install.sh
 ```
 
-Already cloned the tool? Run `./scripts/install.sh` from that checkout instead. **Keep the checkout in place:** the installation is editable. David's URL above is the upstream **tool source**, not your application's repository.
+Already cloned the tool? Run `./scripts/install.sh` from that checkout instead. **Keep the checkout in place:** the installation is editable. The URL above is the upstream **tool source**, not your application's repository.
 
 Restart your shell, then check `git-tools --version`. If the command is not on PATH, run `uv tool update-shell`, restart, then run `git-tools --install-completion`. For dependency or package-metadata changes, rerun `./scripts/install.sh --reinstall` from the tool checkout.
 
@@ -36,7 +36,7 @@ cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY"   # → BOT_SSH_SECRETKEY (not the .pub
 
 Paste each complete private-key block, including its BEGIN/END markers, into the corresponding **secret**. **No export file is needed.** Never paste the private output into chat, logs, or source files; terminal/clipboard history can retain it.
 
-Already registered the matching public keys and write access? Keep that setup. Missing a key or public-key registration? The [GitHub setup guide](docs/github/setup.md#prepare-keys-and-set-the-exact-secrets) shows how to create only what you need. The supplied workflows have no GPG/SSH passphrase configured; protected keys need a secure workflow adaptation.
+Already registered the matching public keys and write access? Keep that setup. Missing a key or public-key registration? The [GitHub setup guide](docs/github/actions/setup.md#prepare-keys-and-set-the-exact-secrets) shows how to create only what you need. The supplied workflows have no GPG/SSH passphrase configured; protected keys need a secure workflow adaptation.
 
 ### Azure DevOps
 
@@ -58,19 +58,22 @@ Switch to the repository you want to work on, **not** the git-tools source check
 ```bash
 cd /path/to/your/application
 git-tools --help
+git-tools log                            # Read-only history browser; compares with develop.
 git-tools settings                       # Optional: configure a provider for AI generation.
 git-tools commit --no-commit --no-copy    # Preview a message for changes you already staged.
 ```
 
-Direct `git-tools commit` **creates a commit by default**. `git-tools pr` generates text; it does not open a hosted PR. `init`, `bump`, and versioning CI need no LLM key.
+Direct `git-tools commit` **creates a commit by default**. `git-tools pr` generates text; it does not open a hosted PR. `log`, `init`, `bump`, and versioning CI need no LLM key.
+
+[`git-tools log`](docs/usage.md#log) shows a first-parent commit graph, ahead/behind counts against `develop`, and local/cached remote branch counts. In a terminal, browse the current branch, compare with a base, or show all branches; redirected output prints once. It never fetches or switches branches.
 
 ## Follow a workflow
 
 | What you need | GitHub | Azure DevOps |
 | --- | --- | --- |
-| Keys, secrets, CI settings, and permissions | [Setup](docs/github/setup.md) | [Setup](docs/azure-devops/setup.md) |
-| Returning-user command checklist | [Quickstart](docs/github/quickstart.md) | [Quickstart](docs/azure-devops/quickstart.md) |
-| Complete release/hotfix process | [Choose a guide](docs/github/README.md) | [Choose a guide](docs/azure-devops/README.md) |
+| Keys, secrets, CI settings, and permissions | [Setup](docs/github/actions/setup.md) · [Branch rulesets](docs/github/rulesets/branch-rulesets.md) | [Setup](docs/azure-devops/setup.md) |
+| Returning-user command checklist | [Quickstart](docs/github/actions/quickstart.md) | [Quickstart](docs/azure-devops/quickstart.md) |
+| Complete release/hotfix process | [Choose a guide](docs/github/actions/README.md) | [Choose a guide](docs/azure-devops/README.md) |
 
 Each complete guide includes the key-copy commands and its flow policy. Fresh-project bootstrap is clearly marked: **do not rerun it in an existing repository**. `git-tools init` creates `.cz.toml`; it does not install workflows or configure hosting. Enable only one versioning adapter per application.
 

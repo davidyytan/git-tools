@@ -52,6 +52,16 @@ The overview should show **1 branch rule · targeting 2 branches**. Check actor 
 - People outside the merger allowlist may still have Write access or leave comments/reviews; that does not bypass this update restriction.
 - A listed actor still needs ordinary repository permission. A bypass is not a permission grant, and public visibility does not confer merge access.
 
+**Verify the layers before using a new repository.** With rule-edit authority, inspect the full definitions and confirm matching branch targets, active enforcement, and the exact intended actors. Then authenticate GitHub CLI as the named human merger (`gh api user`) and inspect each ruleset with `gh api repos/OWNER/REPOSITORY/rulesets/RULESET_ID`, replacing the repository and recorded rule ID:
+
+| Layer | Expected `current_user_can_bypass` for the named human | Required configuration |
+| --- | --- | --- |
+| Policy 1: PR-only | `never` | Human must still use a PR; only the authorised automation exception belongs here |
+| Policy 2: history protection | `never` | Empty bypass list, including for automation |
+| Policy 4: merger eligibility | `exempt` | Named human exempt only from the update-eligibility rule; automation remains `always` |
+
+A missing `bypass_actors` field is not an empty list: use a reader with rule-edit authority for complete configuration verification. Inspect a suitable PR without merging it using `gh pr view PR_NUMBER --repo OWNER/REPOSITORY --json mergeable,mergeStateStatus,reviewDecision,statusCheckRollup`. `MERGEABLE` means no merge conflict; it does not mean all requirements pass. An otherwise ready PR by the named human should not remain `BLOCKED` solely by policy 4 after the exemption. Other checks or review requirements must still pass; do not waive the other layers to obtain a clean status.
+
 These exact targets do not cover tags, feature branches, `release/*`, or `hotfix/*`. Check the scope required by your workflow separately.
 
 ## Automation exception

@@ -8,7 +8,7 @@ Run `git-tools` in the repository you want to work on. See the [project README](
 git-tools                  # Interactive menu in a terminal
 git-tools --help            # Command overview
 git-tools --version         # git-tools version, tag and commit (also -V)
-git-tools log               # Read-only history browser; compares with develop
+git-tools log               # Print read-only history once; compares with develop
 git-tools commit --help     # Options for one command
 ```
 
@@ -21,7 +21,7 @@ A recognized source checkout uses the version in its own `pyproject.toml` first,
 
 </details>
 
-Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. `log` automatically opens its browser only when both streams are terminals; otherwise it prints once. The `settings` command has its own terminal-dependent setup/edit behavior described below.
+Bare `git-tools` requires both stdin and stdout to be terminals to open the menu; otherwise it prints help. Direct generation, bump, and init subcommands do not prompt by default. To request prompts for a particular operation, use the `--interactive` / `-i` option on `commit`, `issue`, `pr`, `bump`, or `init`. Direct `git-tools log` prints once, even in a terminal; choose **Log** from the root menu or pass `--interactive` / `-i` to browse. The `settings` command has its own terminal-dependent setup/edit behavior described below.
 
 | Command | What it does | Important side effects |
 | --- | --- | --- |
@@ -58,13 +58,14 @@ The sections below are reference material: go directly to [`log`](#log), [`commi
 Show a graph similar to `git log --graph --oneline --first-parent`, with a summary of the current branch, comparison base, and branch counts:
 
 ```bash
-git-tools log                              # Interactive in a terminal; latest 30 commits.
+git-tools log                              # Print once and exit; latest 30 commits.
 git-tools log --compare                    # Commits unique to the base or current branch.
 git-tools log --all                        # All local refs, including cached remotes and tags.
 git-tools log --base master --limit 50     # Choose another base and initial display limit.
 git-tools log --all-parents                 # Include merged side-branch commits.
-git-tools log --no-interactive              # Print one view, even in a terminal.
-git-tools log --no-interactive > history.txt
+git-tools log -i                           # Browse interactively; requires terminal input/output.
+git-tools log --no-interactive              # Explicitly print one view without prompts.
+git-tools log > history.txt
 ```
 
 Terminal output uses native Git colors for commit hashes, refs, tags, and graph lanes, with a colored summary. `NO_COLOR=1`, `CLICOLOR=0`, or `TERM=dumb` disables colors. The graph and summary are always plain when stdout is redirected or piped, even when `FORCE_COLOR` is set; color does not require interactive browsing.
@@ -80,13 +81,13 @@ The default base is the local `develop` branch, falling back to cached `origin/d
 | `--all` | Start in the all-branches view; includes all Git refs, including tags |
 | `--compare` | Start with commits unique to either the base or current branch; cannot combine with `--all` |
 | `--first-parent` / `--all-parents` | Follow first parents by default, or include merged side history |
-| `--interactive` / `--no-interactive`, `-i` | Default: browse only with terminal stdin **and** stdout. Explicit interactive mode requires both; `--no-interactive` always prints once |
+| `--interactive` / `--no-interactive`, `-i` | Default: print once, even in a terminal. `--interactive` / `-i` opts into browsing and requires terminal stdin **and** stdout; `--no-interactive` prints once |
 
 In Compare view, **`<` means base-only** and **`>` means current-branch-only**. Common history is omitted. No differing commits is a successful empty result, not an error.
 
 ### Interactive browser
 
-The graph appears immediately. The menu separates persistent **Display settings** from **Actions**:
+Open the browser by running `git-tools` and selecting **Log**, or with `git-tools log -i`. The graph appears immediately. The menu separates persistent **Display settings** from **Actions**:
 
 | Section | Setting or action | Behavior |
 | --- | --- | --- |
@@ -100,7 +101,7 @@ The last selected top-level row stays focused, so pressing Enter again on **Show
 
 Current/compare graphs use captured commit SHAs, so **Show more** stays on the same history snapshot. **Refresh history** or a successful base change captures new state after Git changes made elsewhere. The all-branches graph follows Git's `--all` semantics over currently available local refs; its remote-tracking refs are still cached, never fetched. Base changes and Refresh validate the new snapshot and graph before replacing the previous valid state; invalid bases or rendering failures leave that state intact.
 
-**Esc / Back** returns one level from a settings picker or base prompt. Canceling base entry opened by Compare returns to the view picker. Only top-level Esc / Back leaves direct log browsing or returns to the root menu if log was launched there. **Ctrl+C** at any level exits the whole command instead of reopening the root menu. Pipes and redirected output never open prompts unless explicitly requested, and explicit interactive mode without terminals errors rather than hanging.
+**Esc / Back** returns one level from a settings picker or base prompt. Canceling base entry opened by Compare returns to the view picker. Only top-level Esc / Back leaves direct log browsing or returns to the root menu if log was launched there. **Ctrl+C** at any level exits the whole command instead of reopening the root menu. Pipes and redirected output never open prompts; explicit interactive mode without terminals errors rather than hanging.
 
 The command does not require `.cz.toml`, provider credentials, or an LLM. It does not fetch, checkout, stage, commit, tag, push, save settings, or copy output to the clipboard. Empty repositories and detached HEADs are supported.
 

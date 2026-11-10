@@ -124,9 +124,10 @@ def render_log(
     *,
     limit: int = 30,
     first_parent: bool = True,
+    color: bool = False,
     cwd: str | Path | None = None,
 ) -> str:
-    """Render a bounded graph; branch and compare views use the snapshot's SHAs."""
+    """Render a bounded graph using snapshot SHAs for branch/compare; native Git color is opt-in."""
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError("History limit must be a positive integer.")
     view = LogView(view)
@@ -135,7 +136,7 @@ def render_log(
     if view != LogView.ALL and snapshot.head is None:
         return ""
 
-    args = ["log", "--graph", "--oneline", "--decorate=short", "--encoding=UTF-8", "--no-color", "--no-show-signature", "--no-notes", f"--max-count={limit}"]
+    args = ["log", "--graph", "--oneline", "--decorate=short", "--encoding=UTF-8", "--color=always" if color else "--no-color", "--no-show-signature", "--no-notes", f"--max-count={limit}"]
     if first_parent:
         args.append("--first-parent")
     if view == LogView.ALL:

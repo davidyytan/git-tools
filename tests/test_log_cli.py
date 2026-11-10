@@ -9,7 +9,8 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
-from unittest.mock import call, patch
+from types import SimpleNamespace
+from unittest.mock import Mock, call, patch
 
 import questionary
 from prompt_toolkit.input import create_pipe_input
@@ -78,6 +79,35 @@ class LogCliTests(unittest.TestCase):
         self.assertIn("4 local · 5 remote-tracking (cached; no fetch)", result.output)
         self.assertIn("* abc123 [red]literal[/red] :smile:", result.output)
 
+    def test_direct_tty_default_prints_once_without_prompting(self):
+        self.terminal.return_value = True
+        self.ask.side_effect = AssertionError("Direct log must not prompt by default")
+        for args, view in (([], LogView.BRANCH), (["--all"], LogView.ALL), (["--compare"], LogView.COMPARE)):
+            with self.subTest(args=args):
+                self.load.reset_mock()
+                self.render.reset_mock()
+                result = self.invoke(*args)
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.load.assert_called_once_with(None)
+                self.render.assert_called_once_with(self.current, view, limit=30, first_parent=True, color=False)
+                self.assertEqual(result.output.count("Branch:"), 1)
+                self.assertEqual(result.output.count(self.render.return_value), 1)
+        self.terminal.assert_not_called()  # No implicit TTY-based mode selection.
+        self.select.assert_not_called()
+        self.text.assert_not_called()
+        self.ask.assert_not_called()
+
+    def test_help_describes_one_shot_default_and_opt_in_browser(self):
+        result = self.invoke("--help")
+        self.assertEqual(result.exit_code, 0, result.output)
+        compact = " ".join(cli.Text.from_ansi(result.output).plain.replace("│", " ").split())
+        self.assertIn("once; use -i to browse", compact)
+        self.assertIn("opt-in; default: print once", compact)
+        self.assertIn("--no-interactive", compact)
+        self.assertNotIn("default: only with terminal", compact)
+        self.load.assert_not_called()
+        self.ask.assert_not_called()
+
     def test_redirected_output_has_no_console_color_even_when_forced(self):
         with patch.object(cli, "console", cli.Console(force_terminal=True, color_system="standard")):
             for args, expected in (([], 0), (["-i"], 1)):
@@ -128,9 +158,9 @@ class LogCliTests(unittest.TestCase):
         self.load.assert_not_called()
         self.ask.assert_not_called()
 
-    def test_terminal_default_and_short_interactive_override(self):
+    def test_explicit_interactive_flags_and_last_flag_overrides(self):
         self.terminal.return_value = True
-        for args in ([], ["-i"], ["--interactive"], ["--no-interactive", "-i"]):
+        for args in (["-i"], ["--interactive"], ["--no-interactive", "-i"], ["--no-interactive", "--interactive"]):
             with self.subTest(args=args):
                 self.ask.reset_mock()
                 result = self.invoke(*args)
@@ -138,11 +168,12 @@ class LogCliTests(unittest.TestCase):
                 self.ask.assert_called_once()
 
     def test_no_interactive_overrides_terminal_and_preceding_flag(self):
-        self.terminal.return_value = True
-        for args in (["--no-interactive"], ["--interactive", "--no-interactive"]):
-            with self.subTest(args=args):
-                result = self.invoke(*args)
-                self.assertEqual(result.exit_code, 0, result.output)
+        for terminal in (False, True):
+            self.terminal.return_value = terminal
+            for args in (["--no-interactive"], ["--interactive", "--no-interactive"], ["-i", "--no-interactive"]):
+                with self.subTest(terminal=terminal, args=args):
+                    result = self.invoke(*args)
+                    self.assertEqual(result.exit_code, 0, result.output)
         self.ask.assert_not_called()
         self.select.assert_not_called()
 
@@ -155,12 +186,14 @@ class LogCliTests(unittest.TestCase):
         self.render.assert_called_once()
 
     def test_direct_compare_without_base_is_actionable_error(self):
+        self.terminal.return_value = True
         self.load.return_value = snapshot(base_ref=None, base_sha=None, ahead=None, behind=None)
         result = self.invoke("--compare")
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("Compare view requires a base", result.output)
         self.assertIn("--base REF", result.output)
         self.render.assert_not_called()
+        self.ask.assert_not_called()
 
     def test_empty_and_no_matching_results_are_successful(self):
         self.render.return_value = ""
@@ -196,7 +229,7 @@ class LogCliTests(unittest.TestCase):
     def test_view_switch_more_and_parent_toggle_keep_initial_increment(self):
         self.terminal.return_value = True
         self.ask.side_effect = ["view", LogView.COMPARE, "view", LogView.ALL, "view", LogView.BRANCH, "more", "more", "parents", "all-parents", "parents", "first-parent", BACK]
-        result = self.invoke("--limit", "2")
+        result = self.invoke("-i", "--limit", "2")
         self.assertEqual(result.exit_code, 0, result.output)
         expected = [
             (LogView.BRANCH, 2, True), (LogView.COMPARE, 2, True), (LogView.ALL, 2, True),
@@ -214,7 +247,7 @@ class LogCliTests(unittest.TestCase):
         updated = snapshot(base_ref="main", base_sha="c" * 40, ahead=1, behind=4)
         self.load.side_effect = [self.current, HistoryError("Unknown ref [red]bad[/red]"), updated]
         self.ask.side_effect = ["base", "bad", "main", BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Unknown ref [red]bad[/red]", result.output)
         self.assertIn("Base: main (ccccccc)", result.output)
@@ -226,7 +259,7 @@ class LogCliTests(unittest.TestCase):
         self.terminal.return_value = True
         self.load.side_effect = [self.current, HistoryError("Unknown ref")]
         self.ask.side_effect = ["base", "bad", None, BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.render.assert_called_once()
         self.assertEqual(self.select.call_count, 2)
@@ -237,7 +270,7 @@ class LogCliTests(unittest.TestCase):
         missing = snapshot(base_ref=None, base_sha=None, ahead=None, behind=None)
         self.load.side_effect = [missing, self.current]
         self.ask.side_effect = ["view", LogView.COMPARE, "develop", BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Compare view requires a base", result.output)
         self.assertEqual([args.args[1] for args in self.render.call_args_list], [LogView.BRANCH, LogView.COMPARE])
@@ -246,7 +279,7 @@ class LogCliTests(unittest.TestCase):
         self.terminal.return_value = True
         self.load.return_value = snapshot(base_ref=None, base_sha=None, ahead=None, behind=None)
         self.ask.side_effect = ["view", LogView.COMPARE, None, BACK, BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.render.assert_called_once()
         self.assertEqual([args.args[0] for args in self.select.call_args_list], ["Log options:", "Log view:", "Log view:", "Log options:"])
@@ -256,7 +289,7 @@ class LogCliTests(unittest.TestCase):
     def test_initial_interactive_compare_missing_base_explains_fallback(self):
         self.terminal.return_value = True
         self.load.return_value = snapshot(base_ref=None, base_sha=None, ahead=None, behind=None)
-        result = self.invoke("--compare")
+        result = self.invoke("-i", "--compare")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Showing the current branch", result.output)
         self.assertEqual(self.render.call_args.args[1], LogView.BRANCH)
@@ -265,7 +298,7 @@ class LogCliTests(unittest.TestCase):
         self.terminal.return_value = True
         self.load.side_effect = [self.current, snapshot(base_ref=None, base_sha=None, ahead=None, behind=None)]
         self.ask.side_effect = ["base", "", None, BACK]
-        result = self.invoke("--compare")
+        result = self.invoke("-i", "--compare")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Compare view requires a base", result.output)
         self.render.assert_called_once()
@@ -285,7 +318,7 @@ class LogCliTests(unittest.TestCase):
     def test_menu_separates_settings_actions_and_shows_current_values(self):
         self.terminal.return_value = True
         self.ask.side_effect = ["view", None, "parents", None, BACK]
-        result = self.invoke("--all", "--all-parents")
+        result = self.invoke("-i", "--all", "--all-parents")
         self.assertEqual(result.exit_code, 0, result.output)
         menu = self.select.call_args_list[0]
         rows = menu.kwargs["choices"]
@@ -307,7 +340,7 @@ class LogCliTests(unittest.TestCase):
     def test_top_level_focus_stays_on_last_selected_row(self):
         self.terminal.return_value = True
         self.ask.side_effect = ["more", "more", "parents", "all-parents", "view", LogView.ALL, "base", None, "refresh", BACK]
-        result = self.invoke("-n", "2")
+        result = self.invoke("-i", "-n", "2")
         self.assertEqual(result.exit_code, 0, result.output)
         menus = [args for args in self.select.call_args_list if args.args[0] == "Log options:"]
         self.assertEqual([args.kwargs["default"] for args in menus], ["view", "more", "more", "parents", "view", "base", "refresh"])
@@ -320,7 +353,7 @@ class LogCliTests(unittest.TestCase):
     def test_nested_cancel_and_noop_settings_do_not_reprint_graph(self):
         self.terminal.return_value = True
         self.ask.side_effect = ["view", None, "view", LogView.BRANCH, "parents", BACK, "parents", "first-parent", "base", None, "base", "develop", BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(result.output.count("Branch:"), 1)
         self.assertEqual(self.load.call_args_list, [call(None), call("develop")])
@@ -332,7 +365,7 @@ class LogCliTests(unittest.TestCase):
         self.load.side_effect = [self.current, updated]
         self.render.side_effect = ["* original", HistoryError("Commit disappeared"), "* original expanded"]
         self.ask.side_effect = ["base", "main", None, "more", BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Commit disappeared", result.output)
         self.assertEqual([args.args[0] for args in self.render.call_args_list], [self.current, updated, self.current])
@@ -344,7 +377,7 @@ class LogCliTests(unittest.TestCase):
         updated = snapshot(head="d" * 40, ahead=9)
         self.load.side_effect = [self.current, updated]
         self.ask.side_effect = ["more", "parents", "all-parents", "view", LogView.COMPARE, "refresh", "more", BACK]
-        result = self.invoke("-b", "develop", "-n", "2")
+        result = self.invoke("-i", "-b", "develop", "-n", "2")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.load.call_args_list, [call("develop"), call("develop")])
         self.assertEqual(self.render.call_args_list[-2:], [
@@ -363,7 +396,7 @@ class LogCliTests(unittest.TestCase):
                 self.load.side_effect = [self.current, updated]
                 self.render.side_effect = ["* original", HistoryError("Cannot render refresh"), "* expanded"] if render_error else None
                 self.ask.side_effect = ["refresh", "more", BACK]
-                result = self.invoke("--compare")
+                result = self.invoke("-i", "--compare")
                 self.assertEqual(result.exit_code, 0, result.output)
                 self.assertIn("Refresh failed; keeping previous history.", result.output)
                 self.assertEqual(self.render.call_args_list[-1], call(self.current, LogView.COMPARE, limit=60, first_parent=True, color=False))
@@ -374,7 +407,7 @@ class LogCliTests(unittest.TestCase):
         updated = snapshot(base_ref="origin/develop", base_sha="d" * 40)
         self.load.side_effect = [self.current, updated]
         self.ask.side_effect = ["refresh", BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.load.call_args_list, [call(None), call(None)])
         self.assertIn("Base: origin/develop", result.output)
@@ -383,7 +416,7 @@ class LogCliTests(unittest.TestCase):
         self.terminal.return_value = True
         self.render.side_effect = ["* old tagged commit", "* new tagged commit"]
         self.ask.side_effect = ["refresh", BACK]
-        result = self.invoke("--all")
+        result = self.invoke("-i", "--all")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("* new tagged commit", result.output)
         self.assertEqual(result.output.count("Branch:"), 2)
@@ -392,13 +425,14 @@ class LogCliTests(unittest.TestCase):
     def test_unchanged_refresh_does_not_reprint_graph(self):
         self.terminal.return_value = True
         self.ask.side_effect = ["refresh", BACK]
-        result = self.invoke()
+        result = self.invoke("-i")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.load.call_count, 2)
         self.assertEqual(self.render.call_count, 2)
         self.assertEqual(result.output.count("Branch:"), 1)
 
     def test_native_ansi_becomes_styled_text_without_interpreting_subject_markup(self):
+        self.terminal.return_value = True
         self.render.return_value = "\x1b[31m*\x1b[m \x1b[33mabc123\x1b[m \x1b[32m(HEAD -> feature)\x1b[m [red]literal[/red] :smile:"
         colored = cli.Console(force_terminal=True, color_system="standard", no_color=False, width=120)
         with patch.object(cli, "console", colored), patch.object(cli, "_log_color_enabled", return_value=True), patch.object(cli.Text, "from_ansi", wraps=cli.Text.from_ansi) as decoded:
@@ -410,7 +444,9 @@ class LogCliTests(unittest.TestCase):
         self.assertIn("* abc123 (HEAD -> feature) [red]literal[/red] :smile:", plain)
         self.assertIn("Branch: feature/log[red]", plain)
         self.render.assert_called_once_with(self.current, LogView.BRANCH, limit=30, first_parent=True, color=True)
-        self.ask.assert_not_called()  # Output-only TTY color does not force interaction.
+        self.ask.assert_not_called()  # Even both-terminal color does not opt into browsing.
+        self.select.assert_not_called()
+        self.text.assert_not_called()
 
     def test_force_color_environment_and_console_cannot_color_pipe_or_errors(self):
         with patch.dict(os.environ, {"FORCE_COLOR": "1", "TERM": "xterm-256color"}), patch.object(cli, "console", cli.Console(force_terminal=True, color_system="standard", no_color=False)):
@@ -421,6 +457,17 @@ class LogCliTests(unittest.TestCase):
                     self.assertEqual(result.exit_code, 1 if args else 0, result.output)
                     self.assertNotIn(b"\x1b[", result.stdout_bytes)
         self.assertFalse(self.render.call_args.kwargs["color"])
+
+    def test_root_dispatch_explicitly_requests_interactive_log(self):
+        self.terminal.return_value = True
+        self.ask.side_effect = ["log", None]
+        ctx = SimpleNamespace(invoked_subcommand=None, invoke=Mock(side_effect=NavigationBack))
+        with patch.object(cli, "_version_line", return_value="git-tools test"), self.assertRaises(cli.typer.Exit) as exited:
+            cli.main(ctx)
+        self.assertEqual(exited.exception.exit_code, 0)
+        ctx.invoke.assert_called_once_with(cli.log, interactive=True)
+        self.assertEqual(self.ask.call_count, 2)
+        self.assertFalse(cli._ROOT_COMMAND_ACTIVE.get())
 
     def test_root_menu_order_and_back_routing(self):
         self.terminal.return_value = True

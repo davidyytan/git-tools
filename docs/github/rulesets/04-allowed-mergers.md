@@ -2,7 +2,7 @@
 
 [Policy index](README.md) · [Optional independent review](03-independent-review.md) · [PR-only baseline](01-pr-only.md)
 
-**Purpose:** restrict protected-branch merging to an explicit human allowlist while retaining a deliberately authorised automation exception. This separate ruleset contains **Restrict updates only**. It neither grants repository access nor requires review. Keep policy 1 active with no human PR bypass and policy 2 active with an empty bypass list; the human exemption below belongs only in this eligibility layer.
+**Purpose:** restrict protected-branch merging to an explicit human allowlist while retaining a deliberately authorised automation exception. This separate ruleset contains **Restrict updates only**. It neither grants repository access nor requires review. Keep policies 1 and 2 active on the same protected-branch scope, with no human PR bypass in policy 1 and an empty bypass list in policy 2; the human exemption below belongs only in this eligibility layer.
 
 For a solo-developer repository, allow the maintainer as the only human merger and use policies **1, 2, and 4**. Policy 3 is optional independent review for repositories with another eligible reviewer. With zero required approvals, the permitted maintainer can merge their own PR without a review.
 

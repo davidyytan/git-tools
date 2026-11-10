@@ -65,7 +65,7 @@ git-tools commit --no-commit --no-copy    # Preview a message for changes you al
 
 Direct `git-tools commit` **creates a commit by default**. `git-tools pr` generates text; it does not open a hosted PR. `log`, `init`, `bump`, and versioning CI need no LLM key.
 
-[`git-tools log`](docs/usage.md#log) shows a first-parent commit graph, ahead/behind counts against `develop`, and local/cached remote branch counts. In a terminal, browse the current branch, compare with a base, or show all branches; redirected output prints once. It never fetches or switches branches.
+[`git-tools log`](docs/usage.md#log) shows a colored terminal graph, ahead/behind counts against `develop`, and local/cached remote branch counts. The browser separates View, History mode, and Base settings from Show more and Refresh actions; first-parent traversal is the default. Redirected output prints once as plain text, and `NO_COLOR=1` disables colors. It never fetches or switches branches.
 
 ## Follow a workflow
 

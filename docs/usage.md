@@ -67,6 +67,8 @@ git-tools log --no-interactive              # Print one view, even in a terminal
 git-tools log --no-interactive > history.txt
 ```
 
+Terminal output uses native Git colors for commit hashes, refs, tags, and graph lanes, with a colored summary. `NO_COLOR=1`, `CLICOLOR=0`, or `TERM=dumb` disables colors. The graph and summary are always plain when stdout is redirected or piped, even when `FORCE_COLOR` is set; color does not require interactive browsing.
+
 The default base is the local `develop` branch, falling back to cached `origin/develop` only if the local branch is absent. **Nothing is fetched.** Use `--base origin/develop` to request the cached remote comparison. Explicit branch names prefer local branches; fully qualified refs such as `refs/remotes/origin/develop`, tags, commit hashes, and Git revisions such as `HEAD~1` are also accepted. Invalid explicit bases fail clearly. If neither default base exists, ordinary history still works and ahead/behind counts show **N/A**, not zero; choose a base to use Compare.
 
 **Ahead/behind counts are commits, not branches.** They include all reachable commits, including merged side commits that first-parent display hides. Local and remote-tracking branch counts are separate; symbolic remote `HEAD` aliases are not counted as extra branches. A shallow or partial repository can show only locally available history; missing required objects produce an error rather than a lazy fetch.
@@ -82,9 +84,23 @@ The default base is the local `develop` branch, falling back to cached `origin/d
 
 In Compare view, **`<` means base-only** and **`>` means current-branch-only**. Common history is omitted. No differing commits is a successful empty result, not an error.
 
-The graph appears immediately. The interactive menu lets you switch between **Current branch**, **Compare with base**, and **All branches**, **Show more** in initial-limit increments, toggle parents, or change the base. An invalid base can be corrected without losing the previous valid selection. Current/compare graphs use the captured commit SHAs so paging through more history stays consistent; restart the command to refresh after Git changes made elsewhere.
+### Interactive browser
 
-**Esc / Back** leaves direct log browsing, or returns to the root menu if log was launched there. Esc inside the base prompt returns to the log menu. **Ctrl+C** exits the command instead of reopening the root menu. Pipes and redirected output never open prompts unless explicitly requested, and explicit interactive mode without terminals errors rather than hanging.
+The graph appears immediately. The menu separates persistent **Display settings** from **Actions**:
+
+| Section | Setting or action | Behavior |
+| --- | --- | --- |
+| Display settings | **View: current value** | Open the Current branch / Compare with base / All branches picker; all branches includes tags and cached remote refs |
+| Display settings | **History mode: current value** | Choose First-parent or All parents; this changes ancestry traversal, **not** the commit limit |
+| Display settings | **Base: resolved ref** | Enter a branch, tag, commit, or revision; blank restores the default base selection |
+| Actions | **Show more (old → new commits)** | Increase the display limit by the original `--limit` increment, such as 30 → 60 → 90, without changing the view or history mode; no fetch or promise of additional available commits |
+| Actions | **Refresh history** | Re-read local Git state while retaining the view, history mode, and display limit |
+
+The last selected top-level row stays focused, so pressing Enter again on **Show more** increases the limit again. Meaningful display changes print an updated graph without clearing terminal scrollback; canceled or unchanged settings do not reprint it.
+
+Current/compare graphs use captured commit SHAs, so **Show more** stays on the same history snapshot. **Refresh history** or a successful base change captures new state after Git changes made elsewhere. The all-branches graph follows Git's `--all` semantics over currently available local refs; its remote-tracking refs are still cached, never fetched. Base changes and Refresh validate the new snapshot and graph before replacing the previous valid state; invalid bases or rendering failures leave that state intact.
+
+**Esc / Back** returns one level from a settings picker or base prompt. Canceling base entry opened by Compare returns to the view picker. Only top-level Esc / Back leaves direct log browsing or returns to the root menu if log was launched there. **Ctrl+C** at any level exits the whole command instead of reopening the root menu. Pipes and redirected output never open prompts unless explicitly requested, and explicit interactive mode without terminals errors rather than hanging.
 
 The command does not require `.cz.toml`, provider credentials, or an LLM. It does not fetch, checkout, stage, commit, tag, push, save settings, or copy output to the clipboard. Empty repositories and detached HEADs are supported.
 

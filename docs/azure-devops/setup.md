@@ -22,7 +22,7 @@ The template has **no passphrase input**: use only an approved key that can sign
 ## Before You Start
 
 - Install Git, **Python 3.12**, uv, GnuPG, and [git-tools](../../README.md#install). Keep its source checkout: installation is editable.
-- Use your **own name/email** for human commits, your **own Azure organization/project/repository** for the application origin, and a **dedicated automation identity** for signing. The upstream URL `https://github.com/davidyytan/git-tools.git` is the tool source, not your application origin.
+- Use your **own name/email** for human commits, your **own Azure organization/project/repository** for the application origin, and a **dedicated automation identity** for signing. `YOUR_GIT_TOOLS_SOURCE_URL` means the upstream tool source, not your application origin; retain the supplied template's upstream clone URL or copy it from the [git-tools source repository](../../) **Code** button.
 - These adapters use `master` and `develop`. You need permission to configure Pipelines and repository security, or an administrator's help.
 - In **Organization settings → Pipelines → Settings** or **Project settings → Pipelines → Settings**, enable **Limit job authorization scope to current project for non-release pipelines**. YAML pipelines are non-release pipelines even when managing Git release branches. This selects the project Build Service identity used below; organization-level enforcement cannot be relaxed by a project.
 - Versioning CI needs no LLM key, Azure bot user, SSH key, or PAT. Checkout/push use Azure's automatic Build Service job token. Local AI commit/PR generation separately needs a [configured provider](../configuration.md).
@@ -44,10 +44,10 @@ Copy one example from your retained upstream checkout into the application, remo
 
 The steps below use classic filenames. Substitute the release-led filename when choosing that flow. Do not activate both adapters for the same branches.
 
-In the copied YAML, keep the upstream tool URL and select a **supported engine branch or tag**:
+Set `GIT_TOOLS_REPO` in the copied YAML to that upstream clone URL (the supplied template already has one) and select a **supported engine branch or tag**:
 
 ```yaml
-GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git
+GIT_TOOLS_REPO: YOUR_GIT_TOOLS_SOURCE_URL # Upstream tool source, not your application origin.
 GIT_TOOLS_REF: develop
 ```
 

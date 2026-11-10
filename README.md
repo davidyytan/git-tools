@@ -58,14 +58,14 @@ Switch to the repository you want to work on, **not** the git-tools source check
 ```bash
 cd /path/to/your/application
 git-tools --help
-git-tools log                            # Read-only history browser; compares with develop.
+git-tools log                            # Print read-only history once; compares with develop.
 git-tools settings                       # Optional: configure a provider for AI generation.
 git-tools commit --no-commit --no-copy    # Preview a message for changes you already staged.
 ```
 
 Direct `git-tools commit` **creates a commit by default**. `git-tools pr` generates text; it does not open a hosted PR. `log`, `init`, `bump`, and versioning CI need no LLM key.
 
-[`git-tools log`](docs/usage.md#log) shows a colored terminal graph, ahead/behind counts against `develop`, and local/cached remote branch counts. The browser separates View, History mode, and Base settings from Show more and Refresh actions; first-parent traversal is the default. Redirected output prints once as plain text, and `NO_COLOR=1` disables colors. It never fetches or switches branches.
+[`git-tools log`](docs/usage.md#log) shows a colored terminal graph, ahead/behind counts against `develop`, and local/cached remote branch counts, then exits by default. Launch `git-tools` and select **Log**, or run `git-tools log -i`, to browse interactively. The browser separates View, History mode, and Base settings from Show more and Refresh actions; first-parent traversal is the default. Redirected output prints once as plain text, and `NO_COLOR=1` disables colors. It never fetches or switches branches.
 
 ## Follow a workflow
 

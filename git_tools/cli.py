@@ -617,13 +617,13 @@ def log(
     all_branches: Annotated[bool, typer.Option("--all", help="Show all refs, including branches, cached remote branches, and tags")] = False,
     compare: Annotated[bool, typer.Option("--compare", help="Compare base-only and current-branch-only commits")] = False,
     first_parent: Annotated[bool, typer.Option("--first-parent/--all-parents", help="Follow only first parents, or include merged side commits")] = True,
-    interactive: Annotated[Optional[bool], typer.Option("--interactive/--no-interactive", "-i", help="Browse interactively (default: only with terminal stdin and stdout)")] = None,
+    interactive: Annotated[bool, typer.Option("--interactive/--no-interactive", "-i", help="Browse interactively (opt-in; default: print once)")] = False,
 ) -> None:
-    """Show a bounded, read-only Git graph and cached branch/commit counts."""
+    """Show a bounded, read-only Git graph once; use -i to browse."""
     if all_branches and compare:
         raise typer.BadParameter("--all and --compare cannot be used together.")
     color_enabled = _log_color_enabled()
-    use_interactive = _has_interactive_terminal() if interactive is None else interactive
+    use_interactive = interactive
 
     def literal(text: str | Text, *, style: str | None = None) -> None:
         console.print(text, style=style if color_enabled else None, markup=False, highlight=False, emoji=False)

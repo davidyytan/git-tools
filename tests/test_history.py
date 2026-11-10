@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -132,6 +133,46 @@ class HistoryTests(unittest.TestCase):
         for limit in (0, -1, True, 1.5, "3"):
             with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, "positive integer"):
                 self.graph(limit=limit)
+
+    def test_native_color_styles_commit_hashes_refs_and_graph_lanes(self) -> None:
+        self.divergent_merge()
+        self.git("tag", "release")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("config", "color.ui", "never")
+        self.git("config", "color.log", "false")
+        snapshot = self.snapshot()
+        graph = self.graph(snapshot, first_parent=False, color=True)
+        styled = r"\x1b\[[0-9;]+m"
+        reset = r"\x1b\[m"
+        self.assertRegex(graph, styled + snapshot.head[:7] + reset)
+        self.assertRegex(graph, styled + "main" + reset)
+        self.assertRegex(graph, styled + "origin/main" + reset)
+        self.assertRegex(graph, styled + "tag: release" + reset)
+        self.assertRegex(graph, styled + r"[|/\\]" + reset)
+
+    def test_color_strips_to_identical_plain_text_for_all_views_modes_and_limits(self) -> None:
+        self.divergent_merge()
+        message = "[red]café[/red] :smile: 世界 🐍 $HOME"
+        self.commit(message)
+        self.git("config", "color.ui", "always")
+        self.git("config", "color.log", "always")
+        self.git("config", "i18n.logOutputEncoding", "ISO-8859-1")
+        snapshot = self.snapshot()
+        for view in LogView:
+            for first_parent in (True, False):
+                for limit in (1, 30):
+                    with self.subTest(view=view, first_parent=first_parent, limit=limit):
+                        options = {"first_parent": first_parent, "limit": limit}
+                        plain = self.graph(snapshot, view, **options)
+                        explicit_plain = self.graph(snapshot, view, color=False, **options)
+                        colored = self.graph(snapshot, view, color=True, **options)
+                        self.assertNotIn("\x1b[", plain)
+                        self.assertEqual(explicit_plain, plain)
+                        self.assertIn("\x1b[", colored)
+                        self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", colored), plain)
+                        if limit == 30:
+                            self.assertIn(message, plain)
+                            self.assertIn(message, colored)
 
     def test_default_prefers_local_develop_then_cached_origin_develop(self) -> None:
         initial = self.commit("initial")
@@ -315,10 +356,11 @@ class HistoryTests(unittest.TestCase):
         before = {path.relative_to(self.root): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         with patch.dict(os.environ, {"GIT_TRACE": "1"}):
             snapshot = self.snapshot()
-            with self.assertRaises(HistoryError) as error:
-                self.graph(snapshot)
-        self.assertIn("lazy fetching disabled", str(error.exception))
-        self.assertNotIn("run_command: git fetch", str(error.exception))
+            for color in (False, True):
+                with self.subTest(color=color), self.assertRaises(HistoryError) as error:
+                    self.graph(snapshot, color=color)
+                self.assertIn("lazy fetching disabled", str(error.exception))
+                self.assertNotIn("run_command: git fetch", str(error.exception))
         after = {path.relative_to(self.root): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         self.assertEqual(after, before)
 
@@ -353,8 +395,9 @@ class HistoryTests(unittest.TestCase):
         with patch("git_tools.history.subprocess.run", wraps=actual_run) as run:
             snapshot = self.snapshot()
             for view in LogView:
-                self.graph(snapshot, view)
-                self.graph(snapshot, view, first_parent=False)
+                for color in (False, True):
+                    self.graph(snapshot, view, color=color)
+                    self.graph(snapshot, view, first_parent=False, color=color)
         self.assertEqual(state(), before)
         for call in run.call_args_list:
             argv = call.args[0]

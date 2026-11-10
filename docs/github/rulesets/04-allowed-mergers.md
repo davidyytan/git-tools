@@ -2,7 +2,7 @@
 
 [Policy index](README.md) · [Optional independent review](03-independent-review.md) · [PR-only baseline](01-pr-only.md)
 
-**Purpose:** restrict protected-branch merging to an explicit human allowlist while retaining a deliberately authorised automation exception. This separate ruleset contains **Restrict updates only**. It neither grants repository access nor requires review.
+**Purpose:** restrict protected-branch merging to an explicit human allowlist while retaining a deliberately authorised automation exception. This separate ruleset contains **Restrict updates only**. It neither grants repository access nor requires review. Keep policy 1 active with no human PR bypass and policy 2 active with an empty bypass list; the human exemption below belongs only in this eligibility layer.
 
 For a solo-developer repository, allow the maintainer as the only human merger and use policies **1, 2, and 4**. Policy 3 is optional independent review for repositories with another eligible reviewer. With zero required approvals, the permitted maintainer can merge their own PR without a review.
 
@@ -13,13 +13,15 @@ For a solo-developer repository, allow the maintainer as the only human merger a
 | Enforcement | Active after an authorised rollout |
 | Targets | Exact `develop` and `master`; no exclusions |
 | Enabled branch rule | **Restrict updates** only (`update` in the API) |
-| Each permitted human merger | **Users → For pull requests only** |
+| Each permitted human merger | **Users → Exempt** in this eligibility-only ruleset (`bypass_mode: exempt`) |
 | Dedicated automation account | **Users → Always allow**, if needed for publication |
 | Other users, broad roles, unrelated Apps/teams | No bypass |
 
 ![Example saved bypass modes and exact branch targets](screenshots/07-merger-bypass-example.png)
 
-*Illustrative saved configuration with one human merger and one automation account. Use your own authorised accounts; the screenshot's identities are not required values.*
+*Historical saved example with one human PR-only bypass and one automation account. That older human mode can leave an authorised PR merger facing a blocked-update/bypass prompt. Follow the **Exempt** setting below instead; the screenshot's identities are not required values.*
+
+**Eligibility is not a manual override.** GitHub defines `exempt` as excluding the actor from this ruleset without generating a pass/fail result. Using **For pull requests only** here instead makes the permitted human rely on a PR bypass, which can present **Cannot update this protected ref** and a bypass confirmation. Exempt the named human only from policy 4: policy 1 still requires their PR, optional policy 3 still requires independent review, and policy 2 still protects history. Do not exempt a human from those other layers or combine their rules into this one.
 
 ## Browser steps
 
@@ -28,7 +30,7 @@ Inspect existing rules first. Edit an existing policy intentionally rather than 
 1. Open **Settings → Rulesets → Rulesets**. Open the applicable existing ruleset or choose **New ruleset → New branch ruleset**.
 2. Use **Ruleset Name:** `Allowed mergers develop and master`. Keep a new draft **Disabled** until verified.
 3. Under **Bypass list → Add bypass → Filter actors**, find the exact account of the intended human merger. Select its **Users** entry, not an Admin/Write role or an automation account.
-4. Open that actor's actions menu and choose **For pull requests only**. The row displays **Allow for pull requests only**. Do not use **Always** or **Exempt** for a human merger in this preset.
+4. Open that actor's actions menu and choose **Exempt** for this eligibility-only ruleset. In the API, set that named user's `bypass_mode` to `exempt`. Do not add the human to the bypass list of policy 1, policy 2, or optional policy 3; those separate layers must still apply.
 5. Repeat only for other deliberately authorised human mergers. For the solo preset, keep exactly one human row.
 6. If direct publication requires it, add the dedicated automation account as a **Users** row with **Always allow**.
 7. Remove unintended ruleset actors. Removing a bypass row is not the same as removing collaborator access. Do not add all collaborators, broad roles, or unrelated Apps/teams.
@@ -39,13 +41,13 @@ Inspect existing rules first. Edit an existing policy intentionally rather than 
 
 ![Saved update restriction with other branch rules left off](screenshots/08-merger-update-rule.png)
 
-*Keep the review requirement separate. A human's PR-only bypass here must not also waive review in the same ruleset.*
+*Keep PR, review, and history requirements separate. A human's exemption here must waive only the update-eligibility restriction, not those other requirements.*
 
 The overview should show **1 branch rule · targeting 2 branches**. Check actor modes and individual options as well; the count alone is insufficient.
 
 ## Review permission and merge permission are different
 
-- **Policy 4:** determines which otherwise eligible users may merge into the targeted branches.
+- **Policy 4:** determines which otherwise eligible users may merge into the targeted branches. Its named-human exemption is automatic eligibility, not permission to bypass the separate PR, review, or history layers.
 - **Optional policy 3:** determines whose independent approval is required before an allowed human merger may proceed.
 - People outside the merger allowlist may still have Write access or leave comments/reviews; that does not bypass this update restriction.
 - A listed actor still needs ordinary repository permission. A bypass is not a permission grant, and public visibility does not confer merge access.

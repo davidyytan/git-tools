@@ -102,7 +102,7 @@ The automation exception is deliberate and separate from human merger eligibilit
 
 1. Keep PR-only and history rules separate so publication exceptions never waive history protection.
 2. Apply the solo preset without policy 3, or prepare CODEOWNERS and another eligible reviewer before adding independent review for a team.
-3. Configure policy 4 with the smallest intended human merger allowlist, using **Users → For pull requests only**, plus the explicitly authorised automation account using **Always allow**. Do not add broad role or unrelated App bypasses.
+3. Configure policy 4 with the smallest intended human merger allowlist, using **Users → Exempt** only in that update-eligibility layer, plus the explicitly authorised automation account using **Always allow**. Keep those humans out of the PR, review, and history bypass lists so the other layers still apply. PR-only human bypass in policy 4 can instead leave ordinary PR merges behind a blocked-update/bypass confirmation. Do not add broad role or unrelated App bypasses.
 4. Verify exact targets, actors, enabled rules, and enforcement status in the saved configuration.
 5. Use suitable test PRs to confirm allowed and disallowed mergers. If policy 3 is enabled, also confirm that missing/stale approval blocks merging and a valid independent approval permits it.
 6. Validate the automation credential and normal publication separately. Do not force-push or delete important branches merely to demonstrate protection.

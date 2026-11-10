@@ -10,7 +10,7 @@ These are real GitHub browser captures illustrating repository settings. They ar
 | `04-history-protection.png` | Deletion and force-push restrictions | Saved example; verify empty bypasses and exact targets separately |
 | `05-merge-message-default.png` | General → Pull Requests with the message default selected | Saved setting: **Pull request title and description** |
 | `06-review-options-example.png` | One approval, stale-approval dismissal, Code Owner review | Partial **unsaved example** of optional policy 3, not an active review rule |
-| `07-merger-bypass-example.png` | One human PR-only bypass and one automation Always allow bypass | Saved UI example; the displayed identities are not required configuration |
+| `07-merger-bypass-example.png` | One human PR-only bypass and one automation Always allow bypass | Historical mode example; the current policy 4 guide uses **Exempt** for the named human only in the eligibility layer; the displayed identities are not required configuration |
 | `08-merger-update-rule.png` | Restrict updates without other branch rules | Saved example of policy 4's separate update restriction |
 | `09-merge-message-options.png` | Expanded Default commit message menu | Saved selection shown without changing it; demonstrates the available title/body choices |
 

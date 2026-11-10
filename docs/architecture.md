@@ -8,11 +8,12 @@ This guide maps the source tree so changes land in the module that owns them. Fo
 
 | Path | Role |
 | --- | --- |
-| `git_tools/cli.py` | Typer application: the `commit`, `issue`, `pr`, `bump`, `init`, and `settings` commands, the interactive menu, and the settings editors |
+| `git_tools/cli.py` | Typer application: the `commit`, `issue`, `pr`, `bump`, `init`, `log`, and `settings` commands, the interactive menu, and the settings editors |
 | `git_tools/settings/settings.py` | Pydantic settings, provider configuration classes, credential checks, and `~/.git-tools/settings.env` persistence |
 | `git_tools/providers/` | Standalone provider metadata and catalogs, originally copied from agent-cli and aligned with agent-core: endpoint, default model, aliases, curated models, and catalog codecs (`catalog.py` is the shared `/models` transport and cache; Copilot remains git-tools-only) |
 | `git_tools/build_info.py` | Version, tag and commit for `--version` and the interactive header; copied byte for byte from agent-cli's `agent_cli/build_info.py` and wrapped by `_version_line` in `cli.py` |
 | `git_tools/navigation.py` | Stdlib-importable Back signal and lazy Questionary Esc wrapper, shared by the CLI and generator prompts |
+| `git_tools/history.py` | Read-only Git snapshots, ahead/behind and branch counts, and bounded branch/compare/all-ref graphs with optional native ANSI colors; no provider or generator dependency |
 | `scripts/install.sh` | Editable checkout installation and completion setup; resolves the checkout's project root before installing, regardless of the caller's working directory |
 | `git_tools/settings/mappings.py` | Provider registry wrapping `git_tools/providers/` with git-tools' wiring (credential env vars, config classes, picker flags, per-model knobs); live discovery never substitutes static catalogs, while Qwen/Zcode curated choices and Kimi's scoped cache remain separate |
 | `git_tools/utils/io.py` | Atomic JSON helpers the provider package depends on, copied from agent-cli |
@@ -108,6 +109,7 @@ Dependency layers run from low-level to high-level: `errors` → `version` → `
 | --- | --- |
 | Add or adjust a provider | Align or lift compatible agent-core metadata/helpers into `providers/<name>.py` and `base/transport.py`; map settings through `settings/mappings.py`, `settings/settings.py`, `base/clients.py`, and the settings UI in `cli.py` |
 | Model picker or default resolution | `base/models.py`; shared picker helpers live in `cli.py` |
+| Read-only history queries or graph traversal | `git_tools/history.py`; terminal color policy, settings/actions menus, and snapshot refresh live in `cli.py` |
 | Diff budgeting or truncation | `base/diffs.py`; its panel in `base/display.py` |
 | Commit prompt or message parsing | `commitgen/messages.py` and `prompts/commitgen_*.txt` |
 | Sensitive-path rules | `commitgen/sensitive.py` |
@@ -134,6 +136,7 @@ Auxiliary version-sync warnings log under the `git_tools.generators.bumpgen` log
 | Console spacing and rendered generator flows | `tests/test_cli_spacing.py`, `tests/test_generation_spacing.py` |
 | Version, tag and commit display | `tests/test_build_info.py`, `tests/test_version_display.py` |
 | Back/Esc routing and real keybindings | `tests/test_navigation.py`, `tests/test_navigation_zcode_ui.py` |
+| Read-only Git history, graph colors, and browser navigation | `tests/test_history.py`, `tests/test_log_cli.py` |
 | Provider source parity and HTTP payloads | `tests/test_provider_registry_alignment.py`, `tests/test_agent_core_transport_parity.py` |
 | Installer cwd, arguments, and completion | `tests/test_install_script.py` (fake commands only) |
 | Issue and PR generation | `tests/test_issuepr_prompt.py`, `tests/test_pr_comparison.py`, `tests/test_pr_content_safety.py`, `tests/test_azure_pr_settings.py` |

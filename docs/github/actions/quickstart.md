@@ -16,7 +16,7 @@ cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY"
 
 Paste each complete BEGIN/END block into its named secret in a private, unrecorded local terminal. Do not save an extra export file or expose output in chat/logs/source. Keep correct existing public-key registration; [register only if needed](setup.md#register-public-keys-only-if-needed). Missing a key? Use the [optional creation steps](setup.md#prepare-keys-and-set-the-exact-secrets), then return here. The supplied workflows have no GPG/SSH passphrase configured; protected keys need an approved adaptation.
 
-For an **existing application**, [configure the workflow](setup.md#copy-and-configure-the-workflow) and resume from its actual branch/version. Do not rerun initialization or bootstrap. The checklist below is only for a **fresh repository** under your own GitHub account/org, with [git-tools installed](../../README.md#install) and GnuPG available.
+For an **existing application**, [configure the workflow](setup.md#copy-and-configure-the-workflow) and resume from its actual branch/version. Do not rerun initialization or bootstrap. The checklist below is only for a **fresh repository** under your own GitHub account/org, with [git-tools installed](../../../README.md#install) and GnuPG available.
 
 ## 1. Prepare the repository and Actions
 
@@ -40,7 +40,7 @@ cp "$HOME/projects/git-tools/.github/workflows/version-bump-git-flow-classic.yml
 
 Before pushing, complete [GitHub setup](setup.md):
 
-- **Copied YAML `env:`:** keep the upstream `GIT_TOOLS_REPO`; choose a supported branch/tag in `GIT_TOOLS_REF` (not a bare SHA). Set `GIT_BOT_NAME` / `GIT_BOT_EMAIL` to **your dedicated automation identity**, not your human identity or David's.
+- **Copied YAML `env:`:** keep the upstream `GIT_TOOLS_REPO`; choose a supported branch/tag in `GIT_TOOLS_REF` (not a bare SHA). Set `GIT_BOT_NAME` / `GIT_BOT_EMAIL` to **your dedicated automation identity**, not your human identity.
 - **Actions secrets:** follow [key setup](setup.md#prepare-keys-and-set-the-exact-secrets). Print the dedicated GPG private key and paste it into **`BOT_GPG_SECRETKEY`**; read the dedicated SSH private key into **`BOT_SSH_SECRETKEY`**. Use existing automation keys or create only the missing key first; no extra private-key export file is needed. Register matching public keys separately only if not already configured.
 - **Repository settings:** allow that SSH identity to push signed version commits/tags with narrowly scoped protection exceptions. Enable PR-title squash messages, disable rebase, and use separate read-only PR tests.
 
@@ -98,4 +98,4 @@ Keep release/hotfix sources until backmerge finishes. **Do not squash a source's
 
 **Other modes:** [Classic reviewed](classic-reviewed-walkthrough.md) uses inner stabilization PRs with the same adapter. [Release-led](release-led-walkthrough.md) and [release-led reviewed](release-led-reviewed-walkthrough.md) use the release-led adapter **instead**, with different release-line selection; do not mix their sequence with Classic.
 
-Before production use: [current versioning limitations](../versioning.md#current-limitations). Failed publication: [recovery](../publication.md), not another bootstrap. Full worked example: [Classic walkthrough](classic-walkthrough.md).
+Before production use: [current versioning limitations](../../versioning.md#current-limitations). Failed publication: [recovery](../../publication.md), not another bootstrap. Full worked example: [Classic walkthrough](classic-walkthrough.md).

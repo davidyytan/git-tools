@@ -16,6 +16,7 @@ import typer
 import typer.rich_utils
 from questionary import Choice
 from rich.console import Console
+from rich.text import Text
 import git_tools
 from git_tools.build_info import build_info
 from git_tools.navigation import BACK as _BACK, NavigationBack, ask_with_back
@@ -58,7 +59,7 @@ typer.rich_utils.MAX_WIDTH = _typer_width + _width_offset if _typer_width else 8
 # ============================================================================
 
 app = typer.Typer(
-    help="AI-powered tool for commit messages, issue/PR documentation, version bumping, and Commitizen-style init.",
+    help="AI-powered commit and issue/PR helpers, read-only Git history, version bumping, and Commitizen-style init.",
     invoke_without_command=True,
     no_args_is_help=False,
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -551,6 +552,7 @@ def main(
                     Choice("bump", value="bump"),
                     Choice("init", value="init"),
                     Choice("settings", value="settings"),
+                    Choice("log", value="log"),
                     Choice("exit", value="exit"),
                 ],
                 style=TYPER_STYLE,
@@ -585,6 +587,7 @@ def main(
             "pr": pr,
             "bump": bump,
             "init": init_command,
+            "log": log,
         }
         token = _ROOT_COMMAND_ACTIVE.set(True)
         try:
@@ -595,6 +598,200 @@ def main(
         finally:
             _ROOT_COMMAND_ACTIVE.reset(token)
         return
+
+
+# ============================================================================
+# Log Command
+# ============================================================================
+
+
+def _log_color_enabled() -> bool:
+    """Never let the shared force-terminal console turn redirected logs colorful."""
+    return bool(sys.stdout.isatty() and console.is_terminal and console.color_system and not console.no_color and os.environ.get("TERM", "").lower() != "dumb" and os.environ.get("CLICOLOR") != "0" and "NO_COLOR" not in os.environ)
+
+
+@app.command()
+def log(
+    base: Annotated[Optional[str], typer.Option("--base", "-b", help="Base ref (defaults to local develop, then origin/develop)")] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", min=1, help="Maximum commits to show per view")] = 30,
+    all_branches: Annotated[bool, typer.Option("--all", help="Show all refs, including branches, cached remote branches, and tags")] = False,
+    compare: Annotated[bool, typer.Option("--compare", help="Compare base-only and current-branch-only commits")] = False,
+    first_parent: Annotated[bool, typer.Option("--first-parent/--all-parents", help="Follow only first parents, or include merged side commits")] = True,
+    interactive: Annotated[bool, typer.Option("--interactive/--no-interactive", "-i", help="Browse interactively (opt-in; default: print once)")] = False,
+) -> None:
+    """Show a bounded, read-only Git graph once; use -i to browse."""
+    if all_branches and compare:
+        raise typer.BadParameter("--all and --compare cannot be used together.")
+    color_enabled = _log_color_enabled()
+    use_interactive = interactive
+
+    def literal(text: str | Text, *, style: str | None = None) -> None:
+        console.print(text, style=style if color_enabled else None, markup=False, highlight=False, emoji=False)
+
+    if use_interactive and not _has_interactive_terminal():
+        literal("Interactive log browsing requires an interactive terminal (stdin and stdout). Use --no-interactive for redirected output.", style="red")
+        raise typer.Exit(1)
+
+    # Keep help/version independent of Git, and never initialize a provider.
+    from .history import HistoryError, LogView, history_snapshot, render_log
+
+    view = LogView.ALL if all_branches else LogView.COMPARE if compare else LogView.BRANCH
+    view_labels = {LogView.BRANCH: "Current branch", LogView.COMPARE: "Compare with base", LogView.ALL: "All branches"}
+    visible_limit = limit
+    current_graph = ""
+    prompt_style = dict(style=TYPER_STYLE, qmark="❯")
+    menu_style = dict(**prompt_style, pointer="›", instruction="(↑↓ move · Enter picks · Esc goes back)")
+
+    def commit_count(value: int | None) -> str:
+        return f"{'N/A' if value is None else value} commit{'' if value == 1 else 's'}"
+
+    def summary(*parts: tuple[str, str]) -> None:
+        literal(Text.assemble(*parts) if color_enabled else "".join(text for text, _style in parts))
+
+    try:
+        snapshot = history_snapshot(base)
+        if view == LogView.COMPARE and snapshot.base_ref is None:
+            if not use_interactive:
+                raise HistoryError("Compare view requires a base. Use --base REF to select one.")
+            literal("Compare view requires a base. Showing the current branch; choose View or Base to select one.", style="yellow")
+            view = LogView.BRANCH
+
+        def read_history(candidate: str | None, target_view: LogView):
+            updated = history_snapshot(candidate)
+            if target_view == LogView.COMPARE and updated.base_ref is None:
+                raise HistoryError("Compare view requires a base. Enter an existing branch, tag, or commit.")
+            graph = render_log(updated, target_view, limit=visible_limit, first_parent=first_parent, color=color_enabled)
+            return updated, graph
+
+        def change_base(target_view: LogView) -> str | None:
+            nonlocal base, snapshot
+            while True:
+                candidate = _ask_with_back(questionary.text(
+                    "Base ref (blank uses develop):",
+                    default=base or snapshot.base_ref or "",
+                    **prompt_style,
+                ))
+                if candidate is None or candidate == _BACK:
+                    return None
+                candidate = candidate.strip() or None
+                try:
+                    updated, graph = read_history(candidate, target_view)
+                except HistoryError as exc:
+                    literal(str(exc), style="red")
+                    continue
+                base, snapshot = candidate, updated
+                return graph
+
+        def choose_view() -> str | None:
+            nonlocal view
+            focus = view
+            while True:
+                selected = _ask_with_back(questionary.select(
+                    "Log view:",
+                    choices=[Choice(styled(label, fmt_current() if option == view else ""), value=option) for option, label in view_labels.items()] + [_back_choice()],
+                    default=focus,
+                    **menu_style,
+                ))
+                if selected is None or selected == _BACK or selected == view:
+                    return None
+                selected = LogView(selected)
+                graph = None
+                if selected == LogView.COMPARE and snapshot.base_ref is None:
+                    literal("Compare view requires a base; select one below.", style="yellow")
+                    graph = change_base(selected)
+                    if graph is None:
+                        focus = selected
+                        continue
+                view = selected
+                return graph
+
+        def show_history(prepared_graph: str | None = None) -> None:
+            nonlocal current_graph
+            current_graph = render_log(snapshot, view, limit=visible_limit, first_parent=first_parent, color=color_enabled) if prepared_graph is None else prepared_graph
+            summary(("Branch: ", "bold cyan"), (snapshot.branch, "bold green"))
+            resolved_base = snapshot.base_ref or "not found (develop)"
+            if snapshot.base_sha:
+                resolved_base += f" ({snapshot.base_sha[:7]})"
+            summary(("Base: ", "bold cyan"), (resolved_base, "cyan"))
+            summary(("Ahead: ", "bold cyan"), (commit_count(snapshot.ahead), "green"), (" · Behind: ", "bold cyan"), (commit_count(snapshot.behind), "yellow"))
+            if first_parent and snapshot.ahead is not None:
+                literal("Ahead/behind counts include merged commits.", style="dim")
+            summary(("Branches: ", "bold cyan"), (f"{snapshot.local_branches} local · {snapshot.remote_branches} remote-tracking", "cyan"), (" (cached; no fetch)", "dim"))
+            if snapshot.base_ref is None:
+                literal("No default develop base found; use --base REF to compare.", style="yellow")
+            parents = "first-parent" if first_parent else "all parents"
+            literal(f"View: {view.value} · {parents} · limit {visible_limit}", style="dim")
+            if view == LogView.COMPARE:
+                literal("< base-only commits · > current-branch-only commits", style="dim")
+            if current_graph:
+                literal(Text.from_ansi(current_graph) if color_enabled else current_graph)
+            else:
+                literal("No commits yet." if snapshot.head is None else "No matching commits.")
+
+        show_history()
+        if not use_interactive:
+            return
+        console.print()
+        focus = "view"
+        while True:
+            choice = _ask_with_back(questionary.select(
+                "Log options:",
+                choices=[
+                    questionary.Separator("Display settings"),
+                    Choice(styled(fmt_primary("View: "), fmt_current(view_labels[view])), value="view"),
+                    Choice(styled(fmt_primary("History mode: "), fmt_current("First-parent" if first_parent else "All parents")), value="parents"),
+                    Choice(styled(fmt_primary("Base: "), fmt_current(snapshot.base_ref or "not found (develop)")), value="base"),
+                    questionary.Separator("Actions"),
+                    Choice(f"Show more ({visible_limit} → {visible_limit + limit} commits)", value="more"),
+                    Choice("Refresh history", value="refresh"),
+                    _back_choice(),
+                ],
+                default=focus,
+                **menu_style,
+            ))
+            if choice is None or choice == _BACK:
+                _cancel_command()
+            focus = choice
+            previous = (snapshot, view, first_parent, visible_limit)
+            prepared_graph = None
+            if choice == "view":
+                prepared_graph = choose_view()
+            elif choice == "parents":
+                selected = _ask_with_back(questionary.select(
+                    "History mode:",
+                    choices=[
+                        Choice(styled("First-parent", fmt_current() if first_parent else "", fmt_dim(" — mainline; hide merged side commits")), value="first-parent"),
+                        Choice(styled("All parents", fmt_current() if not first_parent else "", fmt_dim(" — include merged branches")), value="all-parents"),
+                        _back_choice(),
+                    ],
+                    default="first-parent" if first_parent else "all-parents",
+                    **menu_style,
+                ))
+                if selected is not None and selected != _BACK:
+                    first_parent = selected == "first-parent"
+            elif choice == "base":
+                prepared_graph = change_base(view)
+            elif choice == "more":
+                visible_limit += limit
+            elif choice == "refresh":
+                try:
+                    updated, prepared_graph = read_history(base, view)
+                except HistoryError as exc:
+                    literal(f"Refresh failed; keeping previous history. {exc}", style="red")
+                else:
+                    snapshot = updated
+            if previous != (snapshot, view, first_parent, visible_limit) or (prepared_graph is not None and prepared_graph != current_graph):
+                console.print()
+                show_history(prepared_graph)
+                console.print()
+    except NavigationBack:
+        _cancel_command()
+    except (KeyboardInterrupt, EOFError):
+        literal("⚠ Operation cancelled by user.", style="yellow")
+        raise typer.Exit(0)
+    except HistoryError as exc:
+        literal(str(exc), style="red")
+        raise typer.Exit(1)
 
 
 # ============================================================================

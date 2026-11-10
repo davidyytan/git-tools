@@ -1,6 +1,6 @@
 # DVC Workflow Guide
 
-[Git Flow guide](git-flow-guide.md) · [GitHub](github/README.md) · [Azure DevOps](azure-devops/README.md) · [CLI usage](usage.md)
+[Git Flow guide](git-flow-guide.md) · [GitHub](github/actions/README.md) · [Azure DevOps](azure-devops/README.md) · [CLI usage](usage.md)
 
 This is an **optional, manual workflow** for target repositories using Git, PRs, and DVC experiments. DVC is not a dependency of git-tools, and neither `git-tools init` nor the checked-in versioning adapters install DVC, run its pipelines, or upload its data. The examples assume a uv-managed Python project; use your project's dependency manager otherwise. Install the appropriate DVC storage extra (for example `dvc[s3]`) for your chosen remote.
 

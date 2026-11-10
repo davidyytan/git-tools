@@ -19,12 +19,13 @@ The template has **no passphrase input**: use only an approved unattended automa
 
 ## 1. Install the CLI and prepare the Azure project
 
-Install Git, **Python 3.12**, uv, and GnuPG. This example keeps the tool and application under **`$HOME/projects`**; choose another location if preferred and adjust the later absolute copy path. This is the **upstream tool source**, not your application origin. If you already have the checkout, use it instead of cloning again:
+Install Git, **Python 3.12**, uv, and GnuPG. This example keeps the tool and application under **`$HOME/projects`**; choose another location if preferred and adjust the later absolute copy path. Replace `YOUR_GIT_TOOLS_SOURCE_URL` with the upstream clone URL from the [git-tools source repository](../../) **Code** button, not your application origin. If you already have the checkout, use it instead of cloning again:
 
 ```bash
 mkdir -p "$HOME/projects"
 cd "$HOME/projects"
-git clone https://github.com/davidyytan/git-tools.git
+# Replace the source placeholder with the upstream git-tools clone URL, not your application origin.
+git clone YOUR_GIT_TOOLS_SOURCE_URL git-tools
 cd git-tools
 ./scripts/install.sh
 ```

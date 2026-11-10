@@ -1,6 +1,6 @@
 # GitHub Setup
 
-[GitHub guides](README.md) · [Documentation index](../README.md) · [CLI usage](../usage.md)
+[GitHub guides](README.md) · [Documentation index](../../README.md) · [CLI usage](../../usage.md)
 
 Use this page to configure Actions for **your application repository**, whether it already exists or is new. For a complete fresh-repository journey, choose a [walkthrough](README.md#full-walkthroughs).
 
@@ -24,7 +24,7 @@ Next, [configure the workflow](#copy-and-configure-the-workflow). Skip the fresh
 
 ## Before You Start
 
-- Install [git-tools](../../README.md#install), Git, Python **3.12**, and GnuPG. Keep the git-tools checkout: the installation is editable.
+- Install [git-tools](../../../README.md#install), Git, Python **3.12**, and GnuPG. Keep the git-tools checkout: the installation is editable.
 - Use your own GitHub account or organization and repository. Configure local Git with **your own** author name and email. The dedicated automation identity below is separate from your human identity.
 - The adapters use `master` and `develop`. These bootstrap instructions are for a **fresh** repository. Existing history needs a migration plan; do not overwrite its version configuration or repeat bootstrap.
 - Commands run in your local terminal unless marked as GitHub settings or YAML. No LLM/API key is needed for versioning CI.
@@ -35,18 +35,18 @@ In your application's `.github/workflows/`, activate **exactly one** example by 
 
 | Flow | Example in the git-tools checkout | Destination filename |
 | --- | --- | --- |
-| Classic / Classic reviewed | [Classic example](../../.github/workflows/version-bump-git-flow-classic.yml.example) | `version-bump-git-flow-classic.yml` |
-| Release-led / Release-led reviewed | [Release-led example](../../.github/workflows/version-bump-git-flow-variant-release-led.yml.example) | `version-bump-git-flow-variant-release-led.yml` |
+| Classic / Classic reviewed | [Classic example](../../../.github/workflows/version-bump-git-flow-classic.yml.example) | `version-bump-git-flow-classic.yml` |
+| Release-led / Release-led reviewed | [Release-led example](../../../.github/workflows/version-bump-git-flow-variant-release-led.yml.example) | `version-bump-git-flow-variant-release-led.yml` |
 
 Copy from your retained tool checkout; the walkthroughs use `$HOME/projects/git-tools`. `git-tools init` creates `.cz.toml`, **not** a workflow or hosted repository settings. The active `.yml` in the tool checkout versions git-tools itself; copy an **example** into your application instead.
 
-**Destination: the copied workflow's top-level `env:` block.** Replace the identity and ref placeholders before pushing:
+**Destination: the copied workflow's top-level `env:` block.** Replace the source, identity, and ref placeholders before pushing. For `YOUR_GIT_TOOLS_SOURCE_URL`, retain the upstream clone URL from the supplied workflow template or copy it from the [git-tools source repository](../../../) **Code** button; do not use your application origin:
 
 ```yaml
 env:
-  GIT_TOOLS_REPO: https://github.com/davidyytan/git-tools.git # Upstream tool source; keep this URL.
+  GIT_TOOLS_REPO: YOUR_GIT_TOOLS_SOURCE_URL # Upstream tool source, not your application origin.
   GIT_TOOLS_REF: YOUR_SUPPORTED_ENGINE_BRANCH_OR_TAG # A supported branch/tag, not a bare SHA.
-  GIT_BOT_NAME: 'YOUR_AUTOMATION_NAME' # Your dedicated automation Git name, not David's.
+  GIT_BOT_NAME: 'YOUR_AUTOMATION_NAME' # Your dedicated automation Git name.
   GIT_BOT_EMAIL: 'YOUR_AUTOMATION_EMAIL' # Match the GPG key and verified signing account email.
   GIT_TOOLS_BUMP_SYNC_AUXILIARY: 'true' # 'false' bumps only .cz.toml.
 ```
@@ -111,6 +111,8 @@ Registering a GPG public key does not grant write access. Keep private keys out 
 
 ## Merge Settings
 
+For optional browser-based repository enforcement, see [Repository rules and screenshots](../rulesets/README.md). The solo-developer preset uses policies 1, 2, and 4 with zero required approvals. Add [policy 3](../rulesets/03-independent-review.md) only when independent approval from another eligible reviewer is wanted. Keep the mode-specific merge choices below.
+
 For the serialized walkthroughs, use **Squash and merge**, with the final commit subject equal to the stated PR title. Reviewed synchronization of current master into a release/hotfix candidate is the narrow exception: complete that inner PR with **Create a merge commit** to preserve master's ancestry.
 
 - Enable squash merge; choose **Pull request title** or **Pull request title and description** for its default message.
@@ -119,7 +121,7 @@ For the serialized walkthroughs, use **Squash and merge**, with the final commit
 - For either reviewed mode, enable repository **Allow merge commits** and ensure rules on `release/*` and `hotfix/*` permit merge commits; a linear-history requirement on those targets is incompatible with this synchronization route. Customize the final merge subject to `chore: merge master for release` or `chore: merge master for hotfix`, retain the intended RC fields and stable fixes, and re-check current-master ancestry after CI. This remains a reviewed inner PR, not a direct human push exception.
 - Use a separate read-only workflow for PR tests. The version workflow runs on pushes and **writes** commits/tags; it is not a PR validation check.
 
-Protect the intended target branches and require human reviews/checks. Narrowly allow the automation identity to push signed version commits/tags; plan the one-time seed exception before applying final protections. See [credential permissions](#credential-permissions-and-signing-limitations) for the SSH/ruleset distinction.
+Protect the intended target branches with PRs for human changes and choose review/check requirements your team can actually satisfy. A solo author cannot approve their own PR: zero required approvals enforces the PR path but does not provide independent review. Narrowly allow the authenticated publisher to push its signed version commits/tags; plan bootstrap before applying final protections. See the [two-ruleset recipe](../rulesets/branch-rulesets.md) for a copyable merge-only Classic preset, bot-specific bypass, disabled staging, verification, and rollback. Adapt that preset's merge methods to the chosen walkthrough rather than replacing a squash-based flow. See [credential permissions](#credential-permissions-and-signing-limitations) for the SSH/ruleset distinction.
 
 ## Bootstrap `master` and `develop`
 
@@ -149,7 +151,7 @@ git switch -c develop
 git push -u origin develop
 ```
 
-The branch-creation run skips. `develop` now starts from the published stable release. After every version-producing push/merge, wait for CI, pull the bot commit, and fetch tags before the next operation. Stop on failures; use [publication recovery](../publication.md), not another bootstrap or a force-push.
+The branch-creation run skips. `develop` now starts from the published stable release. After every version-producing push/merge, wait for CI, pull the bot commit, and fetch tags before the next operation. Stop on failures; use [publication recovery](../../publication.md), not another bootstrap or a force-push.
 
 ## After Setup
 
@@ -213,12 +215,12 @@ The first master run also accepts `Release 0.0.1` for bootstrap. The documented 
 - Full history and current tags are required. Decisions also read remote branch history; shallow checkouts or stale refs can change results.
 - The examples have no job concurrency setting. Serialize version-producing pushes per branch and wait for publication. A bot bump normally triggers a skip run, but that does not prevent races between competing workflows. Inspect remote refs on failures; do not force-push or repeat bootstrap.
 - Before promotion, the release/hotfix source must contain the expected RC and current stable changes. Wait for stable publication on `master` before backmerge; keep the source until integration is confirmed. Branch creation or opening a PR alone does not bump.
-- Read [current versioning limitations](../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps, before production use.
+- Read [current versioning limitations](../../versioning.md#current-limitations), including metadata snapshot and custom-selector safety gaps, before production use.
 
 ### Local CLI and PR Descriptions
 
-`git-tools commit` generates **and commits** by default; use `--no-commit` to preview. `git-tools pr` generates text, not a hosted PR: push the source, create the PR in GitHub, and use the documented base/title. Configure a provider only if using generated prose; see [CLI usage](../usage.md), [configuration](../configuration.md), and [current provider limitations](../configuration.md#current-limitations).
+`git-tools commit` generates **and commits** by default; use `--no-commit` to preview. `git-tools pr` generates text, not a hosted PR: push the source, create the PR in GitHub, and use the documented base/title. Configure a provider only if using generated prose; see [CLI usage](../../usage.md), [configuration](../../configuration.md), and [current provider limitations](../../configuration.md#current-limitations).
 
 ### Publication and Recovery
 
-Publishing dry-runs an atomic push and falls back only when the server explicitly lacks atomic support. Other failures stop. Inspect remote commits/tags and follow [publication and missing-tag recovery](../publication.md) before retrying.
+Publishing dry-runs an atomic push and falls back only when the server explicitly lacks atomic support. Other failures stop. Inspect remote commits/tags and follow [publication and missing-tag recovery](../../publication.md) before retrying.

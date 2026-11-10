@@ -6,9 +6,12 @@
 
 | What you want to do | GitHub | Azure DevOps |
 | --- | --- | --- |
-| Copy existing keys into CI or configure automation | [Setup and key commands](github/setup.md) | [Setup and key commands](azure-devops/setup.md) |
-| Use a compact returning-user checklist | [Quickstart](github/quickstart.md) | [Quickstart](azure-devops/quickstart.md) |
-| Follow a complete release and hotfix process | [Choose your guide](github/README.md) | [Choose your guide](azure-devops/README.md) |
+| Copy existing keys into CI or configure automation | [Setup and key commands](github/actions/setup.md) | [Setup and key commands](azure-devops/setup.md) |
+| Choose branch protections and allowed mergers | [Rulesets: solo/team presets](github/rulesets/README.md) | — |
+| Configure merge-commit title and description | [Settings and screenshots](github/rulesets/README.md#merge-commit-title-and-description) | — |
+| Apply the PR-only/history baseline with the CLI | [Two-ruleset recipe](github/rulesets/branch-rulesets.md) | — |
+| Use a compact returning-user checklist | [Quickstart](github/actions/quickstart.md) | [Quickstart](azure-devops/quickstart.md) |
+| Follow a complete release and hotfix process | [Choose your guide](github/actions/README.md) | [Choose your guide](azure-devops/README.md) |
 
 **Already have keys?** The setup pages, quickstarts, and complete guides each include the commands and exact secret names. You do not need to start from scratch or create new keys.
 

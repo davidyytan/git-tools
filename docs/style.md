@@ -20,8 +20,8 @@ Do not hard-wrap Markdown prose. Keep each paragraph on one source line, regardl
 
 Use the shared console in [git_tools/generators/base/terminal.py](../git_tools/generators/base/terminal.py). It detects terminal width and applies `settings.console_width_offset` (default: `-2`) to avoid border wrapping on some terminals. [git_tools/cli.py](../git_tools/cli.py) applies the same offset to Typer's help output.
 
-- `force_terminal=True` forces terminal-style rendering, including in non-interactive output; it does not detect whether input is interactive.
-- The shared console uses `soft_wrap=True` for text. Panel renderers explicitly pass `soft_wrap=False` so borders and long content wrap within the available width.
+- The shared console detects terminal output automatically; do not force ANSI styling on redirected output. Generated previews and local prompts use literal, unwrapped text without panels when stdout is not a terminal. Disable emoji-alias interpretation as well as markup/highlighting so code, messages, and saved paths containing text such as `:warning:` remain exact. Tests for terminal panels should explicitly simulate a terminal.
+- The shared console uses `soft_wrap=True` for text. Terminal-only generated-output panels explicitly pass `soft_wrap=False` so borders and long content wrap within the available width. Saved Markdown artifacts never inherit display wrapping.
 - Configure the offset with `GIT_TOOLS_CONSOLE_WIDTH_OFFSET`.
 
 Do not create independent consoles with different width or color behavior for new generators.

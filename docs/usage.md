@@ -26,8 +26,8 @@ Bare `git-tools` requires both stdin and stdout to be terminals to open the menu
 | Command | What it does | Important side effects |
 | --- | --- | --- |
 | `commit` | Generates a Conventional Commit message from staged changes, or a fixed release opener | **Commits by default in direct mode**; does not push |
-| `issue` | Generates issue text from branch changes and commits | Prints/copies text; does not create a hosted issue |
-| `pr` | Generates a PR description and title guidance | Prints/copies text; does not submit or merge a PR |
+| `issue` | Generates issue text from branch changes and commits | Saves `ISSUE.md` or a unique timestamped draft; previews/optionally copies; does not create a hosted issue |
+| `pr` | Generates a PR description and title guidance | Saves `PR.md` or a unique timestamped draft; previews/optionally copies; does not submit or merge a PR |
 | `bump` | Computes the next version from Conventional Commits | Normally updates managed files, commits them, and creates a tag; does not push |
 | `init` | Writes Commitizen-compatible `.cz.toml` | Does not initialize Git, create branches, commit, tag, or push |
 | `log` | Shows a Git graph, branch counts, and commits ahead/behind a base | Read-only; no fetch, checkout, repository writes, provider calls, or clipboard changes |
@@ -105,6 +105,16 @@ Current/compare graphs use captured commit SHAs, so **Show more** stays on the s
 
 The command does not require `.cz.toml`, provider credentials, or an LLM. It does not fetch, checkout, stage, commit, tag, push, save settings, or copy output to the clipboard. Empty repositories and detached HEADs are supported.
 
+## Non-interactive contract
+
+Direct `commit`, `issue`, `pr`, `bump`, and `init` use CLI options and saved defaults without application prompts. `log` prints once by default; `settings KEY VALUE` works without a terminal, while bare `settings` requires one. Explicit `--interactive` requests require **both terminal stdin and stdout** and fail before generator work otherwise. `init --defaults` and `bump --get-next` remain prompt-free even with `-i`. An unexpected end of input is an error, not a successful user cancellation. Back/Esc/Ctrl+C in a real interactive session retain their existing cancellation/navigation behavior.
+
+Provider initialization/request failures, unusable generated text, direct-mode sensitive-file refusals, failed Git commits, and draft-write failures exit nonzero. A save failure leaves the preview available and still attempts the requested clipboard handoff, but never reports a saved draft. A default/best-effort clipboard failure after saving does not remove the file or invalidate the successfully saved result. A legitimate no-op (no staged changes or no commits to describe) and the documented missing-key local-prompt fallback still exit successfully without a generated artifact; scripts must check the reported output rather than infer a draft from exit status alone.
+
+Redirected generated previews, commit subjects/messages, and prepared prompts are plain, unwrapped text without forced ANSI styling; interactive terminals retain styled panels. Operational summaries and diagnostics can still appear on stdout, so **stdout is not a raw-Markdown API**. Use the saved draft as the document artifact rather than redirecting an entire generation transcript to `PR.md`. For commit previews, use `--no-commit --no-copy` and inspect the plain preview; ordinary direct `commit` still commits by default.
+
+Application prompt suppression does not disable configured Git hooks or signing programs. Commit operations have a 30-second timeout; the bump engine bounds each Git command at 120 seconds and reports timeouts as errors. A timeout is not rollback: inspect files, staging, commits, and tags before retrying, because external work may already have partially completed.
+
 ## Shared generation options
 
 These options apply to `commit`, `issue`, and `pr`. They override configured values for one run; they do not save settings.
@@ -163,6 +173,21 @@ git-tools commit --workflow-kind open-release
 The fixed mode does not need an LLM. If files are staged, it commits those files too and still checks sensitive paths. An empty release opener alone may not produce a reviewable PR; reviewed flows require actual stabilization changes for their inner review PRs. Follow the chosen [flow guide](git-flow-guide.md), not just the subject convention.
 
 ## `issue` and `pr`
+
+### Saved drafts: terminal and interactive use
+
+Successful generation always saves a Markdown draft in the **directory where you launched the command**, even when that is a subdirectory of the repository. PRs use `PR.md`; issues use `ISSUE.md`. If the name is occupied by a file, directory, or symlink, the command exclusively creates a new name such as `PR-20261117T150000123456Z.md`. Repeated timestamp collisions get a numeric suffix. Existing entries are never overwritten or followed. Drafts are completely written and flushed in a private staging directory before atomic, no-overwrite publication, so a failed content write never exposes a partial finished-draft filename. The destination filesystem must support hard links; otherwise saving fails explicitly and the preview/requested clipboard handoff remain available rather than using an unsafe overwrite fallback. The actual absolute saved path is printed after a successful write.
+
+Drafts contain final UTF-8 Markdown, without terminal borders, diagnostics, or hard-wrapped lines. The final PR title and any accepted length-limit rewrite are included; the original over-limit response is not separately saved. Internal code fences, indentation, Unicode, long lines, and trailing code whitespace are preserved; a final newline is added if absent. `--no-copy` disables only clipboard handling, **not saving**. Clipboard failure or cancellation at the final copy question leaves the saved draft intact. Files are created with owner-only permissions; review their contents before sharing or committing them. The tool does not stage, commit, publish, or add them to ignore files.
+
+```bash
+git-tools pr --base develop --no-copy       # Save PR.md, or a unique timestamped alternative
+git-tools issue --base develop --no-copy    # Save ISSUE.md, with the same collision policy
+```
+
+Failed or empty generation, cancellation before a result exists, and prepared local prompts do not create finished-draft files. Missing credentials still display a reusable prompt instead of claiming a generated draft. Internal combined generation saves the entire result as `ISSUEPR.md` with the same collision policy; there is no public `git-tools issuepr` command. Ambiguous combined sections are preserved rather than guessing which title belongs to the PR.
+
+### Branch inputs and options
 
 Check out the source branch and refresh the target refs with Git before generating. Choose an explicit base when reproducibility matters.
 

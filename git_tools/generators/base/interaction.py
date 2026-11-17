@@ -105,12 +105,10 @@ class InteractionMixin:
 
     def handoff_local_prompt(self, content: str, *, allow_auto: bool = True) -> None:
         """Always show usable local output, independently of clipboard access."""
-        console.print(Panel(
-            escape(content),
-            title="[bold]Prompt[/bold]",
-            border_style=STYLE_BORDER,
-            title_align=ALIGN_PANEL,
-        ), soft_wrap=False)
+        if console.is_terminal:
+            console.print(Panel(escape(content), title="[bold]Prompt[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+        else:
+            console.print(content, markup=False, highlight=False, emoji=False, soft_wrap=True)
         console.print()
         self.handoff_to_clipboard(content, allow_auto=allow_auto, leading_space=False)
 

@@ -13,11 +13,21 @@ from .terminal import (
     STYLE_SUCCESS,
     STYLE_WARNING,
     console,
+    warning,
 )
 
 
 class DisplayMixin:
     """Render generator diagnostics in the shared panel style."""
+
+    def display_optional_metadata(self, response: Dict[str, Any], *, kind: str) -> None:
+        """Do not let optional provider metadata block delivery of usable generated text."""
+        renderer = self.display_reasoning if kind == "reasoning" else self.display_token_usage
+        try:
+            renderer(response)
+        except Exception:
+            self.logger.warning("Could not display optional %s metadata", kind, exc_info=True)
+            warning(f"Optional {kind} metadata could not be displayed; continuing with the generated content.")
 
     def display_quota_breakdown(
         self, quota_breakdown: List[str], max_token_count: int

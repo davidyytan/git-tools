@@ -36,7 +36,7 @@ USAGE = {"response_metadata": {"token_usage": {
 @contextmanager
 def captured_console(width):
     output = StringIO()
-    console = Console(file=output, width=width, soft_wrap=True, color_system=None)
+    console = Console(file=output, width=width, soft_wrap=True, force_terminal=True, color_system=None)
     with ExitStack() as stack:
         for module in (cli, display, interaction, models, terminal):
             stack.enter_context(patch.object(module, "console", console))
@@ -127,7 +127,7 @@ class PanelSpacingTests(unittest.TestCase):
 
     def test_panels_disable_console_soft_wrap(self):
         generator = BaseGenerator()
-        with patch.object(terminal.console, "print") as printed:
+        with patch.object(terminal.console, "print") as printed, patch.object(Console, "is_terminal", property(lambda self: True)):
             terminal.print_panel("text")
             generator.display_quota_breakdown(["quota"], 200000)
             generator.display_token_usage(USAGE)

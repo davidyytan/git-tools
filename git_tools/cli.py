@@ -114,6 +114,15 @@ def _has_interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+def _require_interactive_terminal(interactive: bool) -> None:
+    """Reject an unavailable prompt stream before doing any generation or mutation."""
+    if interactive and not _has_interactive_terminal():
+        error("Interactive mode requires a terminal on stdin and stdout. Omit --interactive for non-interactive use.")
+        raise typer.Exit(1)
+
+
+_INPUT_ENDED_MESSAGE = "Input ended before the operation completed. For unattended use, choose a direct, non-interactive command."
+
 REASONING_EFFORT_CHOICES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 _SOURCE_LABELS = {"b": "Both commits and diffs", "c": "Commit messages", "d": "Diffs"}
@@ -560,9 +569,12 @@ def main(
                 pointer="›",
                 instruction="(↑↓ move · Enter picks · Esc exits)",
             ))
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt:
             warning("Operation cancelled by user.")
             raise typer.Exit(0)
+        except EOFError:
+            error(_INPUT_ENDED_MESSAGE)
+            raise typer.Exit(1)
 
         if choice is None or choice == "exit":
             raise typer.Exit(0)
@@ -572,9 +584,12 @@ def main(
         if choice == "settings":
             try:
                 _run_settings_menu(done_label="← Back")
-            except (KeyboardInterrupt, EOFError):
+            except KeyboardInterrupt:
                 warning("Operation cancelled by user.")
                 raise typer.Exit(0)
+            except EOFError:
+                error(_INPUT_ENDED_MESSAGE)
+                raise typer.Exit(1)
             # Content commands read the settings singleton; pick up any edits.
             reload_settings()
             console.print()
@@ -786,9 +801,12 @@ def log(
                 console.print()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         literal("⚠ Operation cancelled by user.", style="yellow")
         raise typer.Exit(0)
+    except EOFError:
+        literal(_INPUT_ENDED_MESSAGE, style="red")
+        raise typer.Exit(1)
     except HistoryError as exc:
         literal(str(exc), style="red")
         raise typer.Exit(1)
@@ -868,6 +886,7 @@ def commit(
     from .generators.commitgen import CommitGenerator
 
     try:
+        _require_interactive_terminal(interactive)
         generator = CommitGenerator(
             model=model,
             temperature=temperature,
@@ -886,9 +905,12 @@ def commit(
         generator.generate_commit()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except typer.Exit:
         raise
     except ValueError as e:
@@ -944,7 +966,7 @@ def issue(
         typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
-    """Generate a GitHub issue from recent commits.
+    """Generate issue text and save ISSUE.md (or a unique timestamped draft).
 
     Examples:
         git-tools issue
@@ -954,6 +976,7 @@ def issue(
     from .generators.issueprgen import IssuePullRequestGenerator
 
     try:
+        _require_interactive_terminal(interactive)
         generator = IssuePullRequestGenerator(
             generation_type="issue",
             base_branch=base,
@@ -969,9 +992,12 @@ def issue(
         generator.generate_issue_pullrequest()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except typer.Exit:
         raise
     except ValueError as e:
@@ -1077,7 +1103,7 @@ def pr(
         typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
-    """Generate a pull request description from recent commits.
+    """Generate PR text and save PR.md (or a unique timestamped draft).
 
     Examples:
         git-tools pr
@@ -1092,6 +1118,7 @@ def pr(
     from .generators.issueprgen import IssuePullRequestGenerator
 
     try:
+        _require_interactive_terminal(interactive)
         if (
             sum(
                 1
@@ -1134,9 +1161,12 @@ def pr(
         generator.generate_issue_pullrequest()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except typer.Exit:
         raise
     except ValueError as e:
@@ -1240,6 +1270,7 @@ def bump(
     from .generators.bumpgen import BumpGenerator
 
     try:
+        _require_interactive_terminal(interactive and not get_next)
         generator = BumpGenerator(
             increment=increment.value if increment else None,
             default_increment=default_increment.value if default_increment else None,
@@ -1261,9 +1292,12 @@ def bump(
         generator.generate_bump()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except BumpError as e:
         error(str(e))
         raise typer.Exit(1)
@@ -1332,6 +1366,7 @@ def init_command(
     use_interactive = interactive and not defaults
 
     try:
+        _require_interactive_terminal(use_interactive)
         generator = CommitizenInitGenerator(
             config_file=config_file.value if config_file else None,
             version=version,
@@ -1343,9 +1378,12 @@ def init_command(
         generator.generate_init()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except CzInitError as e:
         error(str(e))
         raise typer.Exit(1)
@@ -2569,9 +2607,12 @@ def settings_command(
             error("git-tools settings requires an interactive terminal.")
             raise typer.Exit(1)
         _run_settings_menu()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

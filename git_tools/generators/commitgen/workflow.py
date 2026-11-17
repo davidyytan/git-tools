@@ -5,7 +5,7 @@ import subprocess
 from rich.markup import escape
 from rich.panel import Panel
 
-from ..base import ALIGN_PANEL, STYLE_BORDER, console, error, success
+from ..base import ALIGN_PANEL, STYLE_BORDER, console, success
 
 WORKFLOW_KIND_NORMAL = "normal"
 WORKFLOW_KIND_OPEN_RELEASE = "open-release"
@@ -49,23 +49,16 @@ class WorkflowCommitMixin:
     def _handle_workflow_commit(self, workflow_kind: str) -> None:
         staged_files = self._get_staged_files()
         if staged_files and not self._check_sensitive_files():
+            if not self._interactive:
+                raise ValueError("Sensitive files refused. Unstage them or re-run with --force-sensitive.")
             return
 
-        try:
-            subject = self._build_workflow_subject(workflow_kind)
-        except ValueError as exc:
-            error(str(exc))
-            return
+        subject = self._build_workflow_subject(workflow_kind)
 
-        console.print(
-            Panel(
-                escape(subject),
-                title="[bold]Workflow Commit Subject[/bold]",
-                border_style=STYLE_BORDER,
-                title_align=ALIGN_PANEL,
-            ),
-            soft_wrap=False,
-        )
+        if console.is_terminal:
+            console.print(Panel(escape(subject), title="[bold]Workflow Commit Subject[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+        else:
+            console.print(subject, markup=False, highlight=False, emoji=False, soft_wrap=True)
         console.print()
 
         self._handle_fixed_subject_action(
@@ -99,10 +92,10 @@ class WorkflowCommitMixin:
                 success("Committed changes.")
             except subprocess.CalledProcessError as exc:
                 self.logger.error(f"Failed to create workflow commit: {exc}")
-                error("Error committing changes.")
+                raise ValueError("Error committing changes. Review the Git output and repository state before retrying.") from exc
             except subprocess.TimeoutExpired:
                 self.logger.error("Workflow commit command timed out")
-                error("Git commit timed out.")
+                raise ValueError("Git commit timed out. Inspect repository state before retrying.")
             return
 
         if self._cli_copy_clipboard is not None:

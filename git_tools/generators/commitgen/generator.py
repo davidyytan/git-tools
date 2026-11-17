@@ -13,7 +13,6 @@ from ..base import (
     STYLE_BORDER,
     BaseGenerator,
     console,
-    error,
     info,
     success,
     warning,
@@ -85,6 +84,8 @@ class CommitGenerator(
 
         # Check for sensitive files before processing
         if not self._check_sensitive_files():
+            if not self._interactive:
+                raise ValueError("Sensitive files refused. Unstage them or re-run with --force-sensitive.")
             return
 
         diff_content = self._handle_large_diff_processing(diff_content)
@@ -194,26 +195,29 @@ class CommitGenerator(
         model, temperature, max_tokens = self.select_model_params(provider)
 
         if not self._initialize_service(provider, model, temperature, max_tokens):
-            error(f"Failed to initialize {provider} service. Please check your configuration and API keys.")
-            return False
+            raise ValueError(f"Failed to initialize {provider} service. Please check your configuration and API keys.")
 
         response = self.generate_commit_message(diff_content, system_msg)
         if not response:
-            error("Failed to generate commit message")
-            return False
+            raise ValueError("Failed to generate commit message")
 
         self._display_response(response)
-        self.display_token_usage(response)
+        self.display_optional_metadata(response, kind="token usage")
         self._handle_commit_action(response)
         return True
 
     def _display_response(self, response: Dict[str, Any]) -> None:
         """Display LLM response panels."""
-        self.display_reasoning(response)
-        commit_message = self.parse_commit_message(response["content"])
-        if commit_message:
+        self.display_optional_metadata(response, kind="reasoning")
+        raw_content = response.get("content")
+        commit_message = self.parse_commit_message(raw_content) if isinstance(raw_content, str) else None
+        if not commit_message:
+            raise ValueError("Invalid commit message format")
+        if console.is_terminal:
             console.print(Panel(escape(commit_message), title="[bold]Commit Message[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
-            console.print()
+        else:
+            console.print(commit_message, markup=False, highlight=False, emoji=False, soft_wrap=True)
+        console.print()
 
     def _handle_commit_action(self, response: Dict[str, Any]) -> None:
         """Handle the commit or clipboard action.
@@ -225,12 +229,11 @@ class CommitGenerator(
         Args:
             response: LLM response dictionary
         """
-        raw_content = response["content"]
-        commit_message = self.parse_commit_message(raw_content)
+        raw_content = response.get("content")
+        commit_message = self.parse_commit_message(raw_content) if isinstance(raw_content, str) else None
 
         if not commit_message:
-            error("Invalid commit message format")
-            return
+            raise ValueError("Invalid commit message format")
 
         # Determine if we should commit directly: CLI param > interactive prompt > default (True)
         if self._cli_auto_commit is not None:
@@ -252,10 +255,10 @@ class CommitGenerator(
                 success("Committed changes.")
             except subprocess.CalledProcessError as e:
                 self.logger.error(f"Failed to commit: {e}")
-                error("Error committing changes.")
+                raise ValueError("Error committing changes. Review the Git output and repository state before retrying.") from e
             except subprocess.TimeoutExpired:
                 self.logger.error("Git commit command timed out")
-                error("Git commit timed out.")
+                raise ValueError("Git commit timed out. Inspect repository state before retrying.")
         else:
             content_to_copy = (
                 commit_message

@@ -157,6 +157,7 @@ class FlowBoundaries:
         return enhanced, initialize, generate
 
     def _issue_boundaries(self, stack, generator, *, credentials=True, response=PR_RESPONSE):
+        stack.enter_context(patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None))
         stack.enter_context(patch.object(generator, "get_default_branch", return_value="origin/develop"))
         stack.enter_context(patch.object(generator, "get_commit_info", return_value=COMMIT_INFO))
         stack.enter_context(patch.object(generator, "show_commit_summary"))
@@ -465,7 +466,7 @@ class CliGenerationContractTests(unittest.TestCase):
                     args += ["--no-scope", "--no-footer", "--no-commit"]
                 else:
                     args += ["--source", "d", "--context", ""]
-                with patch(path) as constructor:
+                with patch(path) as constructor, patch("git_tools.cli._has_interactive_terminal", return_value=True):
                     result = CliRunner().invoke(app, args)
                 self.assertEqual(result.exit_code, 0, result.output)
                 values = constructor.call_args.kwargs

@@ -261,6 +261,7 @@ class PrOutputHandoffSafetyTests(unittest.TestCase):
             generation_type=generation_type, input_source="c", interactive=False
         )
         with ExitStack() as stack:
+            stack.enter_context(patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None))
             for name, value in (
                 ("get_default_branch", "develop"),
                 ("get_commit_info", {"base_branch": "develop", "commit_count": 1}),

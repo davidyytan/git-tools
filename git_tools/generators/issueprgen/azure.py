@@ -123,13 +123,14 @@ class AzureLimitMixin:
             "Wrap the rewritten PR in a single code block with triple backticks."
         )
         response = self.generate_content(content, retry_system_msg)
-        if response:
-            repaired = self._normalize_pr_output(
-                self.parse_generated_content(response["content"])
-            )
-            if repaired:
-                parsed = repaired
-                count = count_ado_chars(parsed)
+        if response and isinstance(response.get("content"), str):
+            candidate = self.parse_generated_content(response["content"])
+            # Validate before inserting a fixed title: a blank retry must not erase the original.
+            if candidate.strip():
+                repaired = self._normalize_pr_output(candidate)
+                if repaired:
+                    parsed = repaired
+                    count = count_ado_chars(parsed)
 
         if count > limit:
             warning(

@@ -44,7 +44,7 @@ CONSOLES = (
 def captured_console(width, answers=()):
     """Use real renderers and prompt helpers, replacing only terminal input."""
     output = StringIO()
-    console = Console(file=output, width=width, force_terminal=False, soft_wrap=True)
+    console = Console(file=output, width=width, force_terminal=True, color_system=None, soft_wrap=True)
     remaining = iter(answers)
     questions = []
 
@@ -69,6 +69,11 @@ def captured_console(width, answers=()):
 
 
 class RenderedSpacingTests(unittest.TestCase):
+    def setUp(self):
+        self.save = patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None)
+        self.save.start()
+        self.addCleanup(self.save.stop)
+
     def assert_panel_gaps(self, output):
         lines = [line.rstrip() for line in output.splitlines()]
         self.assertNotIn("\n\n\n", "\n".join(lines), output)

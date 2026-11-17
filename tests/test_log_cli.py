@@ -64,6 +64,17 @@ class LogCliTests(unittest.TestCase):
     def invoke(self, *args):
         return self.runner.invoke(cli.app, ["log", *args])
 
+    def test_direct_and_root_log_eof_exit_nonzero(self):
+        self.terminal.return_value = True
+        for root in (False, True):
+            with self.subTest(root=root):
+                self.ask.side_effect = ["log", EOFError()] if root else EOFError()
+                result = self.runner.invoke(cli.app, [] if root else ["log", "-i"])
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("Input ended", result.output)
+                self.assertNotIn("cancelled by user", result.output)
+                self.assertFalse(cli._ROOT_COMMAND_ACTIVE.get())
+
     def test_redirected_default_prints_once_without_prompts(self):
         result = self.invoke()
         self.assertEqual(result.exit_code, 0, result.output)
@@ -310,8 +321,10 @@ class LogCliTests(unittest.TestCase):
             with self.subTest(signal=signal):
                 self.ask.side_effect = signal
                 result = self.invoke("-i")
-                self.assertEqual(result.exit_code, 0, result.output)
-                if signal != NavigationBack:
+                self.assertEqual(result.exit_code, 1 if signal == EOFError else 0, result.output)
+                if signal == EOFError:
+                    self.assertIn("Input ended", result.output)
+                elif signal != NavigationBack:
                     self.assertIn("Operation cancelled by user.", result.output)
                 self.assertFalse(cli._ROOT_COMMAND_ACTIVE.get())
 

@@ -119,6 +119,26 @@ class RootRoutingTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(messages, ['Select command:'])
 
+    def test_root_and_root_settings_eof_exit_nonzero(self):
+        for settings in (False, True):
+            with self.subTest(settings=settings), patch.object(cli, '_has_interactive_terminal', return_value=True), patch.object(cli, '_version_line', return_value='git-tools test'), patch.object(cli.questionary, 'select', return_value=object()), patch.object(cli, '_ask_with_back', return_value='settings' if settings else None, side_effect=None if settings else EOFError()), patch.object(cli, '_run_settings_menu', side_effect=EOFError()):
+                result = self.runner.invoke(cli.app, [])
+            self.assertEqual(result.exit_code, 1, result.output)
+            self.assertIn('Input ended', result.output)
+            self.assertNotIn('cancelled by user', result.output)
+
+    def test_closed_real_questionary_input_is_eof_not_user_cancellation(self):
+        select = questionary.select
+        with create_pipe_input() as pipe, patch.object(cli, '_has_interactive_terminal', return_value=True), patch.object(cli, '_version_line', return_value='git-tools test'):
+            def closed_question(message, **kwargs):
+                question = select(message, input=pipe, output=DummyOutput(), **kwargs)
+                pipe.close()
+                return question
+            with patch.object(cli.questionary, 'select', side_effect=closed_question):
+                result = self.runner.invoke(cli.app, [])
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn('Input ended', result.output)
+
     def test_root_command_escape_and_back_row_return_root_without_generation(self):
         # Enter commit, cancel its first prompt, then Escape at root.
         for cancel in ('\x1b', '\x1b[B\x1b[B\r'):
@@ -150,7 +170,7 @@ class RootRoutingTests(unittest.TestCase):
 
     def test_direct_interactive_command_escape_exits_without_root(self):
         for args in (['commit', '-i'], ['pr', '-i'], ['bump', '-i']):
-            with self.subTest(args=args), keyed_questions(['\x1b']) as messages:
+            with self.subTest(args=args), keyed_questions(['\x1b']) as messages, patch.object(cli, '_has_interactive_terminal', return_value=True):
                 result = self.runner.invoke(cli.app, args)
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertEqual(len(messages), 1)
@@ -178,7 +198,7 @@ class RootRoutingTests(unittest.TestCase):
         )
         for name, target, method in targets:
             for signal in (NavigationBack, KeyboardInterrupt):
-                with self.subTest(name=name, signal=signal), patch(target) as generator:
+                with self.subTest(name=name, signal=signal), patch(target) as generator, patch.object(cli, '_has_interactive_terminal', return_value=True):
                     getattr(generator.return_value, method).side_effect = signal
                     result = self.runner.invoke(cli.app, [name, '-i'])
                 self.assertEqual(result.exit_code, 0, result.output)

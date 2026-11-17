@@ -1,5 +1,6 @@
 """``IssuePullRequestGenerator``: issue and PR text from commits and diffs."""
 
+from pathlib import Path
 from typing import Optional
 
 from rich.markup import escape
@@ -12,10 +13,11 @@ from ..base import (
     STYLE_BORDER,
     BaseGenerator,
     console,
-    error,
     info,
+    success,
     warning,
 )
+from .artifacts import save_draft
 from .azure import AZURE_PR_DESCRIPTION_INSTRUCTION, AzureLimitMixin
 from .branches import BranchResolutionMixin
 from .commits import CommitHistoryMixin
@@ -96,13 +98,14 @@ class IssuePullRequestGenerator(
         self._promotion_pr_context: PromotionPrContext | None = None
         self._workflow_pr_context: WorkflowPrContext | None = None
 
-    def generate_issue_pullrequest(self) -> None:
+    def generate_issue_pullrequest(self) -> Optional[Path]:
         """Main generation workflow.
 
         Uses CLI parameters if provided. If not:
         - Interactive mode: prompts for input
         - Non-interactive mode: uses defaults
         """
+        output_directory = Path.cwd()
         # CLI mode: add leading blank line to separate from command
         if not self._interactive:
             console.print()
@@ -213,57 +216,60 @@ class IssuePullRequestGenerator(
         model, temperature, max_tokens = self.select_model_params(provider)
 
         if not self._initialize_service(provider, model, temperature, max_tokens):
-            return
+            raise ValueError(f"Failed to initialize {provider} service. Check your configuration and API keys.")
 
         response = self.generate_content(content, system_msg)
         if not response:
-            error("Failed to generate content")
-            return
+            raise ValueError("Failed to generate content")
+        raw_output = response.get("content")
+        if not isinstance(raw_output, str):
+            raise ValueError("No valid generated text found")
+        parsed_source = self.parse_generated_content(raw_output)
+        if not parsed_source.strip():
+            # Preserve substantial imperfect output, but never treat empty verified fences as a draft.
+            if self.generation_type != "pr" or not raw_output.strip() or raw_output.strip().startswith(("```", "~~~")):
+                raise ValueError(f"No valid {self.generation_type} content found")
+            parsed_source = raw_output
+            warning("Parsed PR content was empty. Using raw model output instead.")
+        display_output = self._normalize_pr_output(parsed_source)
+        if not display_output.strip():
+            raise ValueError(f"No valid {self.generation_type} content found")
+        if apply_azure_limit:
+            display_output = self._enforce_azure_pr_description_limit(display_output, content, system_msg)
+        copy_output = display_output if self.generation_type == "pr" else raw_output
 
-        self.display_reasoning(response)
-
-        parsed = self._normalize_pr_output(self.parse_generated_content(response["content"]))
-        if apply_azure_limit and parsed:
-            parsed = self._enforce_azure_pr_description_limit(parsed, content, system_msg)
-        display_output = parsed
-        copy_output = response["content"]
-        used_raw_fallback = False
-
-        if self.generation_type == "pr":
-            if parsed:
-                display_output = parsed
-                copy_output = display_output
-            else:
-                raw_output = response["content"].strip()
-                if raw_output:
-                    display_output = raw_output
-                    copy_output = display_output
-                    used_raw_fallback = True
-
-        type_labels = {
-            "pr": "PR Description",
-            "issue": "Issue Description",
-            "both": "Combined Output",
-        }
-
-        if display_output:
-            if used_raw_fallback:
-                warning("Parsed PR content was empty. Using raw model output instead.")
+        # Save paid-for output before metadata rendering or a cancellable copy question.
+        saved_path = None
+        save_error = None
+        try:
+            saved_path = save_draft(display_output, self.generation_type, output_directory)
+        except (OSError, UnicodeError) as exc:
+            save_error = ValueError(f"Could not save {self.generation_type} draft in {output_directory}: {exc}")
+        try:
+            if saved_path is not None:
+                success(f"Saved draft: {escape(str(saved_path))}")
                 console.print()
-            console.print(Panel(escape(display_output.strip()), title=f"[bold]{type_labels.get(self.generation_type, 'Output')}[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
-            console.print()
-        else:
-            error_msgs = {
-                "pr": "No valid PR content found",
-                "issue": "No valid issue content found",
-                "both": "No valid content found",
+            if save_error is not None:
+                warning("Draft could not be saved; the preview and requested clipboard handoff are still available.")
+
+            self.display_optional_metadata(response, kind="reasoning")
+            type_labels = {
+                "pr": "PR Description",
+                "issue": "Issue Description",
+                "both": "Combined Output",
             }
-            error(error_msgs.get(self.generation_type, "No valid content found"))
-            return
-
-        self.display_token_usage(response)
-
-        self.handoff_to_clipboard(copy_output, leading_space=False)
+            if console.is_terminal:
+                console.print(Panel(escape(display_output), title=f"[bold]{type_labels.get(self.generation_type, 'Output')}[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+            else:
+                console.print(display_output, markup=False, highlight=False, emoji=False, soft_wrap=True)
+            console.print()
+            self.display_optional_metadata(response, kind="token usage")
+            self.handoff_to_clipboard(copy_output, leading_space=False)
+        finally:
+            # Keep an already-failed save authoritative, even if later output or cancellation interrupts recovery.
+            if save_error is not None:
+                raise save_error
+        return saved_path
 
     def _handle_local_mode(
         self, content: str, system_msg: str, *, allow_auto: bool = True
@@ -273,7 +279,7 @@ class IssuePullRequestGenerator(
         self.handoff_local_prompt(full_prompt, allow_auto=allow_auto)
 
 
-def generate_issue_pullrequest() -> None:
+def generate_issue_pullrequest() -> Optional[Path]:
     """Entry point for issue and pull request generation.
 
     Creates an IssuePullRequestGenerator instance and runs the generation workflow.

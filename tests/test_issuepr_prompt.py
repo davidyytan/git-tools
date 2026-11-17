@@ -15,6 +15,11 @@ from git_tools.generators.issueprgen import (
 
 
 class IssuePullRequestPromptTests(unittest.TestCase):
+    def setUp(self):
+        self.save = patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None)
+        self.save.start()
+        self.addCleanup(self.save.stop)
+
     def test_process_diff_with_size_limiting_handles_empty_diff(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
@@ -1091,6 +1096,11 @@ Issue: #123
 
 class AzurePrDescriptionLimitTests(unittest.TestCase):
     """Azure DevOps PR description limit: detection, counting, and flow."""
+
+    def setUp(self):
+        self.save = patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None)
+        self.save.start()
+        self.addCleanup(self.save.stop)
 
     # -- count_ado_chars (UTF-16 code units) ---------------------------
 

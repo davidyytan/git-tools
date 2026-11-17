@@ -87,9 +87,7 @@ class InteractionMixin:
     ) -> None:
         """Apply explicit copy policy, then the interactive/direct-mode default.
 
-        Credential failures may offer local output, but must not create an
-        unrequested automatic clipboard side effect in non-interactive mode.
-        An explicit copy request still applies to that fallback.
+        Direct mode copies only when explicitly requested; interactive mode retains its copy question. The legacy allow_auto argument remains accepted for existing callers but never enables implicit copying.
         """
         # Panel callers already own the separator before an automatic result.
         copy_kwargs = {} if leading_space else {"leading_space": False}
@@ -100,8 +98,6 @@ class InteractionMixin:
             self.copy_to_clipboard_auto(content, **copy_kwargs)
         elif self._interactive:
             self.ask_to_copy_to_clipboard(content)
-        elif allow_auto:
-            self.copy_to_clipboard_auto(content, **copy_kwargs)
 
     def handoff_local_prompt(self, content: str, *, allow_auto: bool = True) -> None:
         """Always show usable local output, independently of clipboard access."""

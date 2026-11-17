@@ -17,7 +17,7 @@ from ..base import (
     success,
     warning,
 )
-from .artifacts import save_draft
+from ..utils.artifacts import resolve_output_path, save_draft
 from .azure import AZURE_PR_DESCRIPTION_INSTRUCTION, AzureLimitMixin
 from .branches import BranchResolutionMixin
 from .commits import CommitHistoryMixin
@@ -65,6 +65,7 @@ class IssuePullRequestGenerator(
         azure_limit: Optional[bool] = None,
         interactive: bool = False,
         copy_clipboard: Optional[bool] = None,
+        output_path: str | Path | None = None,
     ):
         super().__init__(
             model=model,
@@ -90,6 +91,7 @@ class IssuePullRequestGenerator(
         self._cli_context = context
         self._cli_azure_limit = azure_limit
         self._cli_copy_clipboard = copy_clipboard
+        self._cli_output_path = output_path
         self.release_pr = bool(release_pr)
         self.hotfix_pr = bool(hotfix_pr)
         self.start_pr = bool(start_pr)
@@ -106,6 +108,7 @@ class IssuePullRequestGenerator(
         - Non-interactive mode: uses defaults
         """
         output_directory = Path.cwd()
+        output_path = resolve_output_path(self._cli_output_path, output_directory)
         # CLI mode: add leading blank line to separate from command
         if not self._interactive:
             console.print()
@@ -135,6 +138,7 @@ class IssuePullRequestGenerator(
 
         if (not commit_info or commit_info["commit_count"] < 1) and fixed_context is None:
             warning("No commits to generate from")
+            self._require_finished_output()
             return
 
         if commit_info and commit_info["commit_count"] >= 1:
@@ -145,6 +149,7 @@ class IssuePullRequestGenerator(
 
         collected = self._collect_generation_content(commit_info, fixed_context)
         if collected is None:
+            self._require_finished_output()
             return
         input_source, content = collected
 
@@ -198,6 +203,7 @@ class IssuePullRequestGenerator(
             if not self.prompt_confirm("Generate content using external providers?", default=True):
                 console.print()
                 self._handle_local_mode(content, system_msg)
+                self._require_finished_output()
                 return
 
         # Provider initialization
@@ -211,6 +217,7 @@ class IssuePullRequestGenerator(
             info("Falling back to local mode...")
             console.print()
             self._handle_local_mode(content, system_msg, allow_auto=False)
+            self._require_finished_output()
             return
 
         model, temperature, max_tokens = self.select_model_params(provider)
@@ -242,9 +249,11 @@ class IssuePullRequestGenerator(
         saved_path = None
         save_error = None
         try:
-            saved_path = save_draft(display_output, self.generation_type, output_directory)
+            save_options = {"output_path": output_path} if output_path is not None else {}
+            saved_path = save_draft(display_output, self.generation_type, output_directory, **save_options)
         except (OSError, UnicodeError) as exc:
-            save_error = ValueError(f"Could not save {self.generation_type} draft in {output_directory}: {exc}")
+            destination = str(output_path) if output_path is not None else f"draft in {output_directory}"
+            save_error = ValueError(f"Could not save {self.generation_type} {destination}: {exc}")
         try:
             if saved_path is not None:
                 success(f"Saved draft: {escape(str(saved_path))}")
@@ -270,6 +279,10 @@ class IssuePullRequestGenerator(
             if save_error is not None:
                 raise save_error
         return saved_path
+
+    def _require_finished_output(self) -> None:
+        if self._cli_output_path is not None:
+            raise ValueError("No finished document was generated for --output; no file was written.")
 
     def _handle_local_mode(
         self, content: str, system_msg: str, *, allow_auto: bool = True

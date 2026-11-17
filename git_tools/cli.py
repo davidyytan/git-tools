@@ -857,7 +857,11 @@ def commit(
     ] = None,
     copy: Annotated[
         Optional[bool],
-        typer.Option("--copy/--no-copy", help="Copy to clipboard"),
+        typer.Option("--copy/--no-copy", help="Copy when not committing (direct-mode default: off)"),
+    ] = None,
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", metavar="PATH", help="Save to this exact file without overwriting; output-only unless --commit is explicit"),
     ] = None,
     force_sensitive: Annotated[
         bool,
@@ -875,7 +879,7 @@ def commit(
         typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
-    """Generate a conventional commit message or the release opener subject.
+    """Generate or commit a message; save COMMIT.md when not committing.
 
     Examples:
         git-tools commit
@@ -898,6 +902,7 @@ def commit(
             body_style=body_style.value if body_style is not None else None,
             auto_commit=auto_commit,
             copy_clipboard=copy,
+            output_path=output,
             force_sensitive=force_sensitive,
             workflow_kind=workflow_kind.value if workflow_kind is not None else None,
             interactive=interactive,
@@ -959,7 +964,11 @@ def issue(
     ] = None,
     copy: Annotated[
         Optional[bool],
-        typer.Option("--copy/--no-copy", help="Copy generated content to clipboard or skip copying"),
+        typer.Option("--copy/--no-copy", help="Copy generated content as well (direct-mode default: off)"),
+    ] = None,
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", metavar="PATH", help="Save final Markdown to this exact file without overwriting (parent directory must exist)"),
     ] = None,
     interactive: Annotated[
         bool,
@@ -987,6 +996,7 @@ def issue(
             max_tokens=max_tokens,
             token_limit=token_limit,
             copy_clipboard=copy,
+            output_path=output,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
@@ -1081,7 +1091,11 @@ def pr(
     ] = None,
     copy: Annotated[
         Optional[bool],
-        typer.Option("--copy/--no-copy", help="Copy generated content to clipboard or skip copying"),
+        typer.Option("--copy/--no-copy", help="Copy generated content as well (direct-mode default: off)"),
+    ] = None,
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", metavar="PATH", help="Save final Markdown to this exact file without overwriting (parent directory must exist)"),
     ] = None,
     azure_limit: Annotated[
         Optional[bool],
@@ -1156,6 +1170,7 @@ def pr(
             token_limit=token_limit,
             azure_limit=azure_limit,
             copy_clipboard=copy,
+            output_path=output,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()

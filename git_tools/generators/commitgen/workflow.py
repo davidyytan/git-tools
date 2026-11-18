@@ -19,7 +19,7 @@ class WorkflowCommitMixin:
 
     def _prepare_output(self) -> None:
         self._output_directory = Path.cwd()
-        self._resolved_output_path = resolve_output_path(self._cli_output_path, self._output_directory)
+        self._resolved_output_path = resolve_output_path(self._cli_output_path, self._output_directory, validate_default=self._cli_auto_commit is False)
 
     def _require_finished_output(self) -> None:
         if self._cli_output_path is not None:

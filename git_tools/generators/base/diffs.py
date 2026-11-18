@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 from git_tools.settings.settings import settings
 
-from .tokens import _ENCODER, _escape_special_tokens, count_tokens
+from .tokens import _escape_special_tokens, _get_encoder, count_tokens
 
 
 class DiffProcessingMixin:
@@ -254,9 +254,10 @@ class DiffProcessingMixin:
 
             if diff_tokens > quota:
                 # Use tiktoken to decode truncated tokens back to text
-                encoded = _ENCODER.encode(_escape_special_tokens(diff))
+                encoder = _get_encoder()
+                encoded = encoder.encode(_escape_special_tokens(diff))
                 truncated_tokens = encoded[:quota]
-                truncated_diff = _ENCODER.decode(truncated_tokens)
+                truncated_diff = encoder.decode(truncated_tokens)
                 truncated_diffs.append(
                     f"# Truncated diff for {filename} (original: {diff_tokens} tokens)\n{truncated_diff}"
                 )

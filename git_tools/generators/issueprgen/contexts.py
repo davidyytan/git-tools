@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 
-from ..base.prompts import PROMPTS_DIR
+from ..base.prompts import PROMPTS_DIR, xml_evidence
 
 RELEASE_BRANCH_PATTERN = re.compile(r"^release/(?P<version>\d+\.\d+\.\d+)$")
 HOTFIX_BRANCH_PATTERN = re.compile(r"^hotfix/(?P<name>.+)$")
@@ -30,7 +30,7 @@ class PromotionPrContext:
     promotion_kind: str
 
     def to_prompt_block(self) -> str:
-        return _load_issuepr_prompt_block("issuepr_promotion_context.txt").format(
+        return xml_evidence("workflow_context", _load_issuepr_prompt_block("issuepr_promotion_context.txt").format(
             promotion_kind=self.promotion_kind,
             current_branch=self.current_branch,
             base_branch=self.base_branch,
@@ -39,7 +39,7 @@ class PromotionPrContext:
             base_version=self.base_version,
             current_version=self.current_version,
             inferred_transition=self.inferred_transition,
-        )
+        ))
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class WorkflowPrContext:
     behavior_summary: str
 
     def to_prompt_block(self) -> str:
-        return _load_issuepr_prompt_block("issuepr_workflow_context.txt").format(
+        return xml_evidence("workflow_context", _load_issuepr_prompt_block("issuepr_workflow_context.txt").format(
             workflow_kind=self.workflow_kind,
             current_branch=self.current_branch,
             base_branch=self.base_branch,
@@ -65,4 +65,4 @@ class WorkflowPrContext:
             base_version=self.base_version,
             current_version=self.current_version,
             behavior_summary=self.behavior_summary,
-        )
+        ))

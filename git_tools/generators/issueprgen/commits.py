@@ -72,12 +72,13 @@ class CommitHistoryMixin:
             ) from e
 
     def get_commit_messages(
-        self, comparison: Union[Dict[str, Any], str, int]
-    ) -> Optional[str]:
+        self, comparison: Union[Dict[str, Any], str, int], *, individual: bool = False
+    ) -> Optional[Union[str, tuple[str, ...]]]:
         """Get full messages for the exact range summarized by get_commit_info.
 
         Legacy count callers can reuse a previously inspected comparison, but a
         count alone must never select unrelated recent commits from HEAD.
+        Individual records use exact commit objects, preserving paragraph and whitespace boundaries; the default joined-string API remains compatible.
         """
         if isinstance(comparison, int):
             info = getattr(self, "_comparison_commit_info", None)
@@ -99,6 +100,20 @@ class CommitHistoryMixin:
             return None
 
         try:
+            if individual:
+                hashes = info.get("commit_hashes")
+                if hashes is None:
+                    hashes = subprocess.check_output(["git", "rev-list", commit_range], text=True, timeout=30).splitlines()
+                records = []
+                for commit_hash in hashes:
+                    raw = subprocess.check_output(["git", "cat-file", "commit", commit_hash], timeout=30)
+                    headers, separator, message = raw.partition(b"\n\n")
+                    if not separator:
+                        raise ValueError("Commit object has no message separator")
+                    encoding = next((line[9:].decode("ascii") for line in headers.split(b"\n") if line.startswith(b"encoding ")), "utf-8")
+                    records.append(message.decode(encoding))
+                return tuple(records) if any(record.strip() for record in records) else None
+
             messages = subprocess.check_output(
                 ["git", "log", "--pretty=format:%B%x1e", commit_range, "--"],
                 text=True,
@@ -114,7 +129,7 @@ class CommitHistoryMixin:
                 return None
 
             return "\n\n".join(full_messages)
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, ValueError, LookupError) as e:
             self.logger.error(f"Error getting commit messages: {e}")
             return None
         except subprocess.TimeoutExpired:

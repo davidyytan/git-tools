@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from git_tools.settings.settings import settings
 
 from ..base import console, info, warning
+from ..base.prompts import wrap_system_prompt
 
 # Azure DevOps caps the pull request description at 4000 characters.
 AZURE_PR_DESCRIPTION_LIMIT = 4000
@@ -113,14 +114,14 @@ class AzureLimitMixin:
             f"PR description is {count}/{limit} characters; "
             "requesting a condensed rewrite."
         )
-        retry_system_msg = (
-            f"{system_msg}\n\n"
+        retry_system_msg = wrap_system_prompt(
+            system_msg,
             "The previously generated PR description was "
             f"{count} characters, exceeding the configured PR limit of "
             f"{limit} characters. Rewrite the PR description "
             f"to fit within {limit} characters. Keep the most important details from the "
             "provided diffs and/or commits and do not invent new information. "
-            "Wrap the rewritten PR in a single code block with triple backticks."
+            "Return raw Markdown without an outer code fence; ordinary fenced code snippets may remain inside the document."
         )
         response = self.generate_content(content, retry_system_msg)
         if response and isinstance(response.get("content"), str):

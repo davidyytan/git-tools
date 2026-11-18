@@ -1,10 +1,14 @@
 """Token counting with tiktoken, guarding against special-token injection."""
 
+from functools import lru_cache
+
 import tiktoken
 
-# Initialize tiktoken encoder once at module level
-_ENCODER = tiktoken.get_encoding("cl100k_base")
-_SPECIAL_TOKENS = _ENCODER.special_tokens_set
+
+@lru_cache(maxsize=1)
+def _get_encoder() -> tiktoken.Encoding:
+    """Load the tokenizer only when counting or truncating text, never for CLI help."""
+    return tiktoken.get_encoding("cl100k_base")
 
 
 def _escape_special_tokens(text: str) -> str:
@@ -16,7 +20,7 @@ def _escape_special_tokens(text: str) -> str:
     Returns:
         Text with special tokens escaped (e.g., <|endoftext|> -> <\\|endoftext\\|>)
     """
-    for token in _SPECIAL_TOKENS:
+    for token in _get_encoder().special_tokens_set:
         if token in text:
             escaped = token.replace("|", "\\|")
             text = text.replace(token, escaped)
@@ -32,4 +36,4 @@ def count_tokens(text: str) -> int:
     Returns:
         Number of tokens in the text
     """
-    return len(_ENCODER.encode(_escape_special_tokens(text)))
+    return len(_get_encoder().encode(_escape_special_tokens(text)))

@@ -3,6 +3,9 @@
 import re
 from typing import Any, Dict, Literal, Optional
 
+from ..base.prompts import diff_evidence, wrap_system_prompt
+from ..base.responses import unwrap_outer_xml_response
+
 
 class CommitMessageMixin:
     """Build the commit prompt, call the model, and validate the reply."""
@@ -62,12 +65,12 @@ class CommitMessageMixin:
             "retain the ! marker before the header colon; do not put BREAKING CHANGE "
             "in the body."
         )
-        return self.commit_prompt.format(
+        return wrap_system_prompt(self.commit_prompt.format(
             message_template=message_template,
             scope_instruction=scope_instruction,
             body_instruction=body_instruction,
             footer_instruction=footer_instruction,
-        )
+        ), templates=(("commit", message_template),))
 
     def generate_commit_message(
         self, diff_content: str, system_msg: str
@@ -87,7 +90,7 @@ class CommitMessageMixin:
                 "role": "user",
                 "content": self._render_prompt_template(
                     "commitgen_user_prompt.txt",
-                    diff_content=diff_content,
+                    diff_block=diff_evidence(diff_content),
                 ),
             },
         ]
@@ -96,17 +99,18 @@ class CommitMessageMixin:
     def parse_commit_message(self, content: str) -> Optional[str]:
         """Validate the header and preserve body/footer formatting.
 
-        Only complete matching outer fences are unwrapped; never search for an
-        arbitrary inner block. Boundary blank lines and the header separator may
-        be normalized, but paragraph breaks, indentation, and footer text remain.
+        Unwrap at most one complete outer XML envelope or code fence; never search inside the response. Boundary blank lines and the header separator may be normalized, but paragraph breaks, indentation, and footer text remain.
         """
+        xml_payload = unwrap_outer_xml_response(content)
+        if xml_payload is not None:
+            content = xml_payload
         lines = content.splitlines(keepends=True)
         while lines and not lines[0].strip():
             lines.pop(0)
         while lines and not lines[-1].strip():
             lines.pop()
 
-        if len(lines) >= 2:
+        if xml_payload is None and len(lines) >= 2:
             opening = re.fullmatch(
                 r" {0,3}(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)",
                 lines[0].rstrip("\r\n"),
@@ -152,11 +156,5 @@ class CommitMessageMixin:
 
     def _build_full_prompt(self, diff_content: str, system_msg: str) -> str:
         """Build the full prompt for local mode or fallback."""
-        return (
-            system_msg
-            + "\n\n"
-            + "Code diffs:\n```\n"
-            + diff_content
-            + "\n```\n"
-            + "\nUsing the rules, template and code diffs, generate a conventional commit message.\n\nConventional commit message:"
-        )
+        user_prompt = self._render_prompt_template("commitgen_user_prompt.txt", diff_block=diff_evidence(diff_content))
+        return system_msg + "\n\n" + user_prompt

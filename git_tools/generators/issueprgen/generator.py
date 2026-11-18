@@ -17,6 +17,8 @@ from ..base import (
     success,
     warning,
 )
+from ..base.prompts import wrap_system_prompt, xml_evidence
+from ..base.responses import unwrap_outer_xml_response
 from ..utils.artifacts import resolve_output_path, save_draft
 from .azure import AZURE_PR_DESCRIPTION_INSTRUCTION, AzureLimitMixin
 from .branches import BranchResolutionMixin
@@ -76,7 +78,6 @@ class IssuePullRequestGenerator(
         )
         # Set generation_type from CLI or default to "issue"
         self.generation_type = generation_type if generation_type else "issue"
-        self.issuepr_prompt = self._load_prompt_template("issuepr_prompt.txt")
 
         # CLI parameters for issue/pr-specific options
         self._cli_generation_type = generation_type
@@ -108,7 +109,7 @@ class IssuePullRequestGenerator(
         - Non-interactive mode: uses defaults
         """
         output_directory = Path.cwd()
-        output_path = resolve_output_path(self._cli_output_path, output_directory)
+        output_path = resolve_output_path(self._cli_output_path, output_directory, validate_default=True)
         # CLI mode: add leading blank line to separate from command
         if not self._interactive:
             console.print()
@@ -131,6 +132,8 @@ class IssuePullRequestGenerator(
             workflow_pr_context = self._resolve_backmerge_hotfix_pr_context(base_branch)
         self._promotion_pr_context = promotion_context
         self._workflow_pr_context = workflow_pr_context
+        if (self.hotfix_pr and promotion_context is None) or (self._fixed_pr_title_placeholder() is not None and self._resolve_fixed_pr_title() is None):
+            raise ValueError("Cannot determine a validated target version for this fixed-title PR mode. Resolve the required managed versions or workflow context before generating content.")
 
         commit_info = self.get_commit_info(base_branch)
 
@@ -165,11 +168,9 @@ class IssuePullRequestGenerator(
             content = (
                 content
                 + "\n\n"
-                + "Here are some additional context to guide the diffs and/or commit messages. The generated content should try its best to use the context but stay faithful to the diffs and/or commit messages. Context is user intent but diffs and commit messages are the actual code changes."
-                + "\n\n"
-                + "Context:\n```\n"
-                + context
-                + "\n```"
+                + "Additional supplied context: stated facts, intent, planning values, and reported validation to use alongside the change evidence."
+                + "\n\nContext:\n"
+                + xml_evidence("context", context)
             )
 
         # Separate an answered context prompt (or fixed mode without a summary)
@@ -189,7 +190,7 @@ class IssuePullRequestGenerator(
                 f" The user's preferred limit is {settings.azure_pr_max_chars} "
                 "UTF-16 units; keep the generated PR within that limit."
             )
-            system_msg = f"{system_msg}\n\n{instruction}"
+            system_msg = wrap_system_prompt(system_msg, instruction)
 
         if self._interactive:
             self.display_generation_settings(
@@ -233,8 +234,8 @@ class IssuePullRequestGenerator(
             raise ValueError("No valid generated text found")
         parsed_source = self.parse_generated_content(raw_output)
         if not parsed_source.strip():
-            # Preserve substantial imperfect output, but never treat empty verified fences as a draft.
-            if self.generation_type != "pr" or not raw_output.strip() or raw_output.strip().startswith(("```", "~~~")):
+            # Preserve substantial imperfect output, but never promote a verified empty envelope into a draft.
+            if self.generation_type != "pr" or not raw_output.strip() or raw_output.strip().startswith(("```", "~~~")) or unwrap_outer_xml_response(raw_output) is not None:
                 raise ValueError(f"No valid {self.generation_type} content found")
             parsed_source = raw_output
             warning("Parsed PR content was empty. Using raw model output instead.")

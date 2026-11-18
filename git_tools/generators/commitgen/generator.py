@@ -93,6 +93,8 @@ class CommitGenerator(
             return
 
         diff_content = self._handle_large_diff_processing(diff_content)
+        if not diff_content.strip():
+            raise ValueError("No usable staged diff remains after filtering or truncation; no commit message was generated. Review omitted LFS/binary files or the input token budget.")
 
         if not self._handle_external_provider_workflow(diff_content):
             self._require_finished_output()

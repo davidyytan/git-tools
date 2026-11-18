@@ -1,66 +1,25 @@
-Issue Template:
-```
 ## Title: [Brief Descriptive Title]
 
 ## Problem Statement
 ### Current State
-- What is the existing situation?
-- What are the pain points?
-- Who is affected?
+[The evidenced problem or prior behavior, affected components/users, and why it matters; include supplied intent or impact when useful.]
 
 ### Desired Outcome
-- What needs to be achieved?
-- What are the success metrics?
-- What are the expected benefits?
-
-### Business Context
-- Impact metrics
-- User/system effects
-- Priority rationale
-- Timeline criticality
+[The outcome addressed by the supplied change or requirement; distinguish implemented behavior from explicitly documented outstanding work.]
 
 ## Technical Details
-### Current System
-- System behavior
-- Limitations/blockers
-- Reproduction steps (if bug)
-- Affected components
+[Include only useful, supported details; omit irrelevant subsections and avoid repeating the problem statement.]
 
-### Solution Design
-- High-level approach
-- Architecture changes
-- Technology stack updates
-- Third-party integrations
-- Performance considerations
+### Implementation Summary
+[The approach, significant component/interface/configuration/dependency changes, and observable tradeoffs. Include rationale or constraints when supplied.]
 
-### Implementation Plan
-- Component modifications
-- API updates
-- Security measures
-- Testing strategy
-- Monitoring/logging enhancements
-
-### Dependencies & Constraints
-- External services
-- Team dependencies
-- Performance requirements
-- Security requirements
-- Browser/device support
-
-## Resources
-- Relevant links
-- Related issues
-- Design documents
-- User research
+### Validation
+[Tests added/changed, supplied reproduction steps, or reported execution/results with attribution; added tests alone do not establish a run.]
 
 ## Notes
-- Open questions
-- Known limitations
-- Future considerations
-- Risk factors
+[Useful supported risks or limitations, explicitly documented outstanding work, or supplied references; omit this section when empty.]
 
-Labels: [feature/bug/security/documentation]
-Priority: [P0/P1/P2]
+Labels: [comma-separated supplied repository label names; otherwise applicable bug/enhancement/documentation]
+Priority: [P0/P1/P2; supported impact/risk, not invented urgency]
 Size: [XS/S/M/L/XL]
-Estimate: [1/2/3/4/5/6/7/8/9/10/11/12/13/14]
-```
+Estimate: [numeric 1–14 relative effort; use supplied units only; no fixed size-to-estimate conversion]

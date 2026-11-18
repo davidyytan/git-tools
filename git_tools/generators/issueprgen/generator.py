@@ -17,7 +17,7 @@ from ..base import (
     success,
     warning,
 )
-from ..base.prompts import wrap_system_prompt, xml_evidence
+from ..base.prompts import wrap_system_prompt
 from ..base.responses import unwrap_outer_xml_response
 from ..utils.artifacts import resolve_output_path, save_draft
 from .azure import AZURE_PR_DESCRIPTION_INSTRUCTION, AzureLimitMixin
@@ -164,14 +164,7 @@ class IssuePullRequestGenerator(
         else:
             context = None  # Default: no context
 
-        if context:
-            content = (
-                content
-                + "\n\n"
-                + "Additional supplied context: stated facts, intent, planning values, and reported validation to use alongside the change evidence."
-                + "\n\nContext:\n"
-                + xml_evidence("context", context)
-            )
+        content = self._append_user_context(content, context)
 
         # Separate an answered context prompt (or fixed mode without a summary)
         # from the next status/settings section. Existing panels own their gap.

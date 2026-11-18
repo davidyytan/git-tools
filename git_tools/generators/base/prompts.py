@@ -28,12 +28,17 @@ def _escape_xml(content: str) -> str:
 
 def xml_evidence(tag: str, content: str) -> str:
     """Serialize source text reversibly, without adding whitespace to its value."""
-    if tag not in {"commit", "commit_group", "diff", "context", "workflow_context"}:
+    if tag not in {"commit", "commit_group", "diff", "context", "workflow_context", "evidence", "request"}:
         raise ValueError(f"Unsupported evidence tag: {tag}")
     encoding = ""
     if not _valid_xml_text(content):
-        content = json.dumps(content, ensure_ascii=True)
-        encoding = ' encoding="json"'
+        if re.search(r"[\ud800-\udbff][\udc00-\udfff]", content):
+            # JSON strings combine adjacent surrogate escapes; code points retain them.
+            content = json.dumps([ord(char) for char in content])
+            encoding = ' encoding="json-codepoints"'
+        else:
+            content = json.dumps(content, ensure_ascii=True)
+            encoding = ' encoding="json"'
     return f"<{tag}{encoding}>{_escape_xml(content)}</{tag}>"
 
 
@@ -56,7 +61,7 @@ def split_diff_records(content: str) -> tuple[str, ...]:
 
 
 def diff_evidence(content: str) -> str:
-    return "\n\n".join(xml_evidence("diff", part) for part in split_diff_records(content))
+    return "<diffs>\n" + "\n\n".join(xml_evidence("diff", part) for part in split_diff_records(content)) + "\n</diffs>"
 
 
 def commit_evidence(messages: str | tuple[str, ...]) -> str:
@@ -69,6 +74,62 @@ def commit_evidence(messages: str | tuple[str, ...]) -> str:
 def messages_have_content(messages: str | tuple[str, ...] | None) -> bool:
     values = (messages,) if isinstance(messages, str) else messages or ()
     return any(value.strip() for value in values)
+
+
+def _is_evidence_leaf(node: ET.Element, tags: set[str]) -> bool:
+    if node.tag not in tags or len(node) or node.attrib not in ({}, {"encoding": "json"}, {"encoding": "json-codepoints"}):
+        return False
+    if node.attrib:
+        try:
+            value = json.loads(node.text or "")
+        except (ValueError, RecursionError):
+            return False
+        if node.attrib["encoding"] == "json-codepoints":
+            return isinstance(value, list) and all(type(point) is int and 0 <= point <= 0x10FFFF for point in value)
+        return isinstance(value, str)
+    return True
+
+
+def _known_user_fragments(content: str) -> bool:
+    """Recognize only the shallow source shapes emitted by runtime collectors."""
+    # Declarations, comments, CDATA, and literal CR are not emitted by our serializers.
+    # Falling back preserves their original spelling rather than letting XML normalize it.
+    if not _valid_xml_text(content) or "<!" in content or "<?" in content or "\r" in content:
+        return False
+    try:
+        root = ET.fromstring("<source>" + content + "</source>")
+    except ET.ParseError:
+        return False
+    if not len(root) or (root.text or "").strip(" \t\r\n"):
+        return False
+    for node in root:
+        if (node.tail or "").strip(" \t\r\n"):
+            return False
+        if node.tag in {"context", "workflow_context"}:
+            if not _is_evidence_leaf(node, {"context", "workflow_context"}):
+                return False
+        elif node.tag in {"diffs", "commit_messages"}:
+            if (node.text or "").strip(" \t\r\n"):
+                return False
+            if node.tag == "diffs" and not node.attrib:
+                leaf_tags = {"diff"}
+            elif node.tag == "commit_messages" and not node.attrib:
+                leaf_tags = {"commit"}
+            elif node.tag == "commit_messages" and node.attrib == {"boundaries": "unknown"} and len(node) == 1:
+                leaf_tags = {"commit_group"}
+            else:
+                return False
+            if any(not _is_evidence_leaf(leaf, leaf_tags) or (leaf.tail or "").strip(" \t\r\n") for leaf in node):
+                return False
+        else:
+            return False
+    return True
+
+
+def wrap_user_prompt(content: str, request: str) -> str:
+    """Return source XML fragments directly, followed by the trusted request verbatim."""
+    evidence = content if _known_user_fragments(content) else xml_evidence("evidence", content)
+    return evidence + "\n\n" + request
 
 
 def _system_text(tag: str, text: str, kind: str | None = None) -> str:

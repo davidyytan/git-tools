@@ -3,7 +3,7 @@
 import re
 from typing import Any, Dict, Literal, Optional
 
-from ..base.prompts import diff_evidence, wrap_system_prompt
+from ..base.prompts import diff_evidence, wrap_system_prompt, wrap_user_prompt
 from ..base.responses import unwrap_outer_xml_response
 
 
@@ -72,6 +72,11 @@ class CommitMessageMixin:
             footer_instruction=footer_instruction,
         ), templates=(("commit", message_template),))
 
+    def _build_user_prompt(self, diff_content: str) -> str:
+        """Keep the selected request separate from reversibly serialized file diffs."""
+        request = self._render_prompt_template("commitgen_user_prompt.txt")
+        return wrap_user_prompt(diff_evidence(diff_content), request)
+
     def generate_commit_message(
         self, diff_content: str, system_msg: str
     ) -> Optional[Dict[str, Any]]:
@@ -86,13 +91,7 @@ class CommitMessageMixin:
         """
         messages = [
             {"role": "system", "content": system_msg},
-            {
-                "role": "user",
-                "content": self._render_prompt_template(
-                    "commitgen_user_prompt.txt",
-                    diff_block=diff_evidence(diff_content),
-                ),
-            },
+            {"role": "user", "content": self._build_user_prompt(diff_content)},
         ]
         return self.invoke_llm(messages)
 
@@ -156,5 +155,5 @@ class CommitMessageMixin:
 
     def _build_full_prompt(self, diff_content: str, system_msg: str) -> str:
         """Build the full prompt for local mode or fallback."""
-        user_prompt = self._render_prompt_template("commitgen_user_prompt.txt", diff_block=diff_evidence(diff_content))
+        user_prompt = self._build_user_prompt(diff_content)
         return system_msg + "\n\n" + user_prompt

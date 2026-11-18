@@ -36,7 +36,7 @@ class GenerationContentMixin:
             messages = self.get_commit_messages(commit_info, individual=True)
             content_parts = []
             if messages_have_content(messages):
-                content_parts.append("Commit Messages:\n" + commit_evidence(messages))
+                content_parts.append(commit_evidence(messages))
             if fixed_context is not None:
                 content_parts.append(fixed_context.to_prompt_block())
             content = "\n\n".join(content_parts)
@@ -64,9 +64,9 @@ class GenerationContentMixin:
 
             content_parts = []
             if messages_have_content(messages):
-                content_parts.append("Commit Messages:\n" + commit_evidence(messages))
+                content_parts.append(commit_evidence(messages))
             if diff_has_content:
-                content_parts.append("Code Diffs:\n" + diff_evidence(diff_text))
+                content_parts.append(diff_evidence(diff_text))
             elif has_messages:
                 warning(
                     "No code diffs found for this range; using commit messages only."
@@ -92,7 +92,7 @@ class GenerationContentMixin:
                     return "c", fixed_context.to_prompt_block()
                 warning("No usable code diffs remain after processing")
                 return None
-            content_parts = ["Code Diffs:\n" + diff_evidence(diffs[0])]
+            content_parts = [diff_evidence(diffs[0])]
             if fixed_context is not None:
                 content_parts.append(fixed_context.to_prompt_block())
             content = "\n\n".join(content_parts)

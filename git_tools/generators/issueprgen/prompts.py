@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from git_tools.templates import get_issue_template, get_pr_template
 
-from ..base.prompts import wrap_system_prompt
+from ..base.prompts import wrap_system_prompt, wrap_user_prompt, xml_evidence
 from ..base.responses import unwrap_outer_xml_response
 
 
@@ -54,6 +54,12 @@ class PromptAssemblyMixin:
     def _build_pr_template(self) -> str:
         return get_pr_template().format(title_block=self._build_pr_title_block())
 
+    def _append_user_context(self, content: str, context: Optional[str]) -> str:
+        """Append only supplied context text, without changing existing evidence."""
+        if context is None or context == "":
+            return content
+        return content + ("\n\n" if content else "") + xml_evidence("context", context)
+
     def _build_full_prompt(self, content: str) -> str:
         """Build full prompt based on generation type."""
         prompt_files = {
@@ -62,7 +68,7 @@ class PromptAssemblyMixin:
             "issue": "issuepr_user_prompt_issue.txt",
         }
         instruction = self._load_prompt_template(prompt_files.get(self.generation_type, prompt_files["both"])).strip()
-        return f"{content}\n\n{instruction}"
+        return wrap_user_prompt(content, instruction)
 
     def generate_content(
         self, content: str, system_msg: str

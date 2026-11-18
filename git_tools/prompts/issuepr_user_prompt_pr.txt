@@ -1,3 +1,1 @@
-Generate the pull request using the rules and template above.
-
-Pull Request:
+Write the complete pull request in your next reply, without an outer wrapper or introductory text.

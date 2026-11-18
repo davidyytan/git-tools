@@ -63,6 +63,7 @@ app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
     context_settings={"help_option_names": ["-h", "--help"]},
+    epilog="Manual: docs/usage.md in the source checkout. Bare 'git-tools commit' creates a real commit; use --no-commit or -o PATH to save without committing.",
 )
 
 
@@ -853,7 +854,7 @@ def commit(
     ] = None,
     auto_commit: Annotated[
         Optional[bool],
-        typer.Option("--commit/--no-commit", help="Commit changes directly"),
+        typer.Option("--commit/--no-commit", help="Create a real commit (direct-mode default unless --output is supplied)"),
     ] = None,
     copy: Annotated[
         Optional[bool],
@@ -881,11 +882,14 @@ def commit(
 ) -> None:
     """Generate or commit a message; save COMMIT.md when not committing.
 
+    Direct mode commits by default. Use --no-commit or -o PATH to save without committing. --copy is opt-in and does not disable committing.
+
     Examples:
-        git-tools commit
-        git-tools commit --model anthropic/claude-sonnet-4
+        git-tools commit -o commit-message.txt
+        git-tools commit --no-commit
+        git-tools commit --no-commit --copy
         git-tools commit --no-scope --no-footer --commit
-        git-tools commit --workflow-kind open-release
+        git-tools commit --workflow-kind open-release --no-commit
     """
     from .generators.commitgen import CommitGenerator
 
@@ -977,9 +981,12 @@ def issue(
 ) -> None:
     """Generate issue text and save ISSUE.md (or a unique timestamped draft).
 
+    Save final Markdown locally; this does not create a hosted issue. Use -o PATH for an exact filename or --copy for an additional clipboard handoff.
+
     Examples:
         git-tools issue
-        git-tools issue --base develop
+        git-tools issue -o issue-draft.md
+        git-tools issue --base develop --copy
         git-tools issue --base main --source b
     """
     from .generators.issueprgen import IssuePullRequestGenerator
@@ -1119,9 +1126,12 @@ def pr(
 ) -> None:
     """Generate PR text and save PR.md (or a unique timestamped draft).
 
+    Save final Markdown locally; this does not open a hosted PR. Use -o PATH for an exact filename or --copy for an additional clipboard handoff.
+
     Examples:
         git-tools pr
-        git-tools pr --base develop
+        git-tools pr -o review-pr.md
+        git-tools pr --base develop --copy
         git-tools pr --base main --source b
         git-tools pr --release-pr
         git-tools pr --hotfix-pr

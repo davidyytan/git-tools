@@ -4,6 +4,8 @@ Run `git-tools` in the repository you want to work on. See the [project README](
 
 ## Choose an entry point
 
+Use `-h` or `--help` at the root or after any command for its options and examples. Help does not require provider credentials, network access, a tokenizer cache, or a Git repository. This Markdown file is the offline manual; no separate man-page installation or duplicated manual is required.
+
 ```bash
 git-tools                  # Interactive menu in a terminal
 git-tools --help            # Command overview
@@ -25,7 +27,7 @@ Bare `git-tools` requires both stdin and stdout to be terminals to open the menu
 
 | Command | What it does | Important side effects |
 | --- | --- | --- |
-| `commit` | Generates a Conventional Commit message from staged changes, or a fixed release opener | **Commits by default in direct mode**; does not push |
+| `commit` | Generates a Conventional Commit message from staged changes, or a fixed release opener | **Commits by default in direct mode**; `--no-commit` or `-o PATH` saves a message instead unless `--commit` is explicit; does not push |
 | `issue` | Generates issue text from branch changes and commits | Saves `ISSUE.md` or a unique timestamped draft; previews/optionally copies; does not create a hosted issue |
 | `pr` | Generates a PR description and title guidance | Saves `PR.md` or a unique timestamped draft; previews/optionally copies; does not submit or merge a PR |
 | `bump` | Computes the next version from Conventional Commits | Normally updates managed files, commits them, and creates a tag; does not push |
@@ -43,7 +45,7 @@ Run these in the application repository. Stage only the changes you intend to de
 git-tools log                             # Inspect history without changing the repository.
 git status --short
 git add path/to/reviewed-file             # Replace with your actual reviewed path.
-git-tools commit --no-commit --no-copy    # Preview; still sends content to your provider.
+git-tools commit --no-commit              # Save COMMIT.md; still uses your provider.
 git-tools commit                         # Generate again and CREATE a commit.
 git-tools pr --base develop               # Generate PR text; create the hosted PR yourself.
 git-tools bump --dry-run                  # Preview version changes without writing.
@@ -109,9 +111,9 @@ The command does not require `.cz.toml`, provider credentials, or an LLM. It doe
 
 Direct `commit`, `issue`, `pr`, `bump`, and `init` use CLI options and saved defaults without application prompts. `log` prints once by default; `settings KEY VALUE` works without a terminal, while bare `settings` requires one. Explicit `--interactive` requests require **both terminal stdin and stdout** and fail before generator work otherwise. `init --defaults` and `bump --get-next` remain prompt-free even with `-i`. An unexpected end of input is an error, not a successful user cancellation. Back/Esc/Ctrl+C in a real interactive session retain their existing cancellation/navigation behavior.
 
-Provider initialization/request failures, unusable generated text, direct-mode sensitive-file refusals, failed Git commits, and draft-write failures exit nonzero. A save failure leaves the preview available and still attempts the requested clipboard handoff, but never reports a saved draft. A default/best-effort clipboard failure after saving does not remove the file or invalidate the successfully saved result. A legitimate no-op (no staged changes or no commits to describe) and the documented missing-key local-prompt fallback still exit successfully without a generated artifact; scripts must check the reported output rather than infer a draft from exit status alone.
+Provider initialization/request failures, unusable generated text, direct-mode sensitive-file refusals, failed Git commits, and draft-write failures exit nonzero. A save failure leaves the preview available and still attempts the requested clipboard handoff, but never reports a saved draft. Optional clipboard failure after saving does not remove the file or invalidate the successfully saved result; direct mode never copies unless `--copy` is supplied. Without `--output`, a legitimate no-op or missing-key local-prompt fallback still exits successfully without an artifact. An explicit output request must produce its finished result or exit nonzero; it never saves a prepared prompt as a finished message or document.
 
-Redirected generated previews, commit subjects/messages, and prepared prompts are plain, unwrapped text without forced ANSI styling; interactive terminals retain styled panels. Operational summaries and diagnostics can still appear on stdout, so **stdout is not a raw-Markdown API**. Use the saved draft as the document artifact rather than redirecting an entire generation transcript to `PR.md`. For commit previews, use `--no-commit --no-copy` and inspect the plain preview; ordinary direct `commit` still commits by default.
+Redirected generated previews, commit subjects/messages, and prepared prompts are plain, unwrapped text without forced ANSI styling; interactive terminals retain styled panels. Operational summaries and diagnostics can still appear on stdout, so **stdout is not a raw-Markdown API**. Use the saved draft as the document artifact rather than redirecting an entire generation transcript to `PR.md`. For a non-committed message, use `--no-commit` to save `COMMIT.md` or `-o PATH` for a custom file; bare direct `commit` still commits by default.
 
 Application prompt suppression does not disable configured Git hooks or signing programs. Commit operations have a 30-second timeout; the bump engine bounds each Git command at 120 seconds and reports timeouts as errors. A timeout is not rollback: inspect files, staging, commits, and tags before retrying, because external work may already have partially completed.
 
@@ -125,8 +127,26 @@ These options apply to `commit`, `issue`, and `pr`. They override configured val
 | `--temp`, `-t FLOAT` | Sampling temperature; fresh default is `1.0` (settings range `0.0–2.0`; model support varies) |
 | `--max-tokens INTEGER` | Completion token budget; configured default is `32000` |
 | `--token-limit`, `-l INTEGER` | Input diff-processing budget; default is `200000` for commits and independently `200000` for issues/PRs |
+| `--output`, `-o PATH` | Save the final result to this exact, unoccupied filename; see [saved output](#saved-output) |
 
 Large inputs may be reduced during processing. Input budgets are best-effort diff-content targets using the shared `cl100k_base` estimate across providers/models, not hard caps on rendered output or exact provider token counts. Protected-file retention, minimum quotas, truncation labels, and separators can make the returned diff exceed its target; prompts and other request content add further overhead. A processing budget does not guarantee that the provider accepts that many input/output tokens. Model-specific capabilities and parameter handling are described in [configuration](configuration.md).
+
+## Saved output
+
+Files are the primary handoff for `issue`, `pr`, and non-committed `commit` results. Defaults are `ISSUE.md`, `PR.md`, and `COMMIT.md` in the invocation directory, including repository subdirectories. Occupied automatic names get a UTC-microsecond timestamp and, if needed, a collision counter. Files, directories, and normal/dangling symlinks are never overwritten.
+
+Use `--output PATH` / `-o PATH` on any of those commands for an **exact filename**. Relative paths are anchored to the invocation directory; absolute paths and custom extensions are accepted. The parent must already exist. Directory-only syntax such as `exports/` or `exports/.` is rejected rather than converted into a different filename. An occupied custom filename fails rather than silently selecting a timestamped sibling. Invalid destinations are checked before generation, and atomic publication still protects against a later race. Output inside the source repository's Git administrative directories is rejected. `-o -` is explicitly unsupported because stdout is a transcript; `-o ./-` names a literal file.
+
+```bash
+git-tools pr -o review-pr.md
+git-tools issue --output issue-draft.md
+git-tools commit -o commit-message.txt       # Output-only; does not commit
+git-tools commit --no-commit --copy          # Save COMMIT.md and also request copying
+```
+
+Drafts contain the final canonical text without panels, diagnostics, or hard wrapping. Commit files contain the parsed message or fixed subject, not a Markdown heading or Git command. Files use UTF-8, owner-only permissions (`0600`), and preserve internal whitespace/line endings, adding a final newline only when absent. Completed content is flushed and published from private same-filesystem staging using a no-overwrite hard link; unsupported filesystems fail safely rather than using an overwrite fallback. The actual absolute saved path is printed. No draft is automatically staged, committed, published, or added to ignore files.
+
+Saving is independent of `--copy` / `--no-copy`. Direct mode copies only with explicit `--copy`; interactive mode keeps its optional copy question. Save failures retain the preview and requested recovery copy, then exit nonzero. Copy failure or late copy cancellation leaves a successful file intact; later cancellation cannot mask a pending save failure. Missing input, failed/empty generation, local prompts, and cancellation before a final result create no finished draft. With explicit `-o`, normal completion without the requested finished result is an error; without it, documented no-op/local fallbacks retain exit 0.
 
 ## `commit`
 
@@ -134,8 +154,9 @@ Stage only the changes you intend to include, then generate without committing f
 
 ```bash
 git add <files>
-git-tools commit --no-commit --no-copy
-# After reviewing the input and output, generate and commit:
+git-tools commit --no-commit               # Save COMMIT.md without copying
+git-tools commit -o commit-message.txt      # Exact custom filename, no commit
+# To generate and commit explicitly:
 git-tools commit --commit
 ```
 
@@ -145,8 +166,9 @@ git-tools commit --commit
 | `--body` / `--no-body` | Saved optional multiline description/body preference; enabled by default; short summary always required |
 | `--body-style bullets\|prose` | Saved body style; `bullets` (point form) by default, or prose paragraphs |
 | `--footer` / `--no-footer` | Saved footer preference; off by default |
-| `--commit` / `--no-commit` | **Creates a real commit** with the generated message |
-| `--copy` / `--no-copy` | Automatically attempts clipboard copy when not committing; this is not a separate copy-after-commit action |
+| `--commit` / `--no-commit` | **Creates a real commit** when no output override is given; `--no-commit` saves the message instead |
+| `--output`, `-o PATH` | Output-only unless `--commit` is explicit; `--commit -o PATH` saves successfully before committing |
+| `--copy` / `--no-copy` | Direct default: off; interactive mode asks when not committing. This is not a copy-after-commit action |
 | `--force-sensitive` | Off; refuses generation when staged paths match sensitive-file rules |
 | `--workflow-kind open-release` | Off; uses the fixed subject `chore: open release` instead of an LLM |
 
@@ -158,9 +180,11 @@ git-tools commit --body --body-style prose --no-commit --no-copy
 git-tools commit --no-body --no-scope --no-footer --no-commit --no-copy
 ```
 
-`--no-copy` is honored on generated, local-prompt, and missing-key paths. Prepared local prompts are always displayed. Missing credentials do not authorize automatic copying: interactive mode asks, while direct mode copies a fallback prompt only with explicit `--copy`. Normal generated output still auto-copies in direct mode when not committing.
+`--no-copy` is honored on generated, local-prompt, and missing-key paths. Prepared local prompts are always displayed. Missing credentials do not authorize automatic copying: interactive mode asks, while direct mode copies a fallback prompt only with explicit `--copy`. Generated non-commit results are saved using the [output rules](#saved-output); direct mode never auto-copies. `--copy` alone does not disable the ordinary direct commit default: use `--no-commit --copy` or `-o PATH --copy` for a file plus clipboard handoff.
 
 Ordinary generation needs a staged diff and does not stage files for you. Sensitive-file checks match filenames/path patterns, not secret contents: they are not a substitute for reviewing the diff or using a secret scanner. In interactive mode you can confirm matched files; direct mode requires unstaging them or explicitly using `--force-sensitive`. This override also allows the selected content to enter the generation workflow.
+
+The action precedence is explicit `--commit` / `--no-commit`, then explicit output selects no commit, then the ordinary interactive decision, then the direct commit default. Answering **No** to **Commit changes directly?** saves `COMMIT.md` before the copy question; Back/Esc cancels without treating cancellation as No. With explicit `--commit -o PATH`, output failure prevents the commit, while a later Git failure retains the saved message. These rules also apply to the fixed release opener below.
 
 ### Release-opening commit
 
@@ -176,16 +200,14 @@ The fixed mode does not need an LLM. If files are staged, it commits those files
 
 ### Saved drafts: terminal and interactive use
 
-Successful generation always saves a Markdown draft in the **directory where you launched the command**, even when that is a subdirectory of the repository. PRs use `PR.md`; issues use `ISSUE.md`. If the name is occupied by a file, directory, or symlink, the command exclusively creates a new name such as `PR-20261117T150000123456Z.md`. Repeated timestamp collisions get a numeric suffix. Existing entries are never overwritten or followed. Drafts are completely written and flushed in a private staging directory before atomic, no-overwrite publication, so a failed content write never exposes a partial finished-draft filename. The destination filesystem must support hard links; otherwise saving fails explicitly and the preview/requested clipboard handoff remain available rather than using an unsafe overwrite fallback. The actual absolute saved path is printed after a successful write.
-
-Drafts contain final UTF-8 Markdown, without terminal borders, diagnostics, or hard-wrapped lines. The final PR title and any accepted length-limit rewrite are included; the original over-limit response is not separately saved. Internal code fences, indentation, Unicode, long lines, and trailing code whitespace are preserved; a final newline is added if absent. `--no-copy` disables only clipboard handling, **not saving**. Clipboard failure or cancellation at the final copy question leaves the saved draft intact. Files are created with owner-only permissions; review their contents before sharing or committing them. The tool does not stage, commit, publish, or add them to ignore files.
+Issue and PR results follow the shared [saved-output rules](#saved-output): automatic `ISSUE.md` / `PR.md` names in the invocation directory, or an exact custom destination with `-o`. The saved PR includes its resolved title and any accepted Azure rewrite, not intermediate responses. `--no-copy` never disables saving.
 
 ```bash
-git-tools pr --base develop --no-copy       # Save PR.md, or a unique timestamped alternative
-git-tools issue --base develop --no-copy    # Save ISSUE.md, with the same collision policy
+git-tools pr --base develop                       # Automatic PR.md or a unique alternative
+git-tools issue --base develop -o issue-draft.md   # Exact filename; must not already exist
 ```
 
-Failed or empty generation, cancellation before a result exists, and prepared local prompts do not create finished-draft files. Missing credentials still display a reusable prompt instead of claiming a generated draft. Internal combined generation saves the entire result as `ISSUEPR.md` with the same collision policy; there is no public `git-tools issuepr` command. Ambiguous combined sections are preserved rather than guessing which title belongs to the PR.
+Internal combined generation saves the entire result as `ISSUEPR.md` by default; there is no public `git-tools issuepr` command. Ambiguous combined sections are preserved rather than guessed or split.
 
 ### Branch inputs and options
 
@@ -202,11 +224,12 @@ git-tools pr --base main --source d --no-pr-limit
 | `--base`, `-b TEXT` | Base branch/ref or commit hash. Ordinary mode infers from checkout reflog, then `origin/HEAD`, then common branch names; fails clearly if no usable base is found |
 | `--source`, `-s TEXT` | `d`: diffs; `c`: commit messages; `b`: both. Uses the saved source preference, initially `b`; an unrecognized explicit value falls back to `b` |
 | `--context`, `-c TEXT` | Additional intent/context; one optional field in interactive mode |
-| `--copy` / `--no-copy` | Override clipboard handling for this run; otherwise interactive mode asks and direct generated output auto-copies |
+| `--copy` / `--no-copy` | Direct default: no copy; interactive mode asks. Saving is independent of this choice |
+| `--output`, `-o PATH` | Exact destination for final Markdown; omitted output uses the automatic draft name |
 
 The comparison uses committed branch history, not a substitute for `commit`'s staged-diff workflow. Resolution is read-only: it does not fetch or switch branches. Explicit bare names prefer an existing local branch; a remote-tracking ref is used when the local branch is absent. Use `--base origin/develop` to request that ref explicitly. Inferred defaults prefer remote-tracking refs and skip the current branch; ordinary mode also avoids equal-HEAD comparisons, while fixed modes can use a distinct target at the same tip for context-only output. Invalid explicit refs fail rather than silently changing the base. The exact resolved ref is retained for version lookup and comparison; commit messages come from the same merge-base-to-HEAD range as the summary, and diffs retain merge-base semantics (`<base>...HEAD`). Keep target refs current and inspect the displayed summary.
 
-Ordinary generation needs commits to describe. Fixed workflow modes can use validated repository/version context when no unique commits are present. Output parsing removes only a verified matching outer code fence; unfenced or partial content is preserved. PR clipboard text matches the parsed preview. Issue/both output retains its existing raw-response clipboard format for compatibility. Prepared local prompts are always displayed; missing-key fallback follows the same explicit-copy rule as `commit`.
+Ordinary generation needs commits to describe. Fixed workflow modes can use validated repository/version context when no unique commits are present. Output parsing removes at most one verified matching outer code fence or XML-style reply envelope. It does not search inside a document or recursively peel wrappers; ordinary HTML structures and incomplete or ambiguous boundaries are preserved. PR clipboard text matches the parsed preview. Issue/both output retains its existing raw-response clipboard format for compatibility. Prepared local prompts are always displayed; missing-key fallback follows the same explicit-copy rule as `commit`.
 
 ### PR-only options
 
@@ -338,8 +361,8 @@ Use **Up/Down** and **Enter** for selections, and type into text prompts/searcha
 | Menu choice | Practical sequence |
 | --- | --- |
 | **init** | Confirm initial version and tag format, select zero-major policy when asked, review the summary, then answer **Write Commitizen config now?**. Continue with the platform bootstrap guide. |
-| **commit** | Stage files first. Select **Conventional Commit** or **chore: open release**, review warnings/input using saved budget and commit-format preferences. Inspect the result before **Commit changes directly?**; decline to copy/use the text yourself. |
-| **issue** / **pr** | Check out the source and refresh target refs first. Select the PR mode when applicable; confirm base/version and inspect the branch summary. Saved source/budget/PR-limit preferences apply automatically; enter optional additional context. Inspect/copy the result for your hosting UI. |
+| **commit** | Stage files first. Select **Conventional Commit** or **chore: open release**, review warnings/input using saved budget and commit-format preferences. Inspect the result before **Commit changes directly?**; decline to save `COMMIT.md`, then optionally copy it. |
+| **issue** / **pr** | Check out the source and refresh target refs first. Select the PR mode when applicable; confirm base/version and inspect the branch summary. Saved source/budget/PR-limit preferences apply automatically; enter optional additional context. Inspect the saved draft and optionally copy it for your hosting UI. |
 | **bump** | Inspect repository context; select increment, release channel, and prerelease mode when shown. Initial-history permission is conditional. Review the computed version, files and effective signing, then Preview / Apply / Cancel; Apply reuses the reviewed plan on an empty index. |
 
 For ordinary content generation, answer **Yes** to **Generate … using external providers?** to use the provider, main model, and options already configured in `git-tools settings`. Provider/model parameters, input budgets, commit format, source, and PR-limit preferences are reused without routine reconfiguration. CLI flags override saved values for that invocation only. Modes, base/version/context, external-send consent, and final commit/write actions remain task-specific decisions.

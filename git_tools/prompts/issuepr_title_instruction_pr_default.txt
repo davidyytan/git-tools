@@ -4,7 +4,8 @@ Title guidance:
 - Use a standard type such as `feat`, `fix`, `refactor`, `perf`, `style`, `docs`, `chore`, `test`, `build`, `ci`, or `revert`.
 - Include an optional scope when it adds clarity.
 - Use `!` for breaking changes when justified by the implementation.
-- Prefer `style` for formatting-only or text-only changes with no behavioral impact.
-- Prefer `chore` for maintenance or operational changes that are not user-facing product changes.
+- Prefer the most specific type: `docs` for documentation-only changes, `ci` for workflow/pipeline changes, and `build` for dependency/build-system changes.
+- Prefer `style` for formatting-only or generic text-only changes outside documentation, with no behavioral impact.
+- Prefer `chore` for maintenance, repo housekeeping, or release metadata changes not covered by a more specific type.
 - Do not prefix the title with `PR:`, `Title:`, brackets, or extra commentary.
 - Examples: `feat(auth): add SSO login`, `fix(cli): handle empty staged diff`, `style: add line to abc.txt`, `chore: update release metadata`, `refactor(config): simplify provider loading`, `feat(api)!: remove legacy endpoint`.

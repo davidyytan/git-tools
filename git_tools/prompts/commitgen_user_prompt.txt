@@ -1,7 +1,5 @@
 Code Diffs:
-```
-{diff_content}
-```
+{diff_block}
 
 Using the rules, template and code diffs, generate a conventional commit message.
 

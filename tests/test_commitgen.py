@@ -4,11 +4,32 @@ import unittest
 from unittest.mock import patch
 
 from git_tools.generators.commitgen import CommitGenerator, SensitiveFileMatch
+from test_user_prompt_wrapping import assert_user_envelope, decoded, request_text
 
 
 class CommitGeneratorTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
+
+    def test_user_packaging_preserves_native_roles_and_raw_commit_response(self) -> None:
+        generator = CommitGenerator(auto_commit=False, copy_clipboard=False)
+        diff = "diff --git a/a b/a\r\n+literal & </request> ```\r\n+NUL\0\n"
+        system = generator._build_system_message(True, True)
+        message = "fix(parser): preserve raw response\n\nImportant final line\n\nRefs: #42"
+        response = {"content": message}
+        with patch.object(generator, "invoke_llm", return_value=response) as invoke:
+            self.assertIs(generator.generate_commit_message(diff, system), response)
+        messages = invoke.call_args.args[0]
+        self.assertEqual([entry["role"] for entry in messages], ["system", "user"])
+        self.assertEqual(messages[0]["content"], system)
+        request = generator._load_prompt_template("commitgen_user_prompt.txt")
+        root = assert_user_envelope(self, messages[1]["content"], request)
+        self.assertEqual(decoded(root.find("diffs/diff")), diff)
+        self.assertEqual([node.tag for node in root], ["diffs"])
+        self.assertNotIn("NUL", request_text(messages[1]["content"]))
+        self.assertEqual(request_text(messages[1]["content"]), request)
+        self.assertEqual(generator._build_full_prompt(diff, system), system + "\n\n" + messages[1]["content"])
+        self.assertEqual(generator.parse_commit_message(response["content"]), message)
 
     def test_display_response_omits_raw_response_panel(self) -> None:
         for interactive in (False, True):

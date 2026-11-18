@@ -6,10 +6,13 @@ from contextlib import ExitStack
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
 
+from git_tools.generators.base.prompts import commit_evidence
 from git_tools.generators.bumpgen import BumpError, Version
 from git_tools.generators.issueprgen import IssuePullRequestGenerator
 from git_tools.generators.issueprgen.prompts import PromptAssemblyMixin
+from test_user_prompt_wrapping import assert_user_envelope, request_text
 
 
 class PrFenceParsingTests(unittest.TestCase):
@@ -265,7 +268,7 @@ class PrOutputHandoffSafetyTests(unittest.TestCase):
             for name, value in (
                 ("get_default_branch", "develop"),
                 ("get_commit_info", {"base_branch": "develop", "commit_count": 1}),
-                ("_collect_generation_content", ("c", "Commit Messages:\nfeat: preserve")),
+                ("_collect_generation_content", ("c", commit_evidence(("feat: preserve",)))),
                 ("select_provider", "openrouter"),
                 ("ensure_api_key_configured", True),
                 ("select_model_params", ("test-model", 0.0, 1000)),
@@ -283,7 +286,21 @@ class PrOutputHandoffSafetyTests(unittest.TestCase):
             # Any unexpected side effect is an immediate test failure.
             for name in ("subprocess.check_output", "subprocess.run", "pyperclip.copy"):
                 stack.enter_context(patch(name, side_effect=AssertionError(name)))
+            generated = generator.generate_content
             generator.generate_issue_pullrequest()
+        content, system = generated.call_args.args
+        prompt = generator._build_full_prompt(content)
+        request = generator._load_prompt_template(f"issuepr_user_prompt_{generation_type}.txt").strip()
+        root = assert_user_envelope(self, prompt, request)
+        self.assertEqual(root.tag, "sources")
+        self.assertEqual(root.findtext("commit_messages/commit"), "feat: preserve")
+        self.assertEqual(root.findall("evidence"), [])
+        self.assertEqual(root.findall(".//request"), [])
+        self.assertEqual(request_text(prompt), request)
+        self.assertEqual(root.findall(".//system_prompt"), [])
+        self.assertEqual(ET.fromstring(system).tag, "system_prompt")
+        self.assertFalse((root.text or "").strip())
+        self.assertTrue(all(not (node.tail or "").strip() for node in root))
         panels = [
             call.args[0] for call in printed.print.call_args_list
             if call.args and hasattr(call.args[0], "renderable")

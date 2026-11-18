@@ -16,6 +16,7 @@ from git_tools.generators.base.prompts import PROMPTS_DIR, commit_evidence, diff
 from git_tools.generators.commitgen import CommitGenerator
 from git_tools.generators.issueprgen import IssuePullRequestGenerator, PromotionPrContext
 from test_output_files import boundaries
+from test_user_prompt_wrapping import assert_user_envelope, request_text
 
 
 LFS_DIFF = "diff --git a/object.bin b/object.bin\n--- a/object.bin\n+++ b/object.bin\n@@ -0,0 +1,3 @@\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:abc\n+size 123\n"
@@ -118,9 +119,15 @@ class PromptGroundingTests(unittest.TestCase):
         self.assertIn(raw, user)
         block = diff_evidence(raw)
         self.assertIn(block, user)
-        self.assertEqual(ET.fromstring(block).text, raw)
-        self.assertTrue(block.startswith("<diff>"))
-        self.assertTrue(block.endswith("</diff>"))
+        request = generator._load_prompt_template("commitgen_user_prompt.txt")
+        root = assert_user_envelope(self, user, request)
+        self.assertEqual(root.tag, "sources")
+        self.assertEqual(root.findtext("diffs/diff"), raw)
+        self.assertEqual(request_text(user), request)
+        self.assertEqual(root.findall(".//request"), [])
+        self.assertEqual(root.findall("evidence"), [])
+        self.assertEqual(ET.fromstring(block).tag, "diffs")
+        self.assertEqual(ET.fromstring(block).findtext("diff"), raw)
 
     def test_collectors_preserve_markdown_source_inside_xml_records(self):
         generator = IssuePullRequestGenerator(generation_type="pr", input_source="b")
@@ -129,8 +136,19 @@ class PromptGroundingTests(unittest.TestCase):
         with patch.object(generator, "get_commit_messages", return_value=messages), patch.object(generator, "get_branch_diffs", return_value=(diff, [])), patch.object(generator, "get_diff_processing_params", return_value=1000), patch.object(generator, "display_quota_breakdown"):
             source, content = generator._collect_generation_content({"commit_count": 1, "base_branch": "develop"}, None)
         self.assertEqual(source, "b")
-        self.assertIn("Commit Messages:\n" + commit_evidence(messages), content)
-        self.assertIn("Code Diffs:\n" + diff_evidence(diff), content)
+        prompt = generator._build_full_prompt(content)
+        request = generator._load_prompt_template("issuepr_user_prompt_pr.txt").strip()
+        root = assert_user_envelope(self, prompt, request)
+        self.assertEqual(root.tag, "sources")
+        self.assertEqual(request_text(prompt), request)
+        self.assertEqual(root.find("commit_messages").get("boundaries"), "unknown")
+        self.assertEqual(root.findtext("commit_messages/commit_group"), messages)
+        self.assertEqual(root.findtext("diffs/diff"), diff)
+        self.assertEqual(root.findall("evidence"), [])
+        self.assertIn(commit_evidence(messages), content)
+        self.assertIn(diff_evidence(diff), content)
+        self.assertFalse((root.text or "").strip())
+        self.assertTrue(all(not (node.tail or "").strip() for node in root))
 
     def test_focus_is_conditional_when_requested_evidence_is_missing(self):
         for messages, diff in (("fix: guard empty input", ""), ("", "diff --git a/a b/a\n+guard")):
@@ -230,13 +248,24 @@ class PromptGroundingTests(unittest.TestCase):
                 with patch.object(IssuePullRequestGenerator, "get_commit_messages", return_value=(message,)):
                     generator.generate_issue_pullrequest()
                 content, system = methods[IssuePullRequestGenerator, "generate_content"].call_args.args
-                self.assertIn(report, content)
+                prompt = generator._build_full_prompt(content)
+                request = generator._load_prompt_template(f"issuepr_user_prompt_{kind}.txt").strip()
+                root = assert_user_envelope(self, prompt, request)
+                self.assertEqual(root.tag, "sources")
+                self.assertEqual(root.findall("evidence"), [])
+                self.assertEqual(root.findall(".//request"), [])
+                self.assertEqual(request_text(prompt), request)
+                self.assertNotIn(report, request_text(prompt))
+                self.assertNotIn("Additional supplied context:", content)
+                self.assertNotIn("\nContext:\n", content)
                 if location == "context":
-                    self.assertIn("reported validation to use alongside the change evidence", content)
+                    self.assertEqual(root.findtext("context"), report)
+                    self.assertEqual(root.findtext("commit_messages/commit"), message)
                 else:
-                    self.assertIn("<commit>", content)
-                    self.assertIn("Intent: preserve occupied drafts.", content)
-                    self.assertIn("Outstanding follow-up: profile larger ranges.", content)
+                    self.assertEqual(root.findtext("commit_messages/commit"), message)
+                    self.assertIn(report, root.findtext("commit_messages/commit"))
+                    self.assertIn("Intent: preserve occupied drafts.", root.findtext("commit_messages/commit"))
+                    self.assertIn("Outstanding follow-up: profile larger ranges.", root.findtext("commit_messages/commit"))
                 rules = ET.fromstring(system).findtext("rules")
                 self.assertIn("Include supplied intent, rationale, reported results, and follow-up work", rules)
                 self.assertIn("attribute reported validation, measurements, and release/deployment outcomes without implying independent verification", rules)

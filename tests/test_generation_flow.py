@@ -6,6 +6,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from xml.etree import ElementTree as ET
 
 import typer
 from typer.testing import CliRunner
@@ -16,6 +17,7 @@ from git_tools.navigation import NavigationBack
 from git_tools.generators.base import BaseGenerator
 from git_tools.generators.commitgen import CommitGenerator
 from git_tools.generators.issueprgen import IssuePullRequestGenerator
+from test_user_prompt_wrapping import assert_user_envelope, decoded, request_text
 
 
 COMMIT_INFO = {
@@ -225,15 +227,27 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
             generator.generate_issue_pullrequest()
         self.assertEqual(questions, ["Select PR mode:", "Additional context (optional; leave blank to skip):", "Generate content using external providers?", "Copy to clipboard?"])
         diffs.assert_called_once_with("origin/develop", 7654)
-        self.assertIn("user intent", generate.call_args.args[0])
-        self.assertIn("stated facts, intent, planning values, and reported validation", generate.call_args.args[0])
+        content = generate.call_args.args[0]
+        prompt = generator._build_full_prompt(content)
+        request = generator._load_prompt_template("issuepr_user_prompt_pr.txt").strip()
+        root = assert_user_envelope(self, prompt, request)
+        self.assertEqual(root.tag, "sources")
+        self.assertEqual(request_text(prompt), request)
+        self.assertEqual(root.findtext("context"), "user intent")
+        self.assertEqual(root.findtext("commit_messages/commit_group"), "feat: first")
+        self.assertEqual(root.findtext("diffs/diff"), "diff content")
+        self.assertEqual(root.findall("evidence"), [])
+        self.assertNotIn("Additional supplied context:", content)
+        self.assertNotIn("\nContext:\n", content)
+        self.assertFalse((root.text or "").strip())
+        self.assertTrue(all(not (node.tail or "").strip() for node in root))
         self.assertIn("attribute reported validation, measurements, and release/deployment outcomes without implying independent verification", generate.call_args.args[1])
         self.assertIn("Do not infer omitted, binary, or truncated content", generate.call_args.args[1])
         self.assertNotIn("commit messages are the actual code changes", generate.call_args.args[0])
         clipboard.assert_not_called()
 
     def test_cli_context_including_empty_string_skips_context_prompt(self):
-        for context in ("", "explicit context"):
+        for context in ("", "explicit context", "  literal & </request>\r\nunchanged  "):
             with self.subTest(context=context):
                 generator = IssuePullRequestGenerator(generation_type="issue", interactive=True, context=context, copy_clipboard=False)
                 with contextlib.ExitStack() as stack:
@@ -242,10 +256,41 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
                     text = stack.enter_context(patch.object(generator, "prompt_text"))
                     generator.generate_issue_pullrequest()
                 text.assert_not_called()
+                content = generate.call_args.args[0]
+                self.assertEqual(content, generator._append_user_context("input content", context))
+                prompt = generator._build_full_prompt(content)
+                request = generator._load_prompt_template("issuepr_user_prompt_issue.txt").strip()
+                root = assert_user_envelope(self, prompt, request)
+                self.assertEqual(request_text(prompt), request)
+                self.assertEqual(decoded(root.find("evidence")), content)
+                self.assertEqual(root.findall("context"), [], "A plain collector override must remain literal, not be heuristically split")
                 if context:
-                    self.assertIn(context, generate.call_args.args[0])
+                    context_node = ET.fromstring(content[len("input content"):].strip())
+                    self.assertEqual(context_node.tag, "context")
+                    self.assertEqual(decoded(context_node), context)
+                    self.assertNotIn(context, request_text(prompt))
                 else:
-                    self.assertEqual(generate.call_args.args[0], "input content")
+                    self.assertEqual(content, "input content")
+
+    def test_absent_and_interactive_blank_context_add_no_evidence_node(self):
+        for interactive, answer in ((False, None), (True, ""), (True, " \t\r\n ")):
+            with self.subTest(interactive=interactive, answer=answer), contextlib.ExitStack() as stack:
+                generator = IssuePullRequestGenerator(generation_type="issue", interactive=interactive, context=None, copy_clipboard=False)
+                _, _, generate = self._issue_boundaries(stack, generator)
+                stack.enter_context(patch.object(generator, "prompt_confirm", return_value=True))
+                text = stack.enter_context(patch.object(generator, "prompt_text", return_value=answer))
+                generator.generate_issue_pullrequest()
+                self.assertEqual(generate.call_args.args[0], "input content")
+                prompt = generator._build_full_prompt(generate.call_args.args[0])
+                request = generator._load_prompt_template("issuepr_user_prompt_issue.txt").strip()
+                root = assert_user_envelope(self, prompt, request)
+                self.assertEqual(request_text(prompt), request)
+                self.assertEqual(root.findall("context"), [])
+                self.assertEqual(decoded(root.find("evidence")), "input content")
+                if interactive:
+                    text.assert_called_once_with("Additional context (optional; leave blank to skip)")
+                else:
+                    text.assert_not_called()
 
     def test_validation_errors_propagate_unchanged_before_generation(self):
         for source in ("base", "workflow"):

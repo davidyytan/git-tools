@@ -53,6 +53,44 @@ class XmlResponseTests(unittest.TestCase):
         message = "fix: preserve inner XML\n\n<reply>literal body</reply>\n\nRefs: #42  "
         self.assertEqual(CommitGenerator(auto_commit=False).parse_commit_message("<commit>\n" + message + "\n</commit>"), message)
 
+    def test_legacy_html_roots_are_document_markup_not_reply_envelopes(self):
+        document = IssuePullRequestGenerator(generation_type="pr", copy_clipboard=False)
+        paired = "acronym applet big blink center content dir font frameset listing marquee menuitem multicol nobr noembed noframes plaintext rb rtc shadow strike tt xmp".split()
+        void = "basefont bgsound command frame image isindex keygen nextid param spacer".split()
+        values = [f'<{tag} class="legacy">Body &amp; <example>literal XML</example></{tag}>' for tag in paired]
+        values.extend(f'<{tag} class="legacy"/>' for tag in void)
+        for raw in values:
+            with self.subTest(raw=raw):
+                self.assertIsNone(unwrap_outer_xml_response(raw))
+                self.assertEqual(document.parse_generated_content(raw), raw)
+        for raw in ('<CENTER><img src="diagram.svg" alt="Architecture"></CENTER>', " \n  <xMp>\r\n<response><example>literal XML &amp; &#10;</example></response>\r\n</xMp>  \t\n"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(unwrap_outer_xml_response(raw))
+                self.assertEqual(document.parse_generated_content(raw), raw)
+                self.assertEqual(document.parse_generated_content("<output>\n" + raw + "\n</output>"), raw)
+
+    def test_generic_xml_envelopes_keep_existing_single_layer_behavior(self):
+        document = IssuePullRequestGenerator(generation_type="pr", copy_clipboard=False)
+        payload = "  <response>Body &amp; &#10; <xmp><example>literal XML</example></xmp></response>  "
+        for tag in ("output", "template", "response", "result", "draft", "reply", "commit", "payload", "custom-element", "centered", "xmp-example"):
+            with self.subTest(tag=tag):
+                raw = f"<{tag}>\r\n{payload}\r\n</{tag}>"
+                self.assertEqual(unwrap_outer_xml_response(raw), payload)
+                self.assertEqual(document.parse_generated_content(raw), payload)
+
+    def test_legacy_html_documents_are_saved_verbatim(self):
+        values = ('<center><img src="diagram.svg" alt="Architecture"></center>', '<xmp><example>literal XML example</example></xmp>', '  <center class="layout"><img src="diagram.svg" alt="Architecture"></center>  \t', '  <xMp class="sample">\r\n<output><example>literal XML &amp; &#10;</example></output>\r\n</xMp>  \t')
+        for command in ("pr", "issue"):
+            for raw in values:
+                with self.subTest(command=command, raw=raw), tempfile.TemporaryDirectory() as tmp, chdir(tmp), boundaries() as (methods, run, copy):
+                    methods[IssuePullRequestGenerator, "generate_content"].return_value = {"content": raw}
+                    result = CliRunner().invoke(app, [command, "--output", "legacy.html"])
+                    self.assertEqual(result.exit_code, 0, result.output)
+                    self.assertEqual(Path("legacy.html").read_bytes(), (raw + "\n").encode("utf-8"))
+                    self.assertEqual(list(Path.cwd().iterdir()), [Path.cwd() / "legacy.html"])
+                    run.assert_not_called()
+                    copy.assert_not_called()
+
     def test_empty_xml_replies_cannot_be_saved_or_repaired_into_drafts(self):
         for command in ("commit", "pr", "issue"):
             for raw in ("<response></response>", "<response>\n \n</response>", "<response/>"):

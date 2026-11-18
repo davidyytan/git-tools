@@ -13,6 +13,7 @@ from git_tools.generators.issueprgen import (
     WorkflowPrContext,
     count_ado_chars,
 )
+from test_user_prompt_wrapping import assert_user_envelope, request_text
 
 
 class IssuePullRequestPromptTests(unittest.TestCase):
@@ -55,18 +56,26 @@ class IssuePullRequestPromptTests(unittest.TestCase):
             for action in forbidden:
                 action.assert_not_called()
 
-    def test_user_reminders_are_generic_and_only_the_selected_file_is_loaded(self) -> None:
+    def test_user_requests_are_task_specific_and_only_the_selected_file_is_loaded(self) -> None:
         tasks = {
-            "pr": "Generate the pull request using the rules and template above.\n\nPull Request:",
-            "issue": "Generate the issue using the rules and template above.\n\nIssue:",
-            "both": "Generate the issue and pull request using the rules and templates above.\n\nIssue and Pull Request:",
+            "pr": "Write the complete pull request in your next reply, without an outer wrapper or introductory text.",
+            "issue": "Write the complete issue in your next reply, without an outer wrapper or introductory text.",
+            "both": "Write the complete pull request followed by the issue in your next reply, without an outer wrapper or introductory text.",
         }
         for kind, task in tasks.items():
             with self.subTest(kind=kind):
                 generator = IssuePullRequestGenerator(generation_type=kind, interactive=False)
                 with patch.object(generator, "_load_prompt_template", wraps=generator._load_prompt_template) as load:
                     prompt = generator._build_full_prompt("Sample input")
-                self.assertEqual(prompt, "Sample input\n\n" + task)
+                root = assert_user_envelope(self, prompt, task)
+                self.assertEqual(root.tag, "sources")
+                self.assertEqual([node.tag for node in root], ["evidence"])
+                self.assertEqual(request_text(prompt), task)
+                self.assertEqual(prompt, "<evidence>Sample input</evidence>\n\n" + task)
+                self.assertEqual(root.findtext("evidence"), "Sample input")
+                self.assertFalse((root.text or "").strip())
+                self.assertTrue(all(not (node.tail or "").strip() for node in root))
+                self.assertTrue(all(len(node) == 0 for node in root))
                 load.assert_called_once_with(f"issuepr_user_prompt_{kind}.txt")
 
     def test_system_prompt_selection_uses_current_mode_not_constructor_default(self) -> None:
@@ -1023,8 +1032,17 @@ Issue: #123
             generator.generate_issue_pullrequest()
 
         content_arg = generate_content.call_args.args[0]
-        self.assertIn("Commit Messages:", content_arg)
-        self.assertNotIn("Code Diffs:", content_arg)
+        prompt = generator._build_full_prompt(content_arg)
+        request = generator._load_prompt_template("issuepr_user_prompt_pr.txt").strip()
+        root = assert_user_envelope(self, prompt, request)
+        self.assertEqual(root.tag, "sources")
+        self.assertEqual(request_text(prompt), request)
+        self.assertEqual(root.find("commit_messages").get("boundaries"), "unknown")
+        self.assertEqual(root.findtext("commit_messages/commit_group"), "chore: open release")
+        self.assertEqual(root.findall("diffs"), [])
+        self.assertEqual(root.findall("evidence"), [])
+        self.assertFalse((root.text or "").strip())
+        self.assertTrue(all(not (node.tail or "").strip() for node in root))
         warning_mock.assert_any_call(
             "No code diffs found for this range; using commit messages only."
         )

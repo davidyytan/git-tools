@@ -8,6 +8,7 @@ from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 from git_tools.generators.commitgen import CommitGenerator
+from test_user_prompt_wrapping import assert_user_envelope, decoded, request_text
 
 
 FORMATS = tuple(product((False, True), (False, True), (False, True), ("bullets", "prose")))
@@ -62,12 +63,19 @@ class CommitFormatPromptTests(unittest.TestCase):
                         self.assertNotIn(instruction, system)
                     self.assertEqual("and any permitted, supported footer(s)." in system, footer)
 
-                diff = "diff --git a/example.py b/example.py\n+preserve_format()"
+                diff = "diff --git a/example.py b/example.py\r\n+preserve_format() & <literal> &#13; </request>\r\n+```\n+NUL\0 RS\x1e\n"
                 with patch.object(generator, "handoff_local_prompt") as local:
                     generator._handle_local_mode(diff, system)
                 local_prompt = local.call_args.args[0]
                 self.assertTrue(local_prompt.startswith(system + "\n\n"))
-                self.assertIn(diff, local_prompt)
+                user = local_prompt[len(system + "\n\n"):]
+                request = generator._render_prompt_template("commitgen_user_prompt.txt")
+                root = assert_user_envelope(self, user, request)
+                self.assertEqual([node.tag for node in root], ["diffs"])
+                self.assertEqual(request, "Write the complete Conventional Commit message in your next reply, without an outer wrapper or introductory text.\n")
+                self.assertEqual(request_text(user), request)
+                self.assertEqual(decoded(root.find("diffs/diff")), diff)
+                self.assertEqual(root.find("diffs/diff").get("encoding"), "json")
                 local.assert_called_once_with(local_prompt, allow_auto=True)
 
                 response = {"content": "fix: preserve format"}
@@ -76,8 +84,12 @@ class CommitFormatPromptTests(unittest.TestCase):
                 messages = invoke.call_args.args[0]
                 self.assertEqual(messages[0], {"role": "system", "content": system})
                 self.assertEqual(messages[1]["role"], "user")
-                self.assertIn(diff, messages[1]["content"])
-                self.assertIn("generate a conventional commit message", messages[1]["content"])
+                self.assertEqual(messages[1]["content"], user)
+                provider_root = assert_user_envelope(self, messages[1]["content"], request)
+                self.assertEqual(decoded(provider_root.find("diffs/diff")), diff)
+                self.assertEqual(request_text(messages[1]["content"]), generator._load_prompt_template("commitgen_user_prompt.txt"))
+                self.assertEqual(provider_root.findall(".//request"), [])
+                self.assertNotIn("preserve_format", request_text(messages[1]["content"]))
 
     def test_effective_format_defaults_and_overrides_in_both_modes(self):
         for interactive, values, override in product((False, True), FORMATS, (False, True)):

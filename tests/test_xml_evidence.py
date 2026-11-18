@@ -12,6 +12,8 @@ from git_tools.generators.issueprgen import IssuePullRequestGenerator
 
 def decoded(node):
     text = node.text or ""
+    if node.get("encoding") == "json-codepoints":
+        return "".join(chr(point) for point in json.loads(text))
     return json.loads(text) if node.get("encoding") == "json" else text
 
 
@@ -37,6 +39,24 @@ class XmlEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             xml_evidence("diff><instructions", "source")
 
+    def test_adjacent_literal_surrogates_do_not_merge_with_normal_unicode(self):
+        pair = chr(0xD83D) + chr(0xDE00)
+        self.assertNotEqual(pair, "😀")
+        values = (pair, chr(0xD800) + chr(0xDC00), chr(0xDBFF) + chr(0xDFFF), "Résumé 😀 & </context>\r\n" + pair + " mixed NUL\0 lone " + chr(0xD800))
+        for tag in ("commit", "commit_group", "diff", "context", "workflow_context", "evidence", "request"):
+            for value in values:
+                with self.subTest(tag=tag, value=repr(value)):
+                    node = ET.fromstring(xml_evidence(tag, value))
+                    self.assertEqual(node.get("encoding"), "json-codepoints")
+                    self.assertEqual(json.loads(node.text), [ord(char) for char in value])
+                    self.assertEqual(decoded(node), value)
+                    self.assertEqual(tuple(map(ord, decoded(node))), tuple(map(ord, value)))
+        for value, encoding in (("Résumé 😀", None), ("Résumé 😀 NUL\0", "json"), ("😀 lone " + chr(0xD800), "json")):
+            with self.subTest(value=repr(value)):
+                node = ET.fromstring(xml_evidence("context", value))
+                self.assertEqual(node.get("encoding"), encoding)
+                self.assertEqual(decoded(node), value)
+
     def test_each_commit_is_one_record_without_blank_line_guesses(self):
         messages = ("\nfix: first\r\n\r\nFirst paragraph.\n\nSecond paragraph.\n", "docs: second\n\n```text\n</commit> & data\n```\n\x1e")
         root = ET.fromstring(commit_evidence(messages))
@@ -55,9 +75,12 @@ class XmlEvidenceTests(unittest.TestCase):
         parts = split_diff_records(content)
         self.assertEqual(parts, (first, second))
         self.assertEqual("".join(parts), content)
-        nodes = list(ET.fromstring("<records>" + diff_evidence(content) + "</records>"))
-        self.assertEqual([node.tag for node in nodes], ["diff", "diff"])
-        self.assertEqual(tuple(decoded(node) for node in nodes), parts)
+        root = ET.fromstring(diff_evidence(content))
+        self.assertEqual(root.tag, "diffs")
+        self.assertFalse((root.text or "").strip())
+        self.assertEqual([node.tag for node in root], ["diff", "diff"])
+        self.assertTrue(all(not (node.tail or "").strip() for node in root))
+        self.assertEqual(tuple(decoded(node) for node in root), parts)
 
     def test_truncation_annotations_stay_with_their_file_even_with_cut_headers(self):
         first = "diff --git a/full b/full\n+full\n\n"
@@ -68,6 +91,10 @@ class XmlEvidenceTests(unittest.TestCase):
                 parts = split_diff_records(content)
                 self.assertEqual(parts, expected)
                 self.assertEqual("".join(parts), content)
+                root = ET.fromstring(diff_evidence(content))
+                self.assertEqual(root.tag, "diffs")
+                self.assertEqual(tuple(decoded(node) for node in root.findall("diff")), expected)
+                self.assertTrue(all(node.tag == "diff" for node in root))
 
     def test_individual_git_records_preserve_messages_and_record_separator_characters(self):
         generator = IssuePullRequestGenerator(generation_type="pr", copy_clipboard=False)

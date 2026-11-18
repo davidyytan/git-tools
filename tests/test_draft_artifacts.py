@@ -96,12 +96,15 @@ class DraftWriterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = True
-            def racing_link(source, destination):
+            def racing_link(source, destination, **kwargs):
                 nonlocal first
                 if first:
                     first = False
-                    Path(destination).write_text("other process")
-                return real_link(source, destination)
+                    target = Path(destination)
+                    if not target.is_absolute():
+                        target = root / target
+                    target.write_text("other process")
+                return real_link(source, destination, **kwargs)
             with patch("git_tools.generators.utils.artifacts.os.link", side_effect=racing_link):
                 path = save_draft(BODY, "pr", root)
             self.assertNotEqual(path.name, "PR.md")

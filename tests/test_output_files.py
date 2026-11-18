@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from git_tools.cli import app
 from git_tools.generators.commitgen import CommitGenerator
 from git_tools.generators.issueprgen import IssuePullRequestGenerator
+from git_tools.generators.utils import artifacts as artifact_writer
 from git_tools.generators.utils.artifacts import resolve_output_path, save_draft
 from git_tools.navigation import NavigationBack
 
@@ -23,6 +24,16 @@ from git_tools.navigation import NavigationBack
 MESSAGE = "feat(output): preserve messages\n\n- Résumé 😀 [literal] :smile:\n  continued detail  \n\nRefs: #42  "
 DOCUMENT = "## Title: feat(output): preserve drafts\n\nBody [literal] :warning: 😀\n\n```python\n  print('kept')  \n```\nLAST  "
 RAW_DOCUMENT = f"````markdown\n{DOCUMENT}\n````"
+
+
+def bare_metadata(root, storage="refs"):
+    """Create only a structural metadata fixture, never a real Git repository."""
+    root.mkdir(parents=True)
+    (root / "HEAD").write_text("ref: refs/heads/main\n")
+    (root / "config").write_text("[core]\n\tbare = true\n")
+    (root / "objects").mkdir()
+    (root / ("refs/heads" if storage == "refs" else "reftable")).mkdir(parents=True)
+    return root / ("refs/heads" if storage == "refs" else "reftable")
 
 
 def args_for(kind, flags=()):
@@ -152,9 +163,9 @@ class OutputFileTests(unittest.TestCase):
         for kind in ("normal", "open-release", "issue", "pr"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp, chdir(tmp), boundaries() as (methods, run, copy):
                 native_link = os.link
-                def race(source, destination):
+                def race(source, destination, **kwargs):
                     Path(destination).write_text("other writer")
-                    return native_link(source, destination)
+                    return native_link(source, destination, **kwargs)
                 flags = ["-o", "result.txt", "--copy"] + (["--commit"] if kind in ("normal", "open-release") else [])
                 with patch("git_tools.generators.utils.artifacts.os.link", side_effect=race):
                     result = CliRunner().invoke(app, args_for(kind, flags))
@@ -229,6 +240,182 @@ class OutputFileTests(unittest.TestCase):
                         self.assertEqual(list(metadata.iterdir()), [])
                 with self.assertRaisesRegex(ValueError, "Git administrative"):
                     resolve_output_path(alias / "custom.md", root)
+
+    def test_bare_metadata_defaults_and_explicit_paths_fail_before_generation(self):
+        for storage in ("refs", "reftable"):
+            for kind in ("normal", "open-release", "issue", "pr"):
+                for explicit in (False, True):
+                    with self.subTest(storage=storage, kind=kind, explicit=explicit), tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+                        root = Path(tmp) / "server.git"
+                        destination = bare_metadata(root, storage)
+                        before = set(root.rglob("*"))
+                        flags = ["-o", str(destination / "new-draft")] if explicit else ["--no-commit"] if kind in ("normal", "open-release") else []
+                        with chdir(root), boundaries() as (methods, run, copy):
+                            result = CliRunner().invoke(app, args_for(kind, flags))
+                            self.assertEqual(result.exit_code, 1, result.output)
+                            self.assertIn("Git administrative", result.output)
+                            methods[CommitGenerator, "generate_commit_message"].assert_not_called()
+                            methods[IssuePullRequestGenerator, "generate_content"].assert_not_called()
+                            run.assert_not_called()
+                            copy.assert_not_called()
+                        self.assertEqual(set(root.rglob("*")), before)
+                        for document_kind in ("commit", "issue", "pr", "both"):
+                            with self.assertRaisesRegex(OSError, "Git administrative"):
+                                save_draft("finished", document_kind, root)
+                            with self.assertRaisesRegex(OSError, "Git administrative"):
+                                save_draft("finished", document_kind, root, output_path=destination / "new-draft")
+                        self.assertEqual(set(root.rglob("*")), before)
+
+    def test_external_bare_metadata_is_detected_by_layout_not_filename(self):
+        for storage in ("refs", "reftable"):
+            with self.subTest(storage=storage), tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+                root = Path(tmp)
+                invocation = root / "checkout"
+                invocation.mkdir()
+                destination = bare_metadata(root / "metadata-without-git-suffix", storage)
+                alias = root / "alias"
+                alias.symlink_to(destination, target_is_directory=True)
+                for parent in (destination, alias):
+                    with self.assertRaisesRegex(ValueError, "Git administrative"):
+                        resolve_output_path(parent / "new-draft", invocation)
+                    with self.assertRaisesRegex(OSError, "Git administrative"):
+                        save_draft("finished", "pr", invocation, output_path=parent / "new-draft")
+                    self.assertEqual(list(destination.iterdir()), [])
+                # A suffix and partial lookalike are not enough to classify an ordinary export folder as metadata.
+                ordinary = root / "ordinary.git"
+                ordinary.mkdir()
+                (ordinary / "HEAD").write_text("ordinary data")
+                (ordinary / "refs").mkdir()
+                target = resolve_output_path(ordinary / "refs/draft", invocation)
+                self.assertEqual(save_draft("finished", "pr", invocation, output_path=target).read_text(), "finished\n")
+
+    def test_relative_git_environment_paths_stay_relative_to_invocation_directory(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"GIT_DIR": "admin"}, clear=True):
+            root = Path(tmp)
+            invocation = root / "checkout"
+            (invocation / "admin").mkdir(parents=True)
+            exports = root / "exports/admin"
+            exports.mkdir(parents=True)
+            with self.assertRaisesRegex(ValueError, "Git administrative"):
+                resolve_output_path(invocation / "admin/new-draft", invocation)
+            target = resolve_output_path(exports / "draft", invocation)
+            self.assertEqual(save_draft("finished", "pr", invocation, output_path=target).read_text(), "finished\n")
+
+    def test_replaced_preflight_parent_cannot_redirect_output_into_metadata(self):
+        for kind in ("normal", "open-release", "issue", "pr"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp, chdir(tmp), boundaries() as (methods, run, copy):
+                root = Path.cwd()
+                refs = root / ".git/refs/heads"
+                refs.mkdir(parents=True)
+                exports = root / "exports"
+                exports.mkdir()
+                def replace_after_preflight(*args, **kwargs):
+                    target = resolve_output_path(*args, **kwargs)
+                    exports.rename(root / "old-exports")
+                    exports.symlink_to(refs, target_is_directory=True)
+                    return target
+                module = "git_tools.generators.commitgen.workflow" if kind in ("normal", "open-release") else "git_tools.generators.issueprgen.generator"
+                flags = ["-o", "exports/result.txt", "--copy"] + (["--commit"] if kind in ("normal", "open-release") else [])
+                with patch(module + ".resolve_output_path", side_effect=replace_after_preflight):
+                    result = CliRunner().invoke(app, args_for(kind, flags))
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("Git administrative", result.output)
+                self.assertNotIn("Saved draft:", result.output)
+                self.assertEqual(list(refs.iterdir()), [])
+                self.assertEqual(list((root / "old-exports").iterdir()), [])
+                copy.assert_called_once_with(copied_text_for(kind))
+                run.assert_not_called()
+
+    @unittest.skipUnless(artifact_writer._DIRECTORY_FD_IO, "Directory-relative I/O is unavailable")
+    def test_parent_replacement_during_staging_and_publication_is_not_followed(self):
+        for phase in ("mkdir", "flush", "link"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                refs = root / ".git/refs/heads"
+                refs.mkdir(parents=True)
+                exports = root / "exports"
+                exports.mkdir()
+                target = resolve_output_path(exports / "result.txt", root)
+                native = getattr(os, "fsync" if phase == "flush" else phase)
+                replaced = False
+                def replace_and_continue(*args, **kwargs):
+                    nonlocal replaced
+                    if not replaced:
+                        replaced = True
+                        exports.rename(root / "old-exports")
+                        exports.symlink_to(refs, target_is_directory=True)
+                    return native(*args, **kwargs)
+                with patch("git_tools.generators.utils.artifacts.os." + ("fsync" if phase == "flush" else phase), side_effect=replace_and_continue):
+                    with self.assertRaisesRegex(OSError, "Git administrative|directory changed"):
+                        save_draft("finished", "pr", root, output_path=target)
+                self.assertTrue(replaced)
+                self.assertEqual(list(refs.iterdir()), [])
+                previous = root / "old-exports"
+                self.assertEqual(list(previous.glob(".git-tools-draft-*")), [])
+                if phase == "link":
+                    # Publication was pinned to the original directory; never remove that complete public file on a late error.
+                    self.assertEqual((previous / "result.txt").read_text(), "finished\n")
+                else:
+                    self.assertEqual(list(previous.iterdir()), [])
+
+    @unittest.skipUnless(artifact_writer._DIRECTORY_FD_IO, "Directory-relative I/O is unavailable")
+    def test_ancestor_replacement_while_opening_parent_fails_before_staging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            refs = root / ".git/refs/heads"
+            (refs / "exports").mkdir(parents=True)
+            ancestor = root / "ancestor"
+            exports = ancestor / "exports"
+            exports.mkdir(parents=True)
+            target = resolve_output_path(exports / "result.txt", root)
+            native_open = os.open
+            replaced = False
+            def replace_during_open(path, *args, **kwargs):
+                nonlocal replaced
+                if not replaced and Path(path) == exports:
+                    replaced = True
+                    ancestor.rename(root / "old-ancestor")
+                    ancestor.symlink_to(refs, target_is_directory=True)
+                return native_open(path, *args, **kwargs)
+            with patch("git_tools.generators.utils.artifacts.os.open", side_effect=replace_during_open):
+                with self.assertRaisesRegex(OSError, "directory changed"):
+                    save_draft("finished", "pr", root, output_path=target)
+            self.assertTrue(replaced)
+            self.assertEqual(list((refs / "exports").iterdir()), [])
+            self.assertEqual(list((root / "old-ancestor/exports").iterdir()), [])
+
+    @unittest.skipUnless(artifact_writer._DIRECTORY_FD_IO and (hasattr(os, "O_PATH") or hasattr(os, "O_SEARCH")), "Search-only directory handles are unavailable")
+    def test_directory_handles_do_not_require_export_directory_read_permission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exports = root / "dropbox"
+            exports.mkdir(mode=0o300)
+            try:
+                target = resolve_output_path(exports / "result.txt", root)
+                saved = save_draft("finished", "pr", root, output_path=target)
+            finally:
+                exports.chmod(0o700)
+            self.assertEqual(saved.read_text(), "finished\n")
+            self.assertEqual(list(exports.iterdir()), [saved])
+
+    def test_portable_path_fallback_preserves_no_clobber_and_metadata_checks(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(artifact_writer, "_DIRECTORY_FD_IO", False):
+            root = Path(tmp)
+            (root / "PR.md").write_text("original")
+            saved = save_draft("finished", "pr", root)
+            self.assertNotEqual(saved.name, "PR.md")
+            self.assertEqual(saved.read_text(), "finished\n")
+            self.assertEqual((root / "PR.md").read_text(), "original")
+            refs = root / ".git/refs/heads"
+            refs.mkdir(parents=True)
+            exports = root / "exports"
+            exports.mkdir()
+            target = resolve_output_path(exports / "result.txt", root)
+            exports.rename(root / "old-exports")
+            exports.symlink_to(refs, target_is_directory=True)
+            with self.assertRaisesRegex(OSError, "Git administrative"):
+                save_draft("finished", "pr", root, output_path=target)
+            self.assertEqual(list(refs.iterdir()), [])
 
     def test_metadata_validation_never_follows_an_occupied_output_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:

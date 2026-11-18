@@ -240,7 +240,7 @@ class CancellationBoundaryTests(unittest.TestCase):
 
     def test_commit_confirmation_back_never_commits_or_copies(self):
         generator = CommitGenerator(interactive=True)
-        with keyed_questions(['\x1b']), patch.object(generator, 'parse_commit_message', return_value='fix: navigation'), patch('git_tools.generators.commitgen.generator.subprocess.run') as commit, patch('pyperclip.copy') as copy:
+        with keyed_questions(['\x1b']), patch.object(generator, 'parse_commit_message', return_value='fix: navigation'), patch('git_tools.generators.commitgen.workflow.subprocess.run') as commit, patch('pyperclip.copy') as copy:
             with self.assertRaises(NavigationBack):
                 generator._handle_commit_action({'content': 'fix: navigation'})
         commit.assert_not_called()

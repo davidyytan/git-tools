@@ -258,7 +258,7 @@ class ExplicitStartVersionTests(unittest.TestCase):
 class PrOutputHandoffSafetyTests(unittest.TestCase):
     def run_response(self, generation_type: str, raw: str):
         generator = IssuePullRequestGenerator(
-            generation_type=generation_type, input_source="c", interactive=False
+            generation_type=generation_type, input_source="c", interactive=False, copy_clipboard=True
         )
         with ExitStack() as stack:
             stack.enter_context(patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None))

@@ -144,6 +144,7 @@ class SavedGenerationSettingsTests(unittest.TestCase):
 
 class FlowBoundaries:
     def _commit_boundaries(self, stack, generator):
+        stack.enter_context(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
         stack.enter_context(patch.object(generator, "get_staged_diff", return_value="diff"))
         stack.enter_context(patch.object(generator, "_check_sensitive_files", return_value=True))
         enhanced = stack.enter_context(patch.object(generator, "get_staged_diff_enhanced", return_value=("diff", [])))
@@ -188,7 +189,7 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
             stack.enter_context(patch("git_tools.generators.base.interaction.questionary.select", side_effect=select))
             stack.enter_context(patch("git_tools.generators.base.interaction.questionary.text", side_effect=AssertionError("routine settings prompt")))
             clipboard = stack.enter_context(patch("pyperclip.copy"))
-            commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
+            commit = stack.enter_context(patch("git_tools.generators.commitgen.workflow.subprocess.run"))
             stack.enter_context(patch("git_tools.generators.commitgen.generator.settings", SimpleNamespace(default_token_limit=6543, commit_include_scope=False, commit_include_footer=False,
                                                                                                     commit_include_body=True, commit_body_style="bullets")))
             generator.generate_commit()
@@ -225,7 +226,10 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
         self.assertEqual(questions, ["Select PR mode:", "Additional context (optional; leave blank to skip):", "Generate content using external providers?", "Copy to clipboard?"])
         diffs.assert_called_once_with("origin/develop", 7654)
         self.assertIn("user intent", generate.call_args.args[0])
-        self.assertIn("Context is user intent but diffs and commit messages are the actual code changes.", generate.call_args.args[0])
+        self.assertIn("stated facts, intent, planning values, and reported validation", generate.call_args.args[0])
+        self.assertIn("attribute reported validation, measurements, and release/deployment outcomes without implying independent verification", generate.call_args.args[1])
+        self.assertIn("Do not infer omitted, binary, or truncated content", generate.call_args.args[1])
+        self.assertNotIn("commit messages are the actual code changes", generate.call_args.args[0])
         clipboard.assert_not_called()
 
     def test_cli_context_including_empty_string_skips_context_prompt(self):
@@ -265,7 +269,7 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
                     select = stack.enter_context(patch("git_tools.generators.base.interaction.questionary.select"))
                     select.return_value.unsafe_ask.side_effect = answers
                     copy = stack.enter_context(patch("pyperclip.copy"))
-                    commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
+                    commit = stack.enter_context(patch("git_tools.generators.commitgen.workflow.subprocess.run"))
                     with self.assertRaises(NavigationBack):
                         generator.generate_commit()
                 copy.assert_not_called()
@@ -335,6 +339,9 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
 
 
 class ClipboardPolicyTests(FlowBoundaries, unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
+
     def test_commit_copy_policy_for_success_local_and_missing_credentials(self):
         for path in ("success", "local", "missing-key"):
             for interactive in (False, True):
@@ -354,7 +361,7 @@ class ClipboardPolicyTests(FlowBoundaries, unittest.TestCase):
                             else:
                                 generator._generate_with_provider("diff [kept]", "system")
                         expected_ask = copy_flag is None and interactive
-                        expected_auto = copy_flag is True or (copy_flag is None and not interactive and path != "missing-key")
+                        expected_auto = copy_flag is True
                         self.assertEqual(ask.call_count, int(expected_ask))
                         self.assertEqual(auto.call_count, int(expected_auto))
                         if path != "success":
@@ -381,7 +388,7 @@ class ClipboardPolicyTests(FlowBoundaries, unittest.TestCase):
                                 display = stack.enter_context(patch("git_tools.generators.base.interaction.console"))
                                 generator.generate_issue_pullrequest()
                             expected_ask = copy_flag is None and interactive
-                            expected_auto = copy_flag is True or (copy_flag is None and not interactive and path != "missing-key")
+                            expected_auto = copy_flag is True
                             self.assertEqual(ask.call_count, int(expected_ask))
                             self.assertEqual(auto.call_count, int(expected_auto))
                             if path != "success":

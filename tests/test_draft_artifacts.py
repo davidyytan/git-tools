@@ -21,7 +21,7 @@ from git_tools.generators.bumpgen.git import run_command
 from git_tools.generators.commitgen import CommitGenerator
 from git_tools.generators.base.display import DisplayMixin
 from git_tools.generators.issueprgen import IssuePullRequestGenerator
-from git_tools.generators.issueprgen.artifacts import save_draft
+from git_tools.generators.utils.artifacts import save_draft
 from git_tools.navigation import NavigationBack
 
 
@@ -56,10 +56,10 @@ def issue_boundaries(response=None, *, credentials=True, initialize=True, intera
 class DraftWriterTests(unittest.TestCase):
     def test_names_exact_bytes_and_frozen_timestamp_collisions(self):
         frozen = datetime(2026, 11, 17, 15, 0, 0, tzinfo=timezone.utc)
-        with tempfile.TemporaryDirectory() as tmp, patch("git_tools.generators.issueprgen.artifacts.datetime") as clock:
+        with tempfile.TemporaryDirectory() as tmp, patch("git_tools.generators.utils.artifacts.datetime") as clock:
             clock.now.return_value = frozen
             root = Path(tmp)
-            for kind, stem in (("pr", "PR"), ("issue", "ISSUE"), ("both", "ISSUEPR")):
+            for kind, stem in (("pr", "PR"), ("issue", "ISSUE"), ("both", "ISSUEPR"), ("commit", "COMMIT")):
                 paths = [save_draft(BODY, kind, root) for _ in range(3)]
                 self.assertEqual(paths[0].name, f"{stem}.md")
                 self.assertEqual(paths[1].name, f"{stem}-20261117T150000000000Z.md")
@@ -102,7 +102,7 @@ class DraftWriterTests(unittest.TestCase):
                     first = False
                     Path(destination).write_text("other process")
                 return real_link(source, destination)
-            with patch("git_tools.generators.issueprgen.artifacts.os.link", side_effect=racing_link):
+            with patch("git_tools.generators.utils.artifacts.os.link", side_effect=racing_link):
                 path = save_draft(BODY, "pr", root)
             self.assertNotEqual(path.name, "PR.md")
             self.assertEqual((root / "PR.md").read_text(), "other process")
@@ -111,7 +111,7 @@ class DraftWriterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "PR.md").write_text("original")
-            with patch("git_tools.generators.issueprgen.artifacts.os.fsync", side_effect=OSError(errno.ENOSPC, "disk full")):
+            with patch("git_tools.generators.utils.artifacts.os.fsync", side_effect=OSError(errno.ENOSPC, "disk full")):
                 with self.assertRaises(OSError):
                     save_draft(BODY, "pr", root)
             self.assertEqual([path.name for path in root.iterdir()], ["PR.md"])
@@ -139,7 +139,7 @@ class DraftWriterTests(unittest.TestCase):
                 if path == target and not published:
                     publish()
                 return identity
-            with patch("git_tools.generators.issueprgen.artifacts.os.fsync", side_effect=fail_fsync), patch.object(Path, "lstat", race_after_stat):
+            with patch("git_tools.generators.utils.artifacts.os.fsync", side_effect=fail_fsync), patch.object(Path, "lstat", race_after_stat):
                 with self.assertRaises(OSError):
                     save_draft(BODY, "pr", root)
             self.assertTrue(published)
@@ -153,7 +153,7 @@ class DraftWriterTests(unittest.TestCase):
             def inspect_fsync(fd):
                 self.assertEqual(list(root.glob("PR*.md")), [])
                 real_fsync(fd)
-            with patch("git_tools.generators.issueprgen.artifacts.os.fsync", side_effect=inspect_fsync):
+            with patch("git_tools.generators.utils.artifacts.os.fsync", side_effect=inspect_fsync):
                 path = save_draft(BODY, "pr", root)
             self.assertEqual(path.read_bytes(), (BODY + "\n").encode())
             self.assertEqual(list(root.iterdir()), [path])
@@ -164,7 +164,7 @@ class DraftWriterTests(unittest.TestCase):
             def fail_wrapper(fd, *args, **kwargs):
                 descriptors.append(fd)
                 raise OSError(errno.EIO, "wrapper failed")
-            with patch("git_tools.generators.issueprgen.artifacts.os.fdopen", side_effect=fail_wrapper):
+            with patch("git_tools.generators.utils.artifacts.os.fdopen", side_effect=fail_wrapper):
                 with self.assertRaises(OSError):
                     save_draft(BODY, "pr", Path(tmp))
             self.assertEqual(len(descriptors), 1)
@@ -178,7 +178,7 @@ class DraftWriterTests(unittest.TestCase):
             root = Path(tmp)
             original = root / "PR.md"
             original.write_text("original")
-            with patch("git_tools.generators.issueprgen.artifacts.os.link", side_effect=OSError(errno.EOPNOTSUPP, "hard links unavailable")):
+            with patch("git_tools.generators.utils.artifacts.os.link", side_effect=OSError(errno.EOPNOTSUPP, "hard links unavailable")):
                 with self.assertRaises(OSError):
                     save_draft(BODY, "pr", root)
             self.assertEqual(list(root.iterdir()), [original])
@@ -186,7 +186,7 @@ class DraftWriterTests(unittest.TestCase):
 
     def test_concurrent_saves_publish_unique_complete_drafts(self):
         frozen = datetime(2026, 11, 17, 15, 0, 0, tzinfo=timezone.utc)
-        with tempfile.TemporaryDirectory() as tmp, patch("git_tools.generators.issueprgen.artifacts.datetime") as clock:
+        with tempfile.TemporaryDirectory() as tmp, patch("git_tools.generators.utils.artifacts.datetime") as clock:
             root = Path(tmp)
             clock.now.return_value = frozen
             contents = [f"## Title: feat: result {index}\n\n{BODY}" for index in range(12)]
@@ -241,14 +241,14 @@ class DraftHandoffTests(unittest.TestCase):
                     self.assertEqual(list(Path(tmp).iterdir()), [])
                     clipboard.assert_not_called()
 
-    def test_headless_default_clipboard_failure_keeps_a_successful_saved_result(self):
+    def test_headless_default_does_not_attempt_clipboard(self):
         with tempfile.TemporaryDirectory() as tmp, chdir(tmp), issue_boundaries({"content": BODY}, copy=None) as (generator, clipboard):
             clipboard.side_effect = RuntimeError("no display")
             with patch("git_tools.generators.issueprgen.IssuePullRequestGenerator", return_value=generator):
                 result = CliRunner().invoke(app, ["pr"])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertEqual(Path("PR.md").read_bytes(), (BODY + "\n").encode())
-            clipboard.assert_called_once_with(BODY)
+            clipboard.assert_not_called()
 
     def test_missing_key_local_mode_is_not_a_finished_draft(self):
         with tempfile.TemporaryDirectory() as tmp, chdir(tmp), issue_boundaries(credentials=False, copy=None) as (generator, clipboard):
@@ -325,7 +325,7 @@ class DraftHandoffTests(unittest.TestCase):
                     stack.enter_context(patch("git_tools.generators.commitgen.workflow.console", capture))
                     stack.enter_context(patch.object(generator, "_get_staged_files", return_value=[]))
                     stack.enter_context(patch.object(generator, "_build_workflow_subject", return_value=text))
-                    stack.enter_context(patch.object(generator, "_handle_fixed_subject_action"))
+                    stack.enter_context(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
                     generator._handle_workflow_commit("open-release")
                 else:
                     stack.enter_context(patch("git_tools.generators.base.interaction.console", capture))

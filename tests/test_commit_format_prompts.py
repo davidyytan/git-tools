@@ -5,6 +5,7 @@ from itertools import product
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
 
 from git_tools.generators.commitgen import CommitGenerator
 
@@ -13,19 +14,26 @@ FORMATS = tuple(product((False, True), (False, True), (False, True), ("bullets",
 
 
 class CommitFormatPromptTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
+
     def test_all_formats_reach_local_and_provider_prompts(self):
         for scope, footer, body, style in FORMATS:
             with self.subTest(scope=scope, footer=footer, body=body, style=style):
                 generator = CommitGenerator(interactive=False)
                 system = generator._build_system_message(scope, footer, body, style)
-                template = system.split("```\n", 1)[1].split("\n```", 1)[0]
+                parsed = ET.fromstring(system)
+                template = parsed.findtext("template[@kind='commit']")
+                rules = parsed.findtext("rules")
+                self.assertNotIn("```", system)
+                self.assertIn("Return only raw Conventional Commit text", rules)
                 expected = "<type>" + ("[optional scope]" if scope else "") + "[!]: <description>"
                 if body:
                     expected += "\n\n[optional body]"
                 if footer:
                     expected += "\n\n[optional footer(s)]"
                 self.assertEqual(template, expected)
-                self.assertIn("<description> is REQUIRED", system)
+                self.assertIn("<description> is REQUIRED", rules)
                 self.assertIn("short summary in the subject/header, even when the body is disabled", system)
                 self.assertIn("Do not use the literal text BREAKING CHANGE anywhere except in the footer.", system)
                 self.assertIn("[optional scope] may be provided" if scope else "Do not include the [optional scope].", system)
@@ -189,7 +197,7 @@ class CommitFormatPromptTests(unittest.TestCase):
                     console = stack.enter_context(patch("git_tools.generators.commitgen.generator.console"))
                     local = stack.enter_context(patch.object(generator, "handoff_local_prompt"))
                     copied = stack.enter_context(patch.object(generator, "copy_to_clipboard_auto"))
-                    run = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
+                    run = stack.enter_context(patch("git_tools.generators.commitgen.workflow.subprocess.run"))
                     generator.generate_commit()
                 system = generator._build_system_message(True, True, True, "prose")
                 if path == "provider":

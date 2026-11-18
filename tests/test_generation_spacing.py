@@ -44,7 +44,7 @@ CONSOLES = (
 def captured_console(width, answers=()):
     """Use real renderers and prompt helpers, replacing only terminal input."""
     output = StringIO()
-    console = Console(file=output, width=width, force_terminal=False, soft_wrap=True)
+    console = Console(file=output, width=width, force_terminal=True, color_system=None, soft_wrap=True)
     remaining = iter(answers)
     questions = []
 
@@ -69,6 +69,12 @@ def captured_console(width, answers=()):
 
 
 class RenderedSpacingTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
+        self.save = patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None)
+        self.save.start()
+        self.addCleanup(self.save.stop)
+
     def assert_panel_gaps(self, output):
         lines = [line.rstrip() for line in output.splitlines()]
         self.assertNotIn("\n\n\n", "\n".join(lines), output)
@@ -124,7 +130,7 @@ class RenderedSpacingTests(unittest.TestCase):
                         with captured_console(width, answers) as (output, _, questions, stack):
                             self.commit_boundaries(stack, generator, QUOTA if diagnostics else [])
                             _, generate, copy = self.provider_boundaries(stack, generator, response)
-                            commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
+                            commit = stack.enter_context(patch("git_tools.generators.commitgen.workflow.subprocess.run"))
                             generator.generate_commit()
                         rendered = output.getvalue()
                         self.assert_panel_gaps(rendered)
@@ -288,7 +294,7 @@ class RenderedSpacingTests(unittest.TestCase):
 
     def test_fixed_context_without_summary_or_quota_has_one_settings_gap(self):
         generator = IssuePullRequestGenerator(generation_type="pr", context="", interactive=True, copy_clipboard=False)
-        fixed = SimpleNamespace(to_prompt_block=lambda: "Fixed workflow context")
+        fixed = SimpleNamespace(target_version="1.6.0", to_prompt_block=lambda: "Fixed workflow context")
         with captured_console(48, ("Release PR", "No")) as (output, _, _, stack):
             stack.enter_context(patch.object(generator, "get_default_branch", return_value="origin/master"))
             stack.enter_context(patch.object(generator, "get_commit_info", return_value=None))
@@ -302,6 +308,26 @@ class RenderedSpacingTests(unittest.TestCase):
         self.assertNotIn("Commit Range Summary", output.getvalue())
         self.assertNotIn("File Quota", output.getvalue())
 
+    def test_empty_selected_source_with_fixed_context_keeps_warning_gap(self):
+        for source in ("b", "d"):
+            with self.subTest(source=source):
+                generator = IssuePullRequestGenerator(generation_type="pr", input_source=source, context="", interactive=True, copy_clipboard=False)
+                fixed = SimpleNamespace(target_version="1.6.0", to_prompt_block=lambda: "Fixed workflow context")
+                with captured_console(48, ("Release PR", "No")) as (output, _, _, stack):
+                    stack.enter_context(patch.object(generator, "get_default_branch", return_value="origin/master"))
+                    stack.enter_context(patch.object(generator, "get_commit_info", return_value={"commit_count": 1, "base_branch": "origin/master"}))
+                    stack.enter_context(patch.object(generator, "show_commit_summary"))
+                    stack.enter_context(patch.object(generator, "_resolve_release_pr_context", return_value=fixed))
+                    stack.enter_context(patch.object(generator, "get_commit_messages", return_value=""))
+                    stack.enter_context(patch.object(generator, "get_branch_diffs", return_value=("", [])))
+                    stack.enter_context(patch.object(generator, "get_diff_processing_params", return_value=1000))
+                    stack.enter_context(patch.object(generator, "_build_system_message", return_value="SYSTEM"))
+                    stack.enter_context(patch.object(generator, "_build_full_prompt", return_value="LOCAL [kept]"))
+                    stack.enter_context(patch.object(generator, "_should_apply_azure_limit", return_value=False))
+                    generator.generate_issue_pullrequest()
+                self.assert_panel_gaps(output.getvalue())
+                self.assertIn("using validated workflow context only.", output.getvalue().replace("\n", " "))
+
     def test_commit_apply_separates_git_output_without_duplicate_panel_gap(self):
         for interactive in (False, True):
             with self.subTest(interactive=interactive):
@@ -310,7 +336,7 @@ class RenderedSpacingTests(unittest.TestCase):
                 with captured_console(120, answers) as (output, _, _, stack):
                     self.commit_boundaries(stack, generator, [])
                     self.provider_boundaries(stack, generator, {"content": "fix: preserved output"})
-                    commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run", side_effect=lambda *args, **kwargs: print("[branch abc1234] fix: preserved output")))
+                    commit = stack.enter_context(patch("git_tools.generators.commitgen.workflow.subprocess.run", side_effect=lambda *args, **kwargs: print("[branch abc1234] fix: preserved output")))
                     generator.generate_commit()
                 self.assert_panel_gaps(output.getvalue())
                 self.assertIn("[branch abc1234] fix: preserved output\n\n✓ Committed changes.", output.getvalue())

@@ -60,10 +60,12 @@ cd /path/to/your/application
 git-tools --help
 git-tools log                            # Print read-only history once; compares with develop.
 git-tools settings                       # Optional: configure a provider for AI generation.
-git-tools commit --no-commit --no-copy    # Preview a message for changes you already staged.
+git-tools commit --no-commit              # Save COMMIT.md for changes you already staged.
+git-tools pr                              # Save PR.md (or a unique PR-<UTC-time>.md).
+git-tools commit -o commit-message.txt     # Save to an exact filename without committing.
 ```
 
-Direct `git-tools commit` **creates a commit by default**. `git-tools pr` generates text; it does not open a hosted PR. `log`, `init`, `bump`, and versioning CI need no LLM key.
+Direct commands are non-interactive by default; use `-i` or the root menu for interactive prompts. Bare `git-tools commit` **creates a commit by default**; `--no-commit` or `-o PATH` selects file output unless `--commit` is explicit. Default filenames for non-committed messages, PRs, and issues are `COMMIT.md`, `PR.md`, and `ISSUE.md` in the invocation directory. Automatic names gain unique UTC suffixes when occupied; explicit `--output` / `-o` filenames must be available and are never silently renamed or overwritten. Direct mode copies only with `--copy`; interactive mode retains its optional copy question. See [saved output](docs/usage.md#saved-output) for recovery and path rules. Draft generation does not create hosted items, stage files, or edit ignore rules. `log`, `init`, `bump`, and versioning CI need no LLM key.
 
 [`git-tools log`](docs/usage.md#log) shows a colored terminal graph, ahead/behind counts against `develop`, and local/cached remote branch counts, then exits by default. Launch `git-tools` and select **Log**, or run `git-tools log -i`, to browse interactively. The browser separates View, History mode, and Base settings from Show more and Refresh actions; first-parent traversal is the default. Redirected output prints once as plain text, and `NO_COLOR=1` disables colors. It never fetches or switches branches.
 

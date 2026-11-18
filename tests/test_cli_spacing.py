@@ -36,7 +36,7 @@ USAGE = {"response_metadata": {"token_usage": {
 @contextmanager
 def captured_console(width):
     output = StringIO()
-    console = Console(file=output, width=width, soft_wrap=True, color_system=None)
+    console = Console(file=output, width=width, soft_wrap=True, force_terminal=True, color_system=None)
     with ExitStack() as stack:
         for module in (cli, display, interaction, models, terminal):
             stack.enter_context(patch.object(module, "console", console))
@@ -127,7 +127,7 @@ class PanelSpacingTests(unittest.TestCase):
 
     def test_panels_disable_console_soft_wrap(self):
         generator = BaseGenerator()
-        with patch.object(terminal.console, "print") as printed:
+        with patch.object(terminal.console, "print") as printed, patch.object(Console, "is_terminal", property(lambda self: True)):
             terminal.print_panel("text")
             generator.display_quota_breakdown(["quota"], 200000)
             generator.display_token_usage(USAGE)
@@ -148,14 +148,15 @@ class PanelSpacingTests(unittest.TestCase):
                     with patch("pyperclip.copy") as copied:
                         generator.handoff_local_prompt("local prompt [literal]")
                     self.assert_single_panel_gaps(output.getvalue(), 1)
-                    if explicit is False:
+                    if explicit is not True:
                         copied.assert_not_called()
                     else:
                         copied.assert_called_once_with("local prompt [literal]")
                         self.assertIn("\n\n✓ Copied to clipboard!\n", output.getvalue())
 
-    def test_generated_panel_automatic_handoff_and_plain_auto_keep_one_gap(self):
+    def test_generated_panel_explicit_handoff_and_plain_copy_keep_one_gap(self):
         generator = BaseGenerator(interactive=False)
+        generator._cli_copy_clipboard = True
         for after_panel in (False, True):
             with self.subTest(after_panel=after_panel), captured_console(80) as (console, output):
                 with patch("pyperclip.copy") as copied:
@@ -173,6 +174,7 @@ class PanelSpacingTests(unittest.TestCase):
         for interactive in (False, True):
             with self.subTest(interactive=interactive), captured_console(80) as (console, output):
                 generator = BaseGenerator(interactive=interactive)
+                generator._cli_copy_clipboard = None if interactive else True
                 generator.logger = Mock()
                 with (
                     patch.object(interaction.questionary, "select", side_effect=fake_questions(console, ["Yes"])),

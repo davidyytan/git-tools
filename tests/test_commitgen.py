@@ -4,9 +4,33 @@ import unittest
 from unittest.mock import patch
 
 from git_tools.generators.commitgen import CommitGenerator, SensitiveFileMatch
+from test_user_prompt_wrapping import assert_user_envelope, decoded, request_text
 
 
 class CommitGeneratorTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
+
+    def test_user_packaging_preserves_native_roles_and_raw_commit_response(self) -> None:
+        generator = CommitGenerator(auto_commit=False, copy_clipboard=False)
+        diff = "diff --git a/a b/a\r\n+literal & </request> ```\r\n+NUL\0\n"
+        system = generator._build_system_message(True, True)
+        message = "fix(parser): preserve raw response\n\nImportant final line\n\nRefs: #42"
+        response = {"content": message}
+        with patch.object(generator, "invoke_llm", return_value=response) as invoke:
+            self.assertIs(generator.generate_commit_message(diff, system), response)
+        messages = invoke.call_args.args[0]
+        self.assertEqual([entry["role"] for entry in messages], ["system", "user"])
+        self.assertEqual(messages[0]["content"], system)
+        request = generator._load_prompt_template("commitgen_user_prompt.txt")
+        root = assert_user_envelope(self, messages[1]["content"], request)
+        self.assertEqual(decoded(root.find("diffs/diff")), diff)
+        self.assertEqual([node.tag for node in root], ["diffs"])
+        self.assertNotIn("NUL", request_text(messages[1]["content"]))
+        self.assertEqual(request_text(messages[1]["content"]), request)
+        self.assertEqual(generator._build_full_prompt(diff, system), system + "\n\n" + messages[1]["content"])
+        self.assertEqual(generator.parse_commit_message(response["content"]), message)
+
     def test_display_response_omits_raw_response_panel(self) -> None:
         for interactive in (False, True):
             with self.subTest(interactive=interactive):
@@ -34,7 +58,7 @@ class CommitGeneratorTests(unittest.TestCase):
         self.assertIn("docs: Documentation-only changes", system_message)
         self.assertIn("revert: Reverts a previous commit", system_message)
         self.assertIn("Prefer the most specific type", system_message)
-        self.assertIn("use `style` for formatting-only or text-only changes", system_message)
+        self.assertIn("use `style` for formatting-only or generic text-only changes outside documentation", system_message)
         self.assertIn("use `chore` for maintenance, repo housekeeping", system_message)
         self.assertIn("[optional scope] may be provided", system_message)
         self.assertIn("Include [optional footer(s)] for breaking changes.", system_message)
@@ -128,7 +152,7 @@ class CommitGeneratorTests(unittest.TestCase):
                         generator._display_response(response)
                     panels = [call.args[0] for call in console.print.call_args_list if call.args]
                     self.assertEqual(panels[0].renderable, expected)
-                    with patch("git_tools.generators.commitgen.generator.subprocess.run") as run:
+                    with patch("git_tools.generators.commitgen.workflow.subprocess.run") as run:
                         generator._handle_commit_action(response)
                     run.assert_called_once_with(["git", "commit", "-m", expected], check=True, timeout=30)
                     generator._cli_auto_commit = False
@@ -229,7 +253,7 @@ class CommitGeneratorTests(unittest.TestCase):
                         generator.generate_commit()
                     run.assert_not_called()
                     self.assertEqual(ask.call_count, int(interactive and copy_flag is None))
-                    self.assertEqual(auto.call_count, int(copy_flag is True or (copy_flag is None and not interactive)))
+                    self.assertEqual(auto.call_count, int(copy_flag is True))
                     if ask.called:
                         ask.assert_called_once_with("chore: open release")
                     if auto.called:

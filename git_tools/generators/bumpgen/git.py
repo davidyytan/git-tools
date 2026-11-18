@@ -15,13 +15,17 @@ def run_command(
     cwd: Path,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        args,
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            args,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise GitError(f"{' '.join(args)} timed out after 120 seconds. Inspect repository state before retrying; files, staging, commits or tags may already have changed.") from exc
     if check and result.returncode != 0:
         command = " ".join(args)
         stderr = result.stderr.strip()

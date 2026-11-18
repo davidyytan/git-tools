@@ -258,7 +258,9 @@ with open(os.environ['FAKE_CAPTURE'], 'a', encoding='utf-8') as stream:
                 self.assertIn('gpg --export-secret-key -a YOUR_GPG_KEY_ID', block)
                 self.assertIn('BOT_GPG_SECRETKEY', block)
                 self.assertIn('cat "$HOME/.ssh/YOUR_AUTOMATION_SSH_KEY"', block)
-                self.assertNotIn('--output', text)
+                gpg_commands = '\n'.join(line for line in text.splitlines() if line.lstrip().startswith('gpg '))
+                self.assertNotIn('--output', gpg_commands)
+                self.assertNotRegex(gpg_commands, r'(^|\s)-o')
                 self.assertNotIn('privatekey.pgp', text)
 
     def test_github_example_headers_are_self_contained_setup_checklists(self):

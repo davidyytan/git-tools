@@ -6,6 +6,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from xml.etree import ElementTree as ET
 
 import typer
 from typer.testing import CliRunner
@@ -16,6 +17,7 @@ from git_tools.navigation import NavigationBack
 from git_tools.generators.base import BaseGenerator
 from git_tools.generators.commitgen import CommitGenerator
 from git_tools.generators.issueprgen import IssuePullRequestGenerator
+from test_user_prompt_wrapping import assert_user_envelope, decoded, request_text
 
 
 COMMIT_INFO = {
@@ -144,6 +146,7 @@ class SavedGenerationSettingsTests(unittest.TestCase):
 
 class FlowBoundaries:
     def _commit_boundaries(self, stack, generator):
+        stack.enter_context(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
         stack.enter_context(patch.object(generator, "get_staged_diff", return_value="diff"))
         stack.enter_context(patch.object(generator, "_check_sensitive_files", return_value=True))
         enhanced = stack.enter_context(patch.object(generator, "get_staged_diff_enhanced", return_value=("diff", [])))
@@ -157,6 +160,7 @@ class FlowBoundaries:
         return enhanced, initialize, generate
 
     def _issue_boundaries(self, stack, generator, *, credentials=True, response=PR_RESPONSE):
+        stack.enter_context(patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None))
         stack.enter_context(patch.object(generator, "get_default_branch", return_value="origin/develop"))
         stack.enter_context(patch.object(generator, "get_commit_info", return_value=COMMIT_INFO))
         stack.enter_context(patch.object(generator, "show_commit_summary"))
@@ -187,7 +191,7 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
             stack.enter_context(patch("git_tools.generators.base.interaction.questionary.select", side_effect=select))
             stack.enter_context(patch("git_tools.generators.base.interaction.questionary.text", side_effect=AssertionError("routine settings prompt")))
             clipboard = stack.enter_context(patch("pyperclip.copy"))
-            commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
+            commit = stack.enter_context(patch("git_tools.generators.commitgen.workflow.subprocess.run"))
             stack.enter_context(patch("git_tools.generators.commitgen.generator.settings", SimpleNamespace(default_token_limit=6543, commit_include_scope=False, commit_include_footer=False,
                                                                                                     commit_include_body=True, commit_body_style="bullets")))
             generator.generate_commit()
@@ -223,12 +227,27 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
             generator.generate_issue_pullrequest()
         self.assertEqual(questions, ["Select PR mode:", "Additional context (optional; leave blank to skip):", "Generate content using external providers?", "Copy to clipboard?"])
         diffs.assert_called_once_with("origin/develop", 7654)
-        self.assertIn("user intent", generate.call_args.args[0])
-        self.assertIn("Context is user intent but diffs and commit messages are the actual code changes.", generate.call_args.args[0])
+        content = generate.call_args.args[0]
+        prompt = generator._build_full_prompt(content)
+        request = generator._load_prompt_template("issuepr_user_prompt_pr.txt").strip()
+        root = assert_user_envelope(self, prompt, request)
+        self.assertEqual(root.tag, "sources")
+        self.assertEqual(request_text(prompt), request)
+        self.assertEqual(root.findtext("context"), "user intent")
+        self.assertEqual(root.findtext("commit_messages/commit_group"), "feat: first")
+        self.assertEqual(root.findtext("diffs/diff"), "diff content")
+        self.assertEqual(root.findall("evidence"), [])
+        self.assertNotIn("Additional supplied context:", content)
+        self.assertNotIn("\nContext:\n", content)
+        self.assertFalse((root.text or "").strip())
+        self.assertTrue(all(not (node.tail or "").strip() for node in root))
+        self.assertIn("attribute reported validation, measurements, and release/deployment outcomes without implying independent verification", generate.call_args.args[1])
+        self.assertIn("Do not infer omitted, binary, or truncated content", generate.call_args.args[1])
+        self.assertNotIn("commit messages are the actual code changes", generate.call_args.args[0])
         clipboard.assert_not_called()
 
     def test_cli_context_including_empty_string_skips_context_prompt(self):
-        for context in ("", "explicit context"):
+        for context in ("", "explicit context", "  literal & </request>\r\nunchanged  "):
             with self.subTest(context=context):
                 generator = IssuePullRequestGenerator(generation_type="issue", interactive=True, context=context, copy_clipboard=False)
                 with contextlib.ExitStack() as stack:
@@ -237,10 +256,41 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
                     text = stack.enter_context(patch.object(generator, "prompt_text"))
                     generator.generate_issue_pullrequest()
                 text.assert_not_called()
+                content = generate.call_args.args[0]
+                self.assertEqual(content, generator._append_user_context("input content", context))
+                prompt = generator._build_full_prompt(content)
+                request = generator._load_prompt_template("issuepr_user_prompt_issue.txt").strip()
+                root = assert_user_envelope(self, prompt, request)
+                self.assertEqual(request_text(prompt), request)
+                self.assertEqual(decoded(root.find("evidence")), content)
+                self.assertEqual(root.findall("context"), [], "A plain collector override must remain literal, not be heuristically split")
                 if context:
-                    self.assertIn(context, generate.call_args.args[0])
+                    context_node = ET.fromstring(content[len("input content"):].strip())
+                    self.assertEqual(context_node.tag, "context")
+                    self.assertEqual(decoded(context_node), context)
+                    self.assertNotIn(context, request_text(prompt))
                 else:
-                    self.assertEqual(generate.call_args.args[0], "input content")
+                    self.assertEqual(content, "input content")
+
+    def test_absent_and_interactive_blank_context_add_no_evidence_node(self):
+        for interactive, answer in ((False, None), (True, ""), (True, " \t\r\n ")):
+            with self.subTest(interactive=interactive, answer=answer), contextlib.ExitStack() as stack:
+                generator = IssuePullRequestGenerator(generation_type="issue", interactive=interactive, context=None, copy_clipboard=False)
+                _, _, generate = self._issue_boundaries(stack, generator)
+                stack.enter_context(patch.object(generator, "prompt_confirm", return_value=True))
+                text = stack.enter_context(patch.object(generator, "prompt_text", return_value=answer))
+                generator.generate_issue_pullrequest()
+                self.assertEqual(generate.call_args.args[0], "input content")
+                prompt = generator._build_full_prompt(generate.call_args.args[0])
+                request = generator._load_prompt_template("issuepr_user_prompt_issue.txt").strip()
+                root = assert_user_envelope(self, prompt, request)
+                self.assertEqual(request_text(prompt), request)
+                self.assertEqual(root.findall("context"), [])
+                self.assertEqual(decoded(root.find("evidence")), "input content")
+                if interactive:
+                    text.assert_called_once_with("Additional context (optional; leave blank to skip)")
+                else:
+                    text.assert_not_called()
 
     def test_validation_errors_propagate_unchanged_before_generation(self):
         for source in ("base", "workflow"):
@@ -264,7 +314,7 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
                     select = stack.enter_context(patch("git_tools.generators.base.interaction.questionary.select"))
                     select.return_value.unsafe_ask.side_effect = answers
                     copy = stack.enter_context(patch("pyperclip.copy"))
-                    commit = stack.enter_context(patch("git_tools.generators.commitgen.generator.subprocess.run"))
+                    commit = stack.enter_context(patch("git_tools.generators.commitgen.workflow.subprocess.run"))
                     with self.assertRaises(NavigationBack):
                         generator.generate_commit()
                 copy.assert_not_called()
@@ -334,6 +384,9 @@ class GenerationFlowTests(FlowBoundaries, unittest.TestCase):
 
 
 class ClipboardPolicyTests(FlowBoundaries, unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("git_tools.generators.commitgen.workflow.save_draft", return_value=None))
+
     def test_commit_copy_policy_for_success_local_and_missing_credentials(self):
         for path in ("success", "local", "missing-key"):
             for interactive in (False, True):
@@ -353,7 +406,7 @@ class ClipboardPolicyTests(FlowBoundaries, unittest.TestCase):
                             else:
                                 generator._generate_with_provider("diff [kept]", "system")
                         expected_ask = copy_flag is None and interactive
-                        expected_auto = copy_flag is True or (copy_flag is None and not interactive and path != "missing-key")
+                        expected_auto = copy_flag is True
                         self.assertEqual(ask.call_count, int(expected_ask))
                         self.assertEqual(auto.call_count, int(expected_auto))
                         if path != "success":
@@ -380,7 +433,7 @@ class ClipboardPolicyTests(FlowBoundaries, unittest.TestCase):
                                 display = stack.enter_context(patch("git_tools.generators.base.interaction.console"))
                                 generator.generate_issue_pullrequest()
                             expected_ask = copy_flag is None and interactive
-                            expected_auto = copy_flag is True or (copy_flag is None and not interactive and path != "missing-key")
+                            expected_auto = copy_flag is True
                             self.assertEqual(ask.call_count, int(expected_ask))
                             self.assertEqual(auto.call_count, int(expected_auto))
                             if path != "success":
@@ -465,7 +518,7 @@ class CliGenerationContractTests(unittest.TestCase):
                     args += ["--no-scope", "--no-footer", "--no-commit"]
                 else:
                     args += ["--source", "d", "--context", ""]
-                with patch(path) as constructor:
+                with patch(path) as constructor, patch("git_tools.cli._has_interactive_terminal", return_value=True):
                     result = CliRunner().invoke(app, args)
                 self.assertEqual(result.exit_code, 0, result.output)
                 values = constructor.call_args.kwargs

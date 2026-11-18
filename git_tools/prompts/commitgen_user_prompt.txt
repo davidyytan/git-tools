@@ -1,8 +1,1 @@
-Code Diffs:
-```
-{diff_content}
-```
-
-Using the rules, template and code diffs, generate a conventional commit message.
-
-Conventional commit message:
+Write the complete Conventional Commit message in your next reply, without an outer wrapper or introductory text.

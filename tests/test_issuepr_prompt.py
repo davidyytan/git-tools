@@ -4,6 +4,7 @@ import contextlib
 import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
+from xml.etree import ElementTree as ET
 
 from git_tools.generators.issueprgen import (
     AZURE_PR_DESCRIPTION_INSTRUCTION,
@@ -12,9 +13,103 @@ from git_tools.generators.issueprgen import (
     WorkflowPrContext,
     count_ado_chars,
 )
+from test_user_prompt_wrapping import assert_user_envelope, request_text
 
 
 class IssuePullRequestPromptTests(unittest.TestCase):
+    def setUp(self):
+        self.save = patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None)
+        self.save.start()
+        self.addCleanup(self.save.stop)
+
+    def test_document_specific_formatting_keeps_numbering_for_pr_overviews(self) -> None:
+        with contextlib.ExitStack() as stack:
+            forbidden = []
+            for target in ("subprocess.run", "subprocess.check_output", "socket.socket.connect", "socket.create_connection", "pyperclip.copy"):
+                forbidden.append(stack.enter_context(patch(target, side_effect=AssertionError(f"Prompt assembly attempted {target}"))))
+            forbidden.append(stack.enter_context(patch.object(IssuePullRequestGenerator, "invoke_llm", side_effect=AssertionError("Prompt assembly called an LLM"))))
+            for kind in ("pr", "issue", "both"):
+                generator = IssuePullRequestGenerator(generation_type=kind, interactive=False)
+                for source in ("d", "c", "b"):
+                    with self.subTest(kind=kind, source=source):
+                        prompt = generator._build_system_message("Sample input", source)
+                        self.assertNotIn("{document_rules}", prompt)
+                        self.assertNotIn("{generation_type_instruction}", prompt)
+                        self.assertNotIn("{template_content}", prompt)
+                        self.assertNotIn("{title_instruction}", prompt)
+                        self.assertNotIn("{focus_instruction}", prompt)
+                        self.assertNotIn("In `Problem Statement`, use Markdown numbered lists", prompt)
+                        self.assertNotIn("Apply numbered-list formatting only to the high-level content", prompt)
+                        if kind in ("pr", "both"):
+                            self.assertIn("write the main `Overview` as a Markdown numbered list", prompt)
+                            self.assertIn("Do not add a `## Related Issue` section", prompt)
+                        else:
+                            self.assertNotIn("Pull Request", prompt)
+                            self.assertNotIn("`Change Overview`", prompt)
+                        if kind in ("issue", "both"):
+                            self.assertIn("use concise paragraphs or unordered bullets rather than numbered lists", prompt)
+                            self.assertIn("Use ordered steps only for genuinely sequential instructions", prompt)
+                        else:
+                            self.assertNotIn("Issue writing rules:", prompt)
+                            self.assertNotIn("Issue Template:", prompt)
+                            self.assertNotIn("`Problem Statement`", prompt)
+            for action in forbidden:
+                action.assert_not_called()
+
+    def test_user_requests_are_task_specific_and_only_the_selected_file_is_loaded(self) -> None:
+        tasks = {
+            "pr": "Write the complete pull request in your next reply, without an outer wrapper or introductory text.",
+            "issue": "Write the complete issue in your next reply, without an outer wrapper or introductory text.",
+            "both": "Write the complete pull request followed by the issue in your next reply, without an outer wrapper or introductory text.",
+        }
+        for kind, task in tasks.items():
+            with self.subTest(kind=kind):
+                generator = IssuePullRequestGenerator(generation_type=kind, interactive=False)
+                with patch.object(generator, "_load_prompt_template", wraps=generator._load_prompt_template) as load:
+                    prompt = generator._build_full_prompt("Sample input")
+                root = assert_user_envelope(self, prompt, task)
+                self.assertEqual(root.tag, "sources")
+                self.assertEqual([node.tag for node in root], ["evidence"])
+                self.assertEqual(request_text(prompt), task)
+                self.assertEqual(prompt, "<evidence>Sample input</evidence>\n\n" + task)
+                self.assertEqual(root.findtext("evidence"), "Sample input")
+                self.assertFalse((root.text or "").strip())
+                self.assertTrue(all(not (node.tail or "").strip() for node in root))
+                self.assertTrue(all(len(node) == 0 for node in root))
+                load.assert_called_once_with(f"issuepr_user_prompt_{kind}.txt")
+
+    def test_system_prompt_selection_uses_current_mode_not_constructor_default(self) -> None:
+        generator = IssuePullRequestGenerator(interactive=False)
+        prefixes = {
+            "pr": "Task: Write a review-ready Pull Request",
+            "issue": "Task: Write an Issue",
+            "both": "Task: Write a coordinated Pull Request and Issue",
+        }
+        for kind in ("pr", "both", "issue"):
+            with self.subTest(kind=kind):
+                generator.generation_type = kind
+                with patch.object(generator, "_load_prompt_template", wraps=generator._load_prompt_template) as load:
+                    prompt = generator._build_system_message("Sample input", "b")
+                root = ET.fromstring(prompt)
+                self.assertTrue(root.findtext("rules").startswith(prefixes[kind]))
+                self.assertEqual([node.attrib["kind"] for node in root.findall("template")], ["pr", "issue"] if kind == "both" else [kind])
+                generation_files = [call.args[0] for call in load.call_args_list if call.args[0].startswith("issuepr_generation_")]
+                self.assertEqual(generation_files, [f"issuepr_generation_{kind}.txt"])
+        generator.generation_type = "other"
+        with self.assertRaisesRegex(ValueError, "Unsupported generation type"):
+            generator._build_system_message("Sample input", "b")
+
+    def test_issue_assembly_does_not_consult_pr_template_or_title_helpers(self) -> None:
+        generator = IssuePullRequestGenerator(generation_type="issue", interactive=False)
+        with contextlib.ExitStack() as stack:
+            helpers = []
+            for name in ("_build_pr_template", "_build_pr_title_instruction", "_build_both_title_instruction"):
+                helpers.append(stack.enter_context(patch.object(generator, name, side_effect=AssertionError(f"Issue assembly used {name}"))))
+            prompt = generator._build_system_message("Sample input", "d")
+            self.assertIn("Issue writing rules:", prompt)
+            for helper in helpers:
+                helper.assert_not_called()
+
     def test_process_diff_with_size_limiting_handles_empty_diff(self) -> None:
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=False)
 
@@ -136,8 +231,8 @@ class IssuePullRequestPromptTests(unittest.TestCase):
         self.assertIn("must be a valid Conventional Commit header", system_message)
         self.assertIn("must be exactly one Conventional Commit header line", system_message)
         self.assertIn("`style`", system_message)
-        self.assertIn("Prefer `style` for formatting-only or text-only changes", system_message)
-        self.assertIn("Prefer `chore` for maintenance or operational changes", system_message)
+        self.assertIn("Prefer `style` for formatting-only or generic text-only changes outside documentation", system_message)
+        self.assertIn("Prefer `chore` for maintenance, repo housekeeping, or release metadata changes not covered by a more specific type", system_message)
         self.assertIn("feat(auth): add SSO login", system_message)
         self.assertIn("fix(cli): handle empty staged diff", system_message)
         self.assertIn("style: add line to abc.txt", system_message)
@@ -695,6 +790,7 @@ Issue: #123
             generation_type="pr",
             input_source="c",
             interactive=False,
+            copy_clipboard=True,
         )
         commit_info = {
             "base_branch": "develop",
@@ -770,6 +866,7 @@ Issue: #123
             release_pr=True,
             input_source="c",
             interactive=False,
+            copy_clipboard=True,
         )
         release_context = PromotionPrContext(
             current_branch="release/1.0.0",
@@ -935,8 +1032,17 @@ Issue: #123
             generator.generate_issue_pullrequest()
 
         content_arg = generate_content.call_args.args[0]
-        self.assertIn("Commit Messages:", content_arg)
-        self.assertNotIn("Code Diffs:", content_arg)
+        prompt = generator._build_full_prompt(content_arg)
+        request = generator._load_prompt_template("issuepr_user_prompt_pr.txt").strip()
+        root = assert_user_envelope(self, prompt, request)
+        self.assertEqual(root.tag, "sources")
+        self.assertEqual(request_text(prompt), request)
+        self.assertEqual(root.find("commit_messages").get("boundaries"), "unknown")
+        self.assertEqual(root.findtext("commit_messages/commit_group"), "chore: open release")
+        self.assertEqual(root.findall("diffs"), [])
+        self.assertEqual(root.findall("evidence"), [])
+        self.assertFalse((root.text or "").strip())
+        self.assertTrue(all(not (node.tail or "").strip() for node in root))
         warning_mock.assert_any_call(
             "No code diffs found for this range; using commit messages only."
         )
@@ -947,6 +1053,7 @@ Issue: #123
             generation_type="pr",
             input_source="c",
             interactive=False,
+            copy_clipboard=True,
         )
         commit_info = {
             "base_branch": "develop",
@@ -1025,6 +1132,7 @@ Issue: #123
             generation_type="issue",
             input_source="c",
             interactive=False,
+            copy_clipboard=True,
         )
         commit_info = {
             "base_branch": "develop",
@@ -1091,6 +1199,11 @@ Issue: #123
 
 class AzurePrDescriptionLimitTests(unittest.TestCase):
     """Azure DevOps PR description limit: detection, counting, and flow."""
+
+    def setUp(self):
+        self.save = patch("git_tools.generators.issueprgen.generator.save_draft", return_value=None)
+        self.save.start()
+        self.addCleanup(self.save.stop)
 
     # -- count_ado_chars (UTF-16 code units) ---------------------------
 
@@ -1286,6 +1399,7 @@ class AzurePrDescriptionLimitTests(unittest.TestCase):
             input_source="c",
             azure_limit=azure_limit,
             interactive=False,
+            copy_clipboard=True,
         )
 
     def _run_flow(self, generator, responses, apply_limit):

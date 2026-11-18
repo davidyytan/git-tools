@@ -169,33 +169,53 @@ class FixedTitleMixin:
         return None
 
     def _normalize_pr_output(self, content: str) -> str:
-        normalized = content.strip()
-        fixed_title = self._resolve_fixed_pr_title()
-
-        if self.generation_type in {"pr", "both"}:
-            normalized = re.sub(
-                r"(?ms)^## Related Issue\s*\nIssue:.*?(?:\n{2,}|(?=## )|$)",
-                "",
-                normalized,
-            ).strip()
-            normalized = re.sub(
-                r"(?m)^Next Develop:.*(?:\n|$)",
-                "",
-                normalized,
-            ).strip()
-
-        if fixed_title is None or self.generation_type not in {"pr", "both"}:
+        if not content.strip():
+            return ""
+        normalized = content.strip("\r\n")
+        if self.generation_type == "issue":
+            return normalized
+        if self.generation_type == "both":
+            # Combined templates have no reliable section delimiter. Never guess which title belongs to the PR.
             return normalized
 
-        title_line = f"## Title: {fixed_title}"
-        if re.search(r"(?m)^## Title:.*$", normalized):
-            normalized = re.sub(
-                r"(?m)^## Title:.*$",
-                title_line,
-                normalized,
-                count=1,
-            ).strip()
-        else:
-            normalized = f"{title_line}\n\n{normalized}".strip()
+        fixed_title = self._resolve_fixed_pr_title()
+        chunks = []
+        outside = []
+        fenced = []
+        marker = None
+        title_replaced = False
 
+        def flush_outside():
+            nonlocal title_replaced
+            text = "".join(outside)
+            outside.clear()
+            text = re.sub(r"(?ms)^## Related Issue[^\S\r\n]*\r?\nIssue:.*?(?:(?:\r?\n){2,}|(?=## )|$)", "", text)
+            text = re.sub(r"(?m)^Next Develop:[^\r\n]*(?:\r?\n|$)", "", text)
+            if fixed_title is not None and not title_replaced:
+                text, count = re.subn(r"(?m)^## Title:[^\r\n]*", lambda match: f"## Title: {fixed_title}", text, count=1)
+                title_replaced = bool(count)
+            chunks.append(text)
+
+        for line in normalized.splitlines(keepends=True):
+            if marker is not None:
+                fenced.append(line)
+                if re.fullmatch(rf" {{0,3}}{re.escape(marker[0])}{{{len(marker)},}}[ \t]*", line.rstrip("\r\n")):
+                    chunks.append("".join(fenced))
+                    fenced.clear()
+                    marker = None
+                continue
+            opening = re.match(r" {0,3}(`{3,}|~{3,})", line)
+            if opening:
+                flush_outside()
+                marker = opening.group(1)
+                fenced.append(line)
+            else:
+                outside.append(line)
+        flush_outside()
+        chunks.extend(fenced)
+        normalized = "".join(chunks).strip("\r\n")
+        if not normalized.strip():
+            return ""
+        if fixed_title is not None and not title_replaced:
+            normalized = f"## Title: {fixed_title}\n\n{normalized}"
         return normalized

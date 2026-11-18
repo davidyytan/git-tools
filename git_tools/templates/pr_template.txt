@@ -1,43 +1,26 @@
-Pull Request Template:
-```
 {title_block}
 
 ## Change Overview
 ### Overview
-Provide a clear, concise description in sentences that answers:
-- What problem does this PR solve?
-- What is the core solution implemented?
-- Why was this approach chosen?
+[Distinct changes and supported practical benefits, using the Pull Request overview rule; do not narrate commits one by one.]
 
 ### Scope
 Main changes:
-- Features implemented/modified
-- Systems and services affected
-- Configuration and dependencies
-- Other technical impacts
+- [Affected components, interfaces, configuration, or dependencies, and material scope limits; use only relevant bullets.]
 
 ## Technical Details
+[Include only subsections that help a reviewer understand the change; omit irrelevant ones and avoid repeating the overview.]
+
 ### Architecture Changes
-- System design changes
-- Component/service interactions
-- Integration points modified
-- Technical architecture decisions
+[Changed boundaries or interactions, when there is a meaningful architectural change.]
 
 ### Code Changes
-- Detailed summary along with code snippets if necessary
-- Key algorithms/logic modifications
-- Configuration updates
-- New dependencies
-- Changes to interfaces
+[Significant logic, interface, configuration, dependency, and test changes. Report supplied validation/results with attribution; code snippets only when useful and sourced.]
 
 ### Design Decisions
-- Explain important technical choices
-- Document considered alternatives
-- Include relevant diagrams/screenshots
-- Note technical debt implications
+[Observable tradeoffs and limitations; include author rationale or alternatives when explicitly supplied.]
 
-Labels: [feature/bug/security/documentation]
-Priority: [P0/P1/P2]
+Labels: [comma-separated supplied repository label names; otherwise applicable bug/enhancement/documentation]
+Priority: [P0/P1/P2; supported impact/risk, not invented urgency]
 Size: [XS/S/M/L/XL]
-Estimate: [1/2/3/4/5/6/7/8/9/10/11/12/13/14]
-```
+Estimate: [numeric 1–14 relative effort; use supplied units only; no fixed size-to-estimate conversion]

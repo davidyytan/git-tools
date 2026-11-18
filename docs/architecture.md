@@ -20,6 +20,7 @@ This guide maps the source tree so changes land in the module that owns them. Fo
 | `git_tools/prompts/` | System and user prompt text files, loaded by name |
 | `git_tools/templates/` | Commit, issue, and PR output templates with their loader |
 | `git_tools/generators/` | One package per command plus the shared `base` package, described below |
+| `git_tools/generators/utils/artifacts.py` | Stdlib-only output-path validation and private-staging, no-clobber publication shared by commit and issue/PR generators |
 | `git_tools/generators/utils/version_sync/` | Stdlib-only text transforms for `pyproject.toml`, `uv.lock`, npm manifests, and Cargo files |
 | `git_tools/generators/publish.py` | CI publisher for a version commit and its tag; see [publication](publication.md) |
 
@@ -52,7 +53,7 @@ A generator class is composed from small mixins plus `BaseGenerator`. Mixins hol
 | --- | --- |
 | `sensitive.py` | `SensitiveFileMatch`, the sensitive-path patterns, detection, and the confirmation gate |
 | `messages.py` | Commit system prompt, model call, and Conventional Commit parsing |
-| `workflow.py` | Fixed-subject commits such as `chore: open release` |
+| `workflow.py` | Fixed subjects plus the shared output/action resolver, commit-message saving, recovery, and Git commit action for both commit modes |
 | `generator.py` | `CommitGenerator` and the end-to-end commit flow |
 
 ### `issueprgen/`
@@ -70,6 +71,7 @@ A generator class is composed from small mixins plus `BaseGenerator`. Mixins hol
 | `content.py` | Choosing diffs, commits, or both and assembling the model input |
 | `prompts.py` | System and user prompt assembly, model call, and output parsing |
 | `titles.py` | Fixed PR titles, their prompt instructions, and output normalization |
+| `artifacts.py` | Compatibility re-export of the shared artifact writer |
 | `generator.py` | `IssuePullRequestGenerator` and the end-to-end flow |
 
 ### `bumpgen/`

@@ -1,5 +1,6 @@
 """``IssuePullRequestGenerator``: issue and PR text from commits and diffs."""
 
+from pathlib import Path
 from typing import Optional
 
 from rich.markup import escape
@@ -12,10 +13,13 @@ from ..base import (
     STYLE_BORDER,
     BaseGenerator,
     console,
-    error,
     info,
+    success,
     warning,
 )
+from ..base.prompts import wrap_system_prompt
+from ..base.responses import unwrap_outer_xml_response
+from ..utils.artifacts import resolve_output_path, save_draft
 from .azure import AZURE_PR_DESCRIPTION_INSTRUCTION, AzureLimitMixin
 from .branches import BranchResolutionMixin
 from .commits import CommitHistoryMixin
@@ -63,6 +67,7 @@ class IssuePullRequestGenerator(
         azure_limit: Optional[bool] = None,
         interactive: bool = False,
         copy_clipboard: Optional[bool] = None,
+        output_path: str | Path | None = None,
     ):
         super().__init__(
             model=model,
@@ -73,7 +78,6 @@ class IssuePullRequestGenerator(
         )
         # Set generation_type from CLI or default to "issue"
         self.generation_type = generation_type if generation_type else "issue"
-        self.issuepr_prompt = self._load_prompt_template("issuepr_prompt.txt")
 
         # CLI parameters for issue/pr-specific options
         self._cli_generation_type = generation_type
@@ -88,6 +92,7 @@ class IssuePullRequestGenerator(
         self._cli_context = context
         self._cli_azure_limit = azure_limit
         self._cli_copy_clipboard = copy_clipboard
+        self._cli_output_path = output_path
         self.release_pr = bool(release_pr)
         self.hotfix_pr = bool(hotfix_pr)
         self.start_pr = bool(start_pr)
@@ -96,13 +101,15 @@ class IssuePullRequestGenerator(
         self._promotion_pr_context: PromotionPrContext | None = None
         self._workflow_pr_context: WorkflowPrContext | None = None
 
-    def generate_issue_pullrequest(self) -> None:
+    def generate_issue_pullrequest(self) -> Optional[Path]:
         """Main generation workflow.
 
         Uses CLI parameters if provided. If not:
         - Interactive mode: prompts for input
         - Non-interactive mode: uses defaults
         """
+        output_directory = Path.cwd()
+        output_path = resolve_output_path(self._cli_output_path, output_directory, validate_default=True)
         # CLI mode: add leading blank line to separate from command
         if not self._interactive:
             console.print()
@@ -125,6 +132,8 @@ class IssuePullRequestGenerator(
             workflow_pr_context = self._resolve_backmerge_hotfix_pr_context(base_branch)
         self._promotion_pr_context = promotion_context
         self._workflow_pr_context = workflow_pr_context
+        if (self.hotfix_pr and promotion_context is None) or (self._fixed_pr_title_placeholder() is not None and self._resolve_fixed_pr_title() is None):
+            raise ValueError("Cannot determine a validated target version for this fixed-title PR mode. Resolve the required managed versions or workflow context before generating content.")
 
         commit_info = self.get_commit_info(base_branch)
 
@@ -132,6 +141,7 @@ class IssuePullRequestGenerator(
 
         if (not commit_info or commit_info["commit_count"] < 1) and fixed_context is None:
             warning("No commits to generate from")
+            self._require_finished_output()
             return
 
         if commit_info and commit_info["commit_count"] >= 1:
@@ -142,6 +152,7 @@ class IssuePullRequestGenerator(
 
         collected = self._collect_generation_content(commit_info, fixed_context)
         if collected is None:
+            self._require_finished_output()
             return
         input_source, content = collected
 
@@ -153,16 +164,7 @@ class IssuePullRequestGenerator(
         else:
             context = None  # Default: no context
 
-        if context:
-            content = (
-                content
-                + "\n\n"
-                + "Here are some additional context to guide the diffs and/or commit messages. The generated content should try its best to use the context but stay faithful to the diffs and/or commit messages. Context is user intent but diffs and commit messages are the actual code changes."
-                + "\n\n"
-                + "Context:\n```\n"
-                + context
-                + "\n```"
-            )
+        content = self._append_user_context(content, context)
 
         # Separate an answered context prompt (or fixed mode without a summary)
         # from the next status/settings section. Existing panels own their gap.
@@ -181,7 +183,7 @@ class IssuePullRequestGenerator(
                 f" The user's preferred limit is {settings.azure_pr_max_chars} "
                 "UTF-16 units; keep the generated PR within that limit."
             )
-            system_msg = f"{system_msg}\n\n{instruction}"
+            system_msg = wrap_system_prompt(system_msg, instruction)
 
         if self._interactive:
             self.display_generation_settings(
@@ -195,6 +197,7 @@ class IssuePullRequestGenerator(
             if not self.prompt_confirm("Generate content using external providers?", default=True):
                 console.print()
                 self._handle_local_mode(content, system_msg)
+                self._require_finished_output()
                 return
 
         # Provider initialization
@@ -208,62 +211,72 @@ class IssuePullRequestGenerator(
             info("Falling back to local mode...")
             console.print()
             self._handle_local_mode(content, system_msg, allow_auto=False)
+            self._require_finished_output()
             return
 
         model, temperature, max_tokens = self.select_model_params(provider)
 
         if not self._initialize_service(provider, model, temperature, max_tokens):
-            return
+            raise ValueError(f"Failed to initialize {provider} service. Check your configuration and API keys.")
 
         response = self.generate_content(content, system_msg)
         if not response:
-            error("Failed to generate content")
-            return
+            raise ValueError("Failed to generate content")
+        raw_output = response.get("content")
+        if not isinstance(raw_output, str):
+            raise ValueError("No valid generated text found")
+        parsed_source = self.parse_generated_content(raw_output)
+        if not parsed_source.strip():
+            # Preserve substantial imperfect output, but never promote a verified empty envelope into a draft.
+            if self.generation_type != "pr" or not raw_output.strip() or raw_output.strip().startswith(("```", "~~~")) or unwrap_outer_xml_response(raw_output) is not None:
+                raise ValueError(f"No valid {self.generation_type} content found")
+            parsed_source = raw_output
+            warning("Parsed PR content was empty. Using raw model output instead.")
+        display_output = self._normalize_pr_output(parsed_source)
+        if not display_output.strip():
+            raise ValueError(f"No valid {self.generation_type} content found")
+        if apply_azure_limit:
+            display_output = self._enforce_azure_pr_description_limit(display_output, content, system_msg)
+        copy_output = display_output if self.generation_type == "pr" else raw_output
 
-        self.display_reasoning(response)
-
-        parsed = self._normalize_pr_output(self.parse_generated_content(response["content"]))
-        if apply_azure_limit and parsed:
-            parsed = self._enforce_azure_pr_description_limit(parsed, content, system_msg)
-        display_output = parsed
-        copy_output = response["content"]
-        used_raw_fallback = False
-
-        if self.generation_type == "pr":
-            if parsed:
-                display_output = parsed
-                copy_output = display_output
-            else:
-                raw_output = response["content"].strip()
-                if raw_output:
-                    display_output = raw_output
-                    copy_output = display_output
-                    used_raw_fallback = True
-
-        type_labels = {
-            "pr": "PR Description",
-            "issue": "Issue Description",
-            "both": "Combined Output",
-        }
-
-        if display_output:
-            if used_raw_fallback:
-                warning("Parsed PR content was empty. Using raw model output instead.")
+        # Save paid-for output before metadata rendering or a cancellable copy question.
+        saved_path = None
+        save_error = None
+        try:
+            save_options = {"output_path": output_path} if output_path is not None else {}
+            saved_path = save_draft(display_output, self.generation_type, output_directory, **save_options)
+        except (OSError, UnicodeError) as exc:
+            destination = str(output_path) if output_path is not None else f"draft in {output_directory}"
+            save_error = ValueError(f"Could not save {self.generation_type} {destination}: {exc}")
+        try:
+            if saved_path is not None:
+                success(f"Saved draft: {escape(str(saved_path))}")
                 console.print()
-            console.print(Panel(escape(display_output.strip()), title=f"[bold]{type_labels.get(self.generation_type, 'Output')}[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
-            console.print()
-        else:
-            error_msgs = {
-                "pr": "No valid PR content found",
-                "issue": "No valid issue content found",
-                "both": "No valid content found",
+            if save_error is not None:
+                warning("Draft could not be saved; the preview and requested clipboard handoff are still available.")
+
+            self.display_optional_metadata(response, kind="reasoning")
+            type_labels = {
+                "pr": "PR Description",
+                "issue": "Issue Description",
+                "both": "Combined Output",
             }
-            error(error_msgs.get(self.generation_type, "No valid content found"))
-            return
+            if console.is_terminal:
+                console.print(Panel(escape(display_output), title=f"[bold]{type_labels.get(self.generation_type, 'Output')}[/bold]", border_style=STYLE_BORDER, title_align=ALIGN_PANEL), soft_wrap=False)
+            else:
+                console.print(display_output, markup=False, highlight=False, emoji=False, soft_wrap=True)
+            console.print()
+            self.display_optional_metadata(response, kind="token usage")
+            self.handoff_to_clipboard(copy_output, leading_space=False)
+        finally:
+            # Keep an already-failed save authoritative, even if later output or cancellation interrupts recovery.
+            if save_error is not None:
+                raise save_error
+        return saved_path
 
-        self.display_token_usage(response)
-
-        self.handoff_to_clipboard(copy_output, leading_space=False)
+    def _require_finished_output(self) -> None:
+        if self._cli_output_path is not None:
+            raise ValueError("No finished document was generated for --output; no file was written.")
 
     def _handle_local_mode(
         self, content: str, system_msg: str, *, allow_auto: bool = True
@@ -273,7 +286,7 @@ class IssuePullRequestGenerator(
         self.handoff_local_prompt(full_prompt, allow_auto=allow_auto)
 
 
-def generate_issue_pullrequest() -> None:
+def generate_issue_pullrequest() -> Optional[Path]:
     """Entry point for issue and pull request generation.
 
     Creates an IssuePullRequestGenerator instance and runs the generation workflow.

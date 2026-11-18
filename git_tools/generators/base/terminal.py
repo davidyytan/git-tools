@@ -8,11 +8,11 @@ from git_tools.settings.settings import settings
 
 # Rich console for styled output
 # - soft_wrap: prevents trailing spaces from creating phantom lines
-# - force_terminal: ensures consistent TTY detection
+# - color: automatic TTY detection; redirected output must not force ANSI controls
 # - width offset: fixes off-by-one terminal width issue on some terminals (Rich issue #7)
-_auto_width = Console(force_terminal=True).width
+_auto_width = Console().width
 _width_offset = settings.console_width_offset
-console = Console(soft_wrap=True, force_terminal=True, width=_auto_width + _width_offset if _auto_width else None)
+console = Console(soft_wrap=True, emoji=False, width=_auto_width + _width_offset if _auto_width else None)
 
 
 # ============================================================================
@@ -29,22 +29,22 @@ STYLE_DIM = "dim"  # STYLE_OPTION_DEFAULT, STYLE_HELPTEXT
 
 def info(message: str) -> None:
     """Print info message."""
-    console.print(f"[{STYLE_SUCCESS}]• {message}[/{STYLE_SUCCESS}]")
+    console.print(f"[{STYLE_SUCCESS}]• {message}[/{STYLE_SUCCESS}]", emoji=False)
 
 
 def success(message: str) -> None:
     """Print success message."""
-    console.print(f"[{STYLE_SUCCESS}]✓ {message}[/{STYLE_SUCCESS}]")
+    console.print(f"[{STYLE_SUCCESS}]✓ {message}[/{STYLE_SUCCESS}]", emoji=False)
 
 
 def warning(message: str) -> None:
     """Print warning message (yellow, needs attention)."""
-    console.print(f"[{STYLE_WARNING}]⚠ {message}[/{STYLE_WARNING}]")
+    console.print(f"[{STYLE_WARNING}]⚠ {message}[/{STYLE_WARNING}]", emoji=False)
 
 
 def error(message: str) -> None:
     """Print error message (red, needs action)."""
-    console.print(f"[{STYLE_ERROR}]✗ {message}[/{STYLE_ERROR}]")
+    console.print(f"[{STYLE_ERROR}]✗ {message}[/{STYLE_ERROR}]", emoji=False)
 
 
 def print_panel(content: str, title: str = "", border_style: str = STYLE_BORDER) -> None:

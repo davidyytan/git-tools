@@ -55,7 +55,7 @@ class BumpGenerator(BaseGenerator):
 
     def generate_bump(self, *, cwd: Path | None = None) -> None:
         root = (cwd or Path.cwd()).resolve()
-        if self._interactive:
+        if self._interactive and not self._cli_get_next:
             self._print_repo_context(root)
 
         options = self._build_options()

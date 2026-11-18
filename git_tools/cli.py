@@ -63,6 +63,7 @@ app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
     context_settings={"help_option_names": ["-h", "--help"]},
+    epilog="Manual: docs/usage.md in the source checkout. Bare 'git-tools commit' creates a real commit; use --no-commit or -o PATH to save without committing.",
 )
 
 
@@ -113,6 +114,15 @@ def _has_interactive_terminal() -> bool:
     """Return True when stdin and stdout are interactive terminals."""
     return sys.stdin.isatty() and sys.stdout.isatty()
 
+
+def _require_interactive_terminal(interactive: bool) -> None:
+    """Reject an unavailable prompt stream before doing any generation or mutation."""
+    if interactive and not _has_interactive_terminal():
+        error("Interactive mode requires a terminal on stdin and stdout. Omit --interactive for non-interactive use.")
+        raise typer.Exit(1)
+
+
+_INPUT_ENDED_MESSAGE = "Input ended before the operation completed. For unattended use, choose a direct, non-interactive command."
 
 REASONING_EFFORT_CHOICES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -560,9 +570,12 @@ def main(
                 pointer="›",
                 instruction="(↑↓ move · Enter picks · Esc exits)",
             ))
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt:
             warning("Operation cancelled by user.")
             raise typer.Exit(0)
+        except EOFError:
+            error(_INPUT_ENDED_MESSAGE)
+            raise typer.Exit(1)
 
         if choice is None or choice == "exit":
             raise typer.Exit(0)
@@ -572,9 +585,12 @@ def main(
         if choice == "settings":
             try:
                 _run_settings_menu(done_label="← Back")
-            except (KeyboardInterrupt, EOFError):
+            except KeyboardInterrupt:
                 warning("Operation cancelled by user.")
                 raise typer.Exit(0)
+            except EOFError:
+                error(_INPUT_ENDED_MESSAGE)
+                raise typer.Exit(1)
             # Content commands read the settings singleton; pick up any edits.
             reload_settings()
             console.print()
@@ -786,9 +802,12 @@ def log(
                 console.print()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         literal("⚠ Operation cancelled by user.", style="yellow")
         raise typer.Exit(0)
+    except EOFError:
+        literal(_INPUT_ENDED_MESSAGE, style="red")
+        raise typer.Exit(1)
     except HistoryError as exc:
         literal(str(exc), style="red")
         raise typer.Exit(1)
@@ -835,11 +854,15 @@ def commit(
     ] = None,
     auto_commit: Annotated[
         Optional[bool],
-        typer.Option("--commit/--no-commit", help="Commit changes directly"),
+        typer.Option("--commit/--no-commit", help="Create a real commit (direct-mode default unless --output is supplied)"),
     ] = None,
     copy: Annotated[
         Optional[bool],
-        typer.Option("--copy/--no-copy", help="Copy to clipboard"),
+        typer.Option("--copy/--no-copy", help="Copy when not committing (direct-mode default: off)"),
+    ] = None,
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", metavar="PATH", help="Save to this exact file without overwriting; output-only unless --commit is explicit"),
     ] = None,
     force_sensitive: Annotated[
         bool,
@@ -857,17 +880,21 @@ def commit(
         typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
-    """Generate a conventional commit message or the release opener subject.
+    """Generate or commit a message; save COMMIT.md when not committing.
+
+    Direct mode commits by default. Use --no-commit or -o PATH to save without committing. --copy is opt-in and does not disable committing.
 
     Examples:
-        git-tools commit
-        git-tools commit --model anthropic/claude-sonnet-4
+        git-tools commit -o commit-message.txt
+        git-tools commit --no-commit
+        git-tools commit --no-commit --copy
         git-tools commit --no-scope --no-footer --commit
-        git-tools commit --workflow-kind open-release
+        git-tools commit --workflow-kind open-release --no-commit
     """
     from .generators.commitgen import CommitGenerator
 
     try:
+        _require_interactive_terminal(interactive)
         generator = CommitGenerator(
             model=model,
             temperature=temperature,
@@ -879,6 +906,7 @@ def commit(
             body_style=body_style.value if body_style is not None else None,
             auto_commit=auto_commit,
             copy_clipboard=copy,
+            output_path=output,
             force_sensitive=force_sensitive,
             workflow_kind=workflow_kind.value if workflow_kind is not None else None,
             interactive=interactive,
@@ -886,9 +914,12 @@ def commit(
         generator.generate_commit()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except typer.Exit:
         raise
     except ValueError as e:
@@ -937,23 +968,31 @@ def issue(
     ] = None,
     copy: Annotated[
         Optional[bool],
-        typer.Option("--copy/--no-copy", help="Copy generated content to clipboard or skip copying"),
+        typer.Option("--copy/--no-copy", help="Copy generated content as well (direct-mode default: off)"),
+    ] = None,
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", metavar="PATH", help="Save final Markdown to this exact file without overwriting (parent directory must exist)"),
     ] = None,
     interactive: Annotated[
         bool,
         typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
-    """Generate a GitHub issue from recent commits.
+    """Generate issue text and save ISSUE.md (or a unique timestamped draft).
+
+    Save final Markdown locally; this does not create a hosted issue. Use -o PATH for an exact filename or --copy for an additional clipboard handoff.
 
     Examples:
         git-tools issue
-        git-tools issue --base develop
+        git-tools issue -o issue-draft.md
+        git-tools issue --base develop --copy
         git-tools issue --base main --source b
     """
     from .generators.issueprgen import IssuePullRequestGenerator
 
     try:
+        _require_interactive_terminal(interactive)
         generator = IssuePullRequestGenerator(
             generation_type="issue",
             base_branch=base,
@@ -964,14 +1003,18 @@ def issue(
             max_tokens=max_tokens,
             token_limit=token_limit,
             copy_clipboard=copy,
+            output_path=output,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except typer.Exit:
         raise
     except ValueError as e:
@@ -1055,7 +1098,11 @@ def pr(
     ] = None,
     copy: Annotated[
         Optional[bool],
-        typer.Option("--copy/--no-copy", help="Copy generated content to clipboard or skip copying"),
+        typer.Option("--copy/--no-copy", help="Copy generated content as well (direct-mode default: off)"),
+    ] = None,
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", metavar="PATH", help="Save final Markdown to this exact file without overwriting (parent directory must exist)"),
     ] = None,
     azure_limit: Annotated[
         Optional[bool],
@@ -1077,11 +1124,14 @@ def pr(
         typer.Option("--interactive", "-i", help="Run in interactive mode"),
     ] = False,
 ) -> None:
-    """Generate a pull request description from recent commits.
+    """Generate PR text and save PR.md (or a unique timestamped draft).
+
+    Save final Markdown locally; this does not open a hosted PR. Use -o PATH for an exact filename or --copy for an additional clipboard handoff.
 
     Examples:
         git-tools pr
-        git-tools pr --base develop
+        git-tools pr -o review-pr.md
+        git-tools pr --base develop --copy
         git-tools pr --base main --source b
         git-tools pr --release-pr
         git-tools pr --hotfix-pr
@@ -1092,6 +1142,7 @@ def pr(
     from .generators.issueprgen import IssuePullRequestGenerator
 
     try:
+        _require_interactive_terminal(interactive)
         if (
             sum(
                 1
@@ -1129,14 +1180,18 @@ def pr(
             token_limit=token_limit,
             azure_limit=azure_limit,
             copy_clipboard=copy,
+            output_path=output,
             interactive=interactive,
         )
         generator.generate_issue_pullrequest()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except typer.Exit:
         raise
     except ValueError as e:
@@ -1240,6 +1295,7 @@ def bump(
     from .generators.bumpgen import BumpGenerator
 
     try:
+        _require_interactive_terminal(interactive and not get_next)
         generator = BumpGenerator(
             increment=increment.value if increment else None,
             default_increment=default_increment.value if default_increment else None,
@@ -1261,9 +1317,12 @@ def bump(
         generator.generate_bump()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except BumpError as e:
         error(str(e))
         raise typer.Exit(1)
@@ -1332,6 +1391,7 @@ def init_command(
     use_interactive = interactive and not defaults
 
     try:
+        _require_interactive_terminal(use_interactive)
         generator = CommitizenInitGenerator(
             config_file=config_file.value if config_file else None,
             version=version,
@@ -1343,9 +1403,12 @@ def init_command(
         generator.generate_init()
     except NavigationBack:
         _cancel_command()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
     except CzInitError as e:
         error(str(e))
         raise typer.Exit(1)
@@ -2569,9 +2632,12 @@ def settings_command(
             error("git-tools settings requires an interactive terminal.")
             raise typer.Exit(1)
         _run_settings_menu()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         warning("Operation cancelled by user.")
         raise typer.Exit(0)
+    except EOFError:
+        error(_INPUT_ENDED_MESSAGE)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
 
 from pydantic import ValidationError
 from typer.testing import CliRunner
@@ -10,6 +11,7 @@ from git_tools.cli import app, _edit_azure_pr_limit
 from git_tools.settings import settings as config
 from git_tools.settings.settings import GitToolsSettings
 from git_tools.generators.issueprgen import IssuePullRequestGenerator
+from test_user_prompt_wrapping import assert_user_envelope, request_text
 
 
 class AzurePrSettingsTests(unittest.TestCase):
@@ -72,7 +74,21 @@ class AzurePrSettingsTests(unittest.TestCase):
             self.assertEqual(generator._enforce_azure_pr_description_limit("x" * 2000, "input", "system"), "x" * 2000)
             generate.assert_not_called()
             self.assertEqual(generator._enforce_azure_pr_description_limit("😀" * 1001, "input", "system"), "short")
-            self.assertIn("2000 characters", generate.call_args.args[1])
+            generate.assert_called_once()
+            content, system = generate.call_args.args
+            self.assertEqual(content, "input")
+            root = ET.fromstring(system)
+            self.assertEqual(root.tag, "system_prompt")
+            self.assertIn("2000 characters", root.findtext("rules"))
+            self.assertTrue(root.findtext("rules").startswith("system\n\n"))
+            prompt = generator._build_full_prompt(content)
+            request = generator._load_prompt_template("issuepr_user_prompt_pr.txt").strip()
+            user = assert_user_envelope(self, prompt, request)
+            self.assertEqual(user.tag, "sources")
+            self.assertEqual(user.findtext("evidence"), "input")
+            self.assertEqual(user.findall(".//request"), [])
+            self.assertEqual(request_text(prompt), request)
+            self.assertEqual(user.findall(".//user_prompt"), [])
 
     def test_saved_auto_does_not_repeat_limit_question(self):
         generator = IssuePullRequestGenerator(generation_type="pr", interactive=True)

@@ -5,6 +5,6 @@ Title guidance:
 - Do not generate an alternative Pull Request title.
 - Good PR title examples: `Backmerge Release 1.6.0`, `Backmerge Release 1.6.1`, `Backmerge Release 2.0.0`.
 - In the PR body, frame the PR as a release backmerge into `develop`.
-- If `develop` is already ahead, describe it as preserving that line and possibly advancing alpha by one.
-- If `develop` is not ahead yet, describe it as catching `develop` up to the target stable version without tagging.
+- If `develop` is already ahead, describe it as preserving that line; meaningful unique fixes may advance alpha by one there.
+- If `develop` is not ahead yet, describe how the backmerge may catch `develop` up to the target stable version without tagging.
 - Do not invent QA results, rollout steps, or release notes not supported by the available artifacts.

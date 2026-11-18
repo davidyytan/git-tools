@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import patch
+from typer.testing import CliRunner
+from git_tools.cli import app
 
 from git_tools.generators.bumpgen import BumpGenerator
 
@@ -45,6 +47,14 @@ class BumpGeneratorTests(unittest.TestCase):
         self.assertTrue(options.yes)
         select.assert_not_called()
         confirm.assert_not_called()
+
+    def test_real_cli_get_next_with_interactive_flag_prints_only_the_version(self) -> None:
+        for interactive in (False, True):
+            with self.subTest(interactive=interactive), patch("git_tools.cli._has_interactive_terminal", return_value=False), patch.object(BumpGenerator, "_print_repo_context", side_effect=AssertionError("unexpected context output")), patch.object(BumpGenerator, "prompt_select", side_effect=AssertionError("unexpected prompt")), patch.object(BumpGenerator, "prompt_confirm", side_effect=AssertionError("unexpected prompt")), patch("git_tools.generators.bumpgen.generator.run_bump", side_effect=lambda *args, **kwargs: print("1.2.4")) as run:
+                result = CliRunner().invoke(app, ["bump", "--get-next", *(["-i"] if interactive else [])])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(result.output, "1.2.4\n")
+            self.assertTrue(run.call_args.args[0].get_next)
 
     def test_get_next_skips_interactive_prompts(self) -> None:
         generator = BumpGenerator(get_next=True, interactive=True)

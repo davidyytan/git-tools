@@ -5,6 +5,9 @@ from typing import Any, Dict, Optional
 
 from git_tools.templates import get_issue_template, get_pr_template
 
+from ..base.prompts import wrap_system_prompt, wrap_user_prompt, xml_evidence
+from ..base.responses import unwrap_outer_xml_response
+
 
 class PromptAssemblyMixin:
     """Compose the templated system message and the user prompt."""
@@ -19,24 +22,21 @@ class PromptAssemblyMixin:
         Returns:
             Formatted system message for the LLM
         """
-        pr_template = self._build_pr_template()
-        issue_template = get_issue_template()
-
-        template_map = {
-            "pr": pr_template,
-            "issue": issue_template,
-            "both": pr_template + "\n\n" + issue_template,
-        }
-        instruction_map = {
-            "issue": self._load_prompt_template("issuepr_generation_issue.txt").strip(),
-            "pr": self._load_prompt_template("issuepr_generation_pr.txt").strip(),
-            "both": self._load_prompt_template("issuepr_generation_both.txt").strip(),
-        }
-        title_instruction_map = {
-            "issue": self._load_prompt_template("issuepr_title_instruction_issue.txt").strip(),
-            "pr": self._build_pr_title_instruction(),
-            "both": self._build_both_title_instruction(),
-        }
+        kind = self.generation_type
+        if kind == "pr":
+            template_content = self._build_pr_template()
+            templates = (("pr", template_content),)
+            title_instruction = self._build_pr_title_instruction()
+        elif kind == "issue":
+            template_content = get_issue_template()
+            templates = (("issue", template_content),)
+            title_instruction = self._load_prompt_template("issuepr_title_instruction_issue.txt").strip()
+        elif kind == "both":
+            templates = (("pr", self._build_pr_template()), ("issue", get_issue_template()))
+            template_content = "\n\n".join(text for _, text in templates)
+            title_instruction = self._build_both_title_instruction()
+        else:
+            raise ValueError(f"Unsupported generation type: {kind}")
         focus_instruction = self._load_prompt_template(
             {
                 "d": "issuepr_focus_instruction_diffs.txt",
@@ -44,25 +44,31 @@ class PromptAssemblyMixin:
             }.get(input_source, "issuepr_focus_instruction_both.txt")
         ).strip()
 
-        return self.issuepr_prompt.format(
-            generation_type_instruction=instruction_map[self.generation_type],
-            template_content=template_map[self.generation_type],
-            title_instruction=title_instruction_map[self.generation_type],
+        system_prompt = self._load_prompt_template(f"issuepr_generation_{kind}.txt")
+        return wrap_system_prompt(system_prompt.format(
+            template_content=template_content,
+            title_instruction=title_instruction,
             focus_instruction=focus_instruction,
-        )
+        ), templates=templates)
 
     def _build_pr_template(self) -> str:
         return get_pr_template().format(title_block=self._build_pr_title_block())
 
+    def _append_user_context(self, content: str, context: Optional[str]) -> str:
+        """Append only supplied context text, without changing existing evidence."""
+        if context is None or context == "":
+            return content
+        return content + ("\n\n" if content else "") + xml_evidence("context", context)
+
     def _build_full_prompt(self, content: str) -> str:
         """Build full prompt based on generation type."""
-        prompt_map = {
-            "both": self._load_prompt_template("issuepr_user_prompt_both.txt").strip(),
-            "pr": self._load_prompt_template("issuepr_user_prompt_pr.txt").strip(),
-            "issue": self._load_prompt_template("issuepr_user_prompt_issue.txt").strip(),
+        prompt_files = {
+            "both": "issuepr_user_prompt_both.txt",
+            "pr": "issuepr_user_prompt_pr.txt",
+            "issue": "issuepr_user_prompt_issue.txt",
         }
-        instruction = prompt_map.get(self.generation_type, prompt_map["both"])
-        return f"{content}\n\n{instruction}"
+        instruction = self._load_prompt_template(prompt_files.get(self.generation_type, prompt_files["both"])).strip()
+        return wrap_user_prompt(content, instruction)
 
     def generate_content(
         self, content: str, system_msg: str
@@ -84,12 +90,13 @@ class PromptAssemblyMixin:
         return self.invoke_llm(messages)
 
     def parse_generated_content(self, content: str) -> str:
-        """Unwrap a complete outer code fence without discarding response text.
+        """Unwrap one complete outer XML envelope or code fence, never inner markup.
 
-        Only a single fenced block covering the whole nonblank response is
-        unwrapped. Unfenced, partial, or ambiguous wrappers are left untouched.
-        Interior fences shorter than the outer marker remain part of the body.
+        Partial or ambiguous boundaries and ordinary HTML document structures remain untouched. Do not recursively unwrap XML and code-fence layers.
         """
+        xml_payload = unwrap_outer_xml_response(content)
+        if xml_payload is not None:
+            return xml_payload
         lines = content.splitlines(keepends=True)
         first = 0
         last = len(lines) - 1

@@ -175,7 +175,7 @@ class CommitFormatPromptTests(unittest.TestCase):
                 ):
                     generator.generate_commit()
                 run.assert_called_once_with(
-                    ["git", "commit", "--allow-empty", "-m", "chore: open release"], check=True, timeout=30,
+                    ["git", "commit", "--allow-empty", "-m", "chore: open release"], check=True, timeout=900,
                 )
                 external.assert_not_called()
 
@@ -218,7 +218,7 @@ class CommitFormatPromptTests(unittest.TestCase):
                     self.assertEqual(str(panels[0].renderable), message)
                     local.assert_not_called()
                     if action == "commit":
-                        run.assert_called_once_with(["git", "commit", "-m", message], check=True, timeout=30)
+                        run.assert_called_once_with(["git", "commit", "-m", message], check=True, timeout=900)
                         copied.assert_not_called()
                     elif action == "copy":
                         copied.assert_called_once_with(message, leading_space=False)

@@ -154,7 +154,7 @@ class CommitGeneratorTests(unittest.TestCase):
                     self.assertEqual(panels[0].renderable, expected)
                     with patch("git_tools.generators.commitgen.workflow.subprocess.run") as run:
                         generator._handle_commit_action(response)
-                    run.assert_called_once_with(["git", "commit", "-m", expected], check=True, timeout=30)
+                    run.assert_called_once_with(["git", "commit", "-m", expected], check=True, timeout=900)
                     generator._cli_auto_commit = False
                     with patch.object(generator, "handoff_to_clipboard") as clipboard:
                         generator._handle_commit_action(response)
@@ -231,7 +231,7 @@ class CommitGeneratorTests(unittest.TestCase):
         run_mock.assert_called_once_with(
             ["git", "commit", "-m", "feat: add test coverage"],
             check=True,
-            timeout=30,
+            timeout=900,
         )
 
     def test_open_release_respects_copy_policy_without_changing_commit_defaults(self) -> None:
@@ -273,7 +273,7 @@ class CommitGeneratorTests(unittest.TestCase):
         run_mock.assert_called_once_with(
             ["git", "commit", "--allow-empty", "-m", "chore: open release"],
             check=True,
-            timeout=30,
+            timeout=900,
         )
 
 

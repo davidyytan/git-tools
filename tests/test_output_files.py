@@ -583,7 +583,7 @@ class OutputFileTests(unittest.TestCase):
 
     def test_failed_explicit_commit_retains_saved_output(self):
         for kind in ("normal", "open-release"):
-            for failure in (subprocess.CalledProcessError(1, ["git", "commit"]), subprocess.TimeoutExpired(["git", "commit"], 30)):
+            for failure in (subprocess.CalledProcessError(1, ["git", "commit"]), subprocess.TimeoutExpired(["git", "commit"], 900)):
                 with self.subTest(kind=kind, failure=type(failure)), tempfile.TemporaryDirectory() as tmp, chdir(tmp), boundaries() as (methods, run, copy):
                     run.side_effect = failure
                     result = CliRunner().invoke(app, args_for(kind, ["--commit", "-o", "result.txt"]))

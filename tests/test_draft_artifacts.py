@@ -449,7 +449,7 @@ class DirectFailureTests(unittest.TestCase):
 
     def test_normal_and_workflow_commit_failures_and_timeouts_exit_nonzero(self):
         for fixed in (False, True):
-            for failure in (subprocess.CalledProcessError(1, ["git", "commit"]), subprocess.TimeoutExpired(["git", "commit"], 30)):
+            for failure in (subprocess.CalledProcessError(1, ["git", "commit"]), subprocess.TimeoutExpired(["git", "commit"], 900)):
                 with self.subTest(fixed=fixed, failure=type(failure)), ExitStack() as stack:
                     generator = CommitGenerator(workflow_kind="open-release" if fixed else None, auto_commit=True)
                     stack.enter_context(patch("git_tools.generators.commitgen.CommitGenerator", return_value=generator))

@@ -12,6 +12,7 @@ from ..utils.artifacts import resolve_output_path, save_draft
 
 WORKFLOW_KIND_NORMAL = "normal"
 WORKFLOW_KIND_OPEN_RELEASE = "open-release"
+GIT_COMMIT_TIMEOUT_SECONDS = 15 * 60
 
 
 class WorkflowCommitMixin:
@@ -123,7 +124,7 @@ class WorkflowCommitMixin:
                     command.append("--allow-empty")
                 command.extend(["-m", message])
                 try:
-                    subprocess.run(command, check=True, timeout=30)
+                    subprocess.run(command, check=True, timeout=GIT_COMMIT_TIMEOUT_SECONDS)
                 except subprocess.CalledProcessError as exc:
                     self.logger.error("Failed to commit: %s", exc)
                     raise ValueError("Error committing changes. Review the Git output and repository state before retrying.") from exc

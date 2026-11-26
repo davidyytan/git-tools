@@ -359,8 +359,8 @@ class IsolatedSettingsTests(SettingsTestCase):
                           state["max_tokens"]), ("c", 1234, 5678, 99))
         rows = {row.value: plain_title(row.title) for row in cli._build_settings_choices(state)}
         self.assertEqual(rows["max-tokens"], "Output token budget: 99")
-        self.assertEqual(rows["commit-input-budget"], "Commit input token budget: 1234")
-        self.assertEqual(rows["issue-pr-input-budget"], "Issue/PR input token budget: 5678")
+        self.assertEqual(rows["commit-input-budget"], "Input token budget: 1234")
+        self.assertEqual(rows["issue-pr-input-budget"], "Input token budget: 5678")
         self.assertNotIn("support-model", rows)
         self.assertNotIn("support-model", cli._SETTINGS_EDITORS)
         self.assertNotIn("support_model", state)
@@ -381,31 +381,31 @@ class IsolatedSettingsTests(SettingsTestCase):
 
     def test_menu_reloads_effective_values_after_an_edit(self):
         with patch.dict(os.environ, {"GIT_TOOLS_DEFAULT_TOKEN_LIMIT": "777"}), \
-             patch("git_tools.cli._ask_with_back", side_effect=["commit-input-budget", "123", "done"]), \
+             patch("git_tools.cli._ask_with_back", side_effect=["commit", "commit-input-budget", "123", None, "done"]), \
              patch("git_tools.cli._build_settings_choices", wraps=cli._build_settings_choices) as rows:
             cli._run_settings_menu()
         self.assertIn('GIT_TOOLS_DEFAULT_TOKEN_LIMIT="123"', self.user.read_text())
         self.assertEqual(rows.call_args.args[0]["token_limit"], 777)
 
     def test_implicit_default_profile_edits_survive_switching_away_and_back(self):
-        self.assertEqual(config.GitToolsSettings().default_provider, "openrouter")
-        for name, value in (("main-model", "vendor/remember-me"), ("effort", "high"),
+        self.assertEqual(config.GitToolsSettings().default_provider, "cliproxyapi")  # agent-cli's default
+        for name, value in (("main-model", "work/remember-me"), ("effort", "high"),
                             ("api-base", "https://remember.invalid/v1")):
             result = self.runner.invoke(cli.app, ["settings", name, value])
             self.assertEqual(result.exit_code, 0, result.output)
-        profile = config.saved_provider_profile("openrouter")
-        self.assertEqual(profile["model"], "vendor/remember-me")
+        profile = config.saved_provider_profile("cliproxyapi")
+        self.assertEqual(profile["model"], "work/remember-me")
         self.assertEqual(profile["reasoning_effort"], "high")
         self.assertEqual(profile["api_base"], "https://remember.invalid/v1")
         self.assertIsNone(config.effective_value("GIT_TOOLS_PROVIDER")[0])
         with patch("git_tools.cli.refresh_live_models", side_effect=AssertionError("network discovery")):
-            for provider in ("openai", "openrouter"):
+            for provider in ("openai", "cliproxyapi"):
                 result = self.runner.invoke(cli.app, ["settings", "provider", provider, "--non-interactive"])
                 self.assertEqual(result.exit_code, 0, result.output)
         fresh = config.GitToolsSettings()
-        self.assertEqual(fresh.effective_main_model, "vendor/remember-me")
+        self.assertEqual(fresh.effective_main_model, "work/remember-me")
         self.assertEqual(fresh.default_reasoning_effort, "high")
-        self.assertEqual(config.effective_provider_base_url("openrouter")[0], "https://remember.invalid/v1")
+        self.assertEqual(config.effective_provider_base_url("cliproxyapi")[0], "https://remember.invalid/v1")
 
     def test_profile_owner_uses_provider_alias_precedence_and_explicit_switch(self):
         self.local.write_text('GIT_TOOLS_PROVIDER="openrouter"\n')
@@ -482,7 +482,7 @@ class WizardNavigationTests(SettingsTestCase):
              patch("git_tools.cli._choose_provider_model", return_value="vendor/model"), \
              patch("git_tools.cli._prompt_openrouter_upstream", side_effect=["saved-pin", "saved-pin"]) as upstream, \
              patch("git_tools.cli._ask_with_back", side_effect=[None, "high"]), \
-             patch("git_tools.cli.questionary.select", wraps=cli.questionary.select) as select:
+             patch("git_tools.cli.picker.select", wraps=cli.picker.select) as select:
             cli._edit_provider(state, "openrouter", interactive=True)
         self.assertEqual(upstream.call_args_list[1].args, ("vendor/model", "saved-pin"))
         self.assertEqual(select.call_args.kwargs["default"], "high")
@@ -494,7 +494,7 @@ class WizardNavigationTests(SettingsTestCase):
         with patch.dict(os.environ, {"GIT_TOOLS_API_BASE": "https://original.invalid/v1"}), \
              patch("git_tools.cli._ask_with_back", side_effect=["https://pending.invalid/v1", None, "qwen", None, None]), \
              patch("git_tools.cli._prompt_provider_api_key", return_value=(False, None)), \
-             patch("git_tools.cli.questionary.text", wraps=cli.questionary.text) as text, \
+             patch("git_tools.cli.picker.text", wraps=cli.picker.text) as text, \
              patch.object(config, "save_settings") as save:
             cli._edit_provider(state, "qwen", interactive=True)
             self.assertEqual(os.environ["GIT_TOOLS_API_BASE"], "https://original.invalid/v1")

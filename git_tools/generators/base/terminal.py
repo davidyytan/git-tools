@@ -4,6 +4,7 @@ from questionary import Style
 from rich.console import Console
 from rich.panel import Panel
 
+from git_tools.navigation import note_status
 from git_tools.settings.settings import settings
 
 # Rich console for styled output
@@ -30,21 +31,25 @@ STYLE_DIM = "dim"  # STYLE_OPTION_DEFAULT, STYLE_HELPTEXT
 def info(message: str) -> None:
     """Print info message."""
     console.print(f"[{STYLE_SUCCESS}]• {message}[/{STYLE_SUCCESS}]", emoji=False)
+    note_status()
 
 
 def success(message: str) -> None:
     """Print success message."""
     console.print(f"[{STYLE_SUCCESS}]✓ {message}[/{STYLE_SUCCESS}]", emoji=False)
+    note_status()
 
 
 def warning(message: str) -> None:
     """Print warning message (yellow, needs attention)."""
     console.print(f"[{STYLE_WARNING}]⚠ {message}[/{STYLE_WARNING}]", emoji=False)
+    note_status()
 
 
 def error(message: str) -> None:
     """Print error message (red, needs action)."""
     console.print(f"[{STYLE_ERROR}]✗ {message}[/{STYLE_ERROR}]", emoji=False)
+    note_status()
 
 
 def print_panel(content: str, title: str = "", border_style: str = STYLE_BORDER) -> None:

@@ -25,11 +25,8 @@ ALLOWED_CONFIG_CLASSES = {
     "OpenAIConfig", "AnthropicConfig", "ZCodeConfig",
 }
 
-# Providers whose API key is a fixed placeholder rather than a secret (local
-# proxies). git-tools defaults these so the user need not set them: CLIProxyAPI
-# ships with the client key "cliproxyapi". An explicit env/config value still
-# overrides the default when the proxy is configured with a different key.
-PROVIDER_DEFAULT_API_KEYS = {"cliproxyapi": "cliproxyapi"}
+# Providers whose API key is a fixed placeholder rather than a secret (local proxies). git-tools defaults these so the user need not set them: agent-proxy deploys CLIProxyAPI with the client key "cliproxyapi_sEcr3Tk3Y", as agent-core and agent-cli default it. An explicit env/config value still overrides the default when the proxy is configured with a different key.
+PROVIDER_DEFAULT_API_KEYS = {"cliproxyapi": cliproxyapi.DEFAULT_API_KEY}
 
 # Default settings file location. A single self-contained ~/.git-tools/ folder so a
 # full reset is just `rm -rf ~/.git-tools`.
@@ -330,11 +327,11 @@ def provider_api_key_env(provider: str) -> str:
     return _get_provider_api_key_envs(provider)[0]
 
 
-def check_api_key_configured(provider: str = "openrouter") -> tuple[bool, str | None]:
+def check_api_key_configured(provider: str = cliproxyapi.PROVIDER_ID) -> tuple[bool, str | None]:
     """Check if API key is available without triggering validation error.
 
     Args:
-        provider: Provider name (default: "openrouter")
+        provider: Provider name (default: "cliproxyapi")
 
     Returns:
         Tuple of (is_configured, key_value_or_none)
@@ -409,11 +406,11 @@ def save_setting(key: str, value: str) -> bool:
     return save_settings({key: value})
 
 
-def setup_api_key(provider: str = "openrouter") -> bool:
+def setup_api_key(provider: str = cliproxyapi.PROVIDER_ID) -> bool:
     """Prompt user for API key and save to settings file.
 
     Args:
-        provider: Provider name (default: "openrouter")
+        provider: Provider name (default: "cliproxyapi")
 
     Returns:
         True if key was saved successfully, False otherwise
@@ -461,8 +458,9 @@ class GitToolsSettings(EffectiveSettings):
             self.default_model = None
 
     # LLM defaults
+    # CLIProxyAPI, as agent-cli's fresh config: the local proxy needs no key of its own (its stock key is the default).
     default_provider: str = Field(
-        default="openrouter",
+        default=cliproxyapi.PROVIDER_ID,
         validation_alias=AliasChoices("GIT_TOOLS_PROVIDER", "GIT_TOOLS_DEFAULT_PROVIDER"),
     )
     default_model: Optional[str] = Field(default=None)
@@ -707,9 +705,7 @@ class CLIProxyAPIConfig(BaseLLMConfig):
     if the proxy lives elsewhere (e.g. http://host.docker.internal:8317/v1 from
     inside a container).
 
-    The client key defaults to the ``cliproxyapi`` placeholder the proxy ships
-    with, so it need not be set; override CLIPROXYAPI_API_KEY only if the proxy
-    was configured with a different key.
+    The client key defaults to ``cliproxyapi_sEcr3Tk3Y``, agent-proxy's stock ``CLIPROXYAPI_API_KEY``, so it need not be set; override CLIPROXYAPI_API_KEY only if the proxy was configured with a different key. The proxy's second key, its management key (``CLIPROXYAPI_MANAGEMENT_KEY``), is read by the account-group window in ``git_tools.proxy_accounts``, never by requests. Model ids carry the account group: ``work/gpt-6.2-sol``.
     """
 
     api_key: str = Field(

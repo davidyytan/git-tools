@@ -503,15 +503,7 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
     try:
         config = load_provider_config(provider)
     except Exception as exc:
-        _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
-            kind="configuration",
-            # Pydantic validation text can echo rejected input values. Keep the
-            # interactive diagnostic useful without ever retaining credentials.
-            message=f"{type(exc).__name__}: provider configuration is invalid or incomplete",
-        )
-        PROVIDERS[provider]["models"] = {}
-        _LIVE_REFRESHED.discard(provider)
-        _LIVE_REFRESH_IDENTITIES.pop(provider, None)
+        _configuration_failed(provider, exc)
         return False
 
     base_url = config.base_url or ""
@@ -524,7 +516,43 @@ def refresh_live_models(provider: str, *, force: bool = False) -> bool:
     ):
         return True
 
+    return _place_catalog(provider, identity, resolve_provider_catalog(provider, base_url, api_key))
+
+
+def refresh_live_catalog(provider: str) -> CatalogFetchResult:
+    """``refresh_live_models(provider, force=True)`` that returns the resolved catalog itself.
+
+    For pickers that show why discovery failed next to what it found, such as the CLIProxyAPI account-group window (``git_tools.proxy_accounts``). The registry and refresh state are updated exactly as ``refresh_live_models`` updates them.
+    """
+    provider = _normalize_provider_key(provider)
+    from .settings import load_provider_config
+
+    try:
+        config = load_provider_config(provider)
+    except Exception as exc:
+        _configuration_failed(provider, exc)
+        return CatalogFetchResult(error_kind="malformed", error=_LIVE_REFRESH_ERRORS[provider].message)
+    base_url = config.base_url or ""
+    api_key = config.api_key or ""
     catalog = resolve_provider_catalog(provider, base_url, api_key)
+    if provider in LIVE_MODEL_PROVIDERS:
+        _place_catalog(provider, _catalog_identity(base_url, api_key), catalog)
+    return catalog
+
+
+def _configuration_failed(provider: str, exc: Exception) -> None:
+    _LIVE_REFRESH_ERRORS[provider] = LiveModelRefreshError(
+        kind="configuration",
+        # Pydantic validation text can echo rejected input values. Keep the interactive diagnostic useful without ever retaining credentials.
+        message=f"{type(exc).__name__}: provider configuration is invalid or incomplete",
+    )
+    PROVIDERS[provider]["models"] = {}
+    _LIVE_REFRESHED.discard(provider)
+    _LIVE_REFRESH_IDENTITIES.pop(provider, None)
+
+
+def _place_catalog(provider: str, identity: tuple[str, str], catalog: CatalogFetchResult) -> bool:
+    """Put one resolved catalog into the registry and refresh state; True for successful live discovery."""
     live_success = (
         catalog.source == "live"
         and catalog.error_kind is None
@@ -573,6 +601,7 @@ __all__ = [
     "get_live_model_refresh_error",
     "normalize_catalog_metadata",
     "provider_allows_manual_model",
+    "refresh_live_catalog",
     "refresh_live_models",
     "resolve_provider_catalog",
     "restore_provider_catalog",

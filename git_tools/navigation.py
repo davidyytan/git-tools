@@ -9,6 +9,20 @@ from typing import Any
 
 BACK = "__git_tools_back__"
 
+# Whether a status line (✓ ⚠ ✗ •) was printed since the last question. The root menu puts one blank line after a settings detour that ended on a status line; settings itself prints a blank line only before a status line, since its pickers erase themselves.
+_status_last = False
+
+
+def note_status() -> None:
+    """Record that a status line was just printed."""
+    global _status_last
+    _status_last = True
+
+
+def status_last() -> bool:
+    """Whether a status line was printed since the last question."""
+    return _status_last
+
 
 class NavigationBack(BaseException):
     """Leave the current operation, never an error or implicit consent.
@@ -33,6 +47,8 @@ def ask_with_back(question: Any) -> Any:
     def _back(event: Any) -> None:
         event.app.exit(result=None)
 
+    global _status_last
+    _status_last = False
     application = question.application
     existing = application.key_bindings
     application.key_bindings = (

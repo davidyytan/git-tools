@@ -64,41 +64,40 @@ class NestedSettingsNavigationTests(unittest.TestCase):
 
     def test_settings_model_manual_escape_reopens_picker_then_picker_back_leaves(self):
         current = self.saved_state["model"]
-        rows = cli._build_model_choices("zcode", current_model=current)
-        # Picker choices append Back after the model/manual rows.
-        picker_back = DOWN * len(rows) + "\r"
-        for cancel_picker in (ESC, picker_back):
+        # agent-cli's picker has no Back row: Esc is the way back.
+        for cancel_picker in (ESC,):
             with self.subTest(cancel_picker=cancel_picker), keyed_questions([
-                "\r", self.manual_model_keys(current), ESC, cancel_picker, ESC,
+                "\r", "\r", self.manual_model_keys(current), ESC, cancel_picker, ESC, ESC,
             ]) as messages, patch.object(cli, "_load_settings_state", return_value=self.saved_state), patch.object(
                 cli, "_build_settings_choices", return_value=[Choice("Model", value="model"), Choice("Done", value="done")],
             ):
                 cli._run_settings_menu()
-            self.assertEqual(messages[0], "Select setting to edit:")
-            self.assertTrue(messages[1].startswith("Select model"))
-            self.assertEqual(messages[2], "Enter zcode model ID:")
-            self.assertEqual(messages[3], messages[1])
-            self.assertEqual(messages[4], "Select setting to edit:")
+            self.assertEqual(messages[0], "Settings:")
+            self.assertEqual(messages[1], "Settings › provider:")
+            self.assertTrue(messages[2].startswith("Select model"))
+            self.assertEqual(messages[3], "Enter zcode model ID:")
+            self.assertEqual(messages[4], messages[2])
+            self.assertEqual(messages[5:], ["Settings › provider:", "Settings:"])
             self.assert_no_save()
             self.assertEqual(self.saved_state["model"], current)
-        self.assertEqual(self.refresh.call_count, 2)  # one discovery per editor, not per redisplay
+        self.assertEqual(self.refresh.call_count, 1)  # one discovery per editor, not per redisplay
 
     def test_settings_upstream_manual_escape_reopens_picker_then_picker_back_leaves(self):
         routing_state = state("openrouter", "vendor/current")
-        for cancel_picker in (ESC, DOWN * 3 + "\r"):
+        for cancel_picker in (ESC,):  # no Back row: Esc is the way back
             with self.subTest(cancel_picker=cancel_picker), keyed_questions([
-                "\r", DOWN * 2 + "\r", ESC, cancel_picker, ESC,
+                "\r", "\r", DOWN * 2 + "\r", ESC, cancel_picker, ESC, ESC,
             ]) as messages, patch.object(cli, "_load_settings_state", return_value=routing_state), patch.object(
                 cli, "_build_settings_choices", return_value=[Choice("Routing", value="openrouter-provider"), Choice("Done", value="done")],
             ):
                 cli._run_settings_menu()
             self.assertEqual(messages, [
-                "Select setting to edit:", "OpenRouter upstream for vendor/current:",
-                "Upstream slug:", "OpenRouter upstream for vendor/current:", "Select setting to edit:",
+                "Settings:", "Settings › provider:", "OpenRouter upstream for vendor/current:",
+                "Upstream slug:", "OpenRouter upstream for vendor/current:", "Settings › provider:", "Settings:",
             ])
             self.assert_no_save()
             self.assertIsNone(routing_state["openrouter_provider"])
-        self.assertEqual(self.upstreams.call_count, 2)
+        self.assertEqual(self.upstreams.call_count, 1)  # one listing per editor, not per redisplay
 
     def test_provider_wizard_manual_model_escape_keeps_draft_then_picker_escape_goes_key(self):
         original = copy.deepcopy(self.saved_state)

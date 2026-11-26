@@ -16,6 +16,7 @@ from unittest.mock import patch
 import typer
 
 from git_tools.cli import _ask_model_choice, _edit_effort, _edit_kimi_thinking, _edit_model
+from git_tools import picker
 from git_tools.settings import mappings
 from git_tools.settings import settings as settings_module
 
@@ -109,7 +110,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
               patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("new-upstream")),
-              patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="new-upstream"),
               patch.object(settings_module, "save_settings") as save):
             _edit_model(state)
@@ -129,7 +130,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
               patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("other", "old-upstream")),
-              patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="old-upstream"),
               patch.object(settings_module, "save_settings") as save):
             _edit_model(state)
@@ -143,7 +144,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
               patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("new-upstream")),
-              patch("git_tools.cli.questionary.select"),
+              patch("git_tools.cli.picker.select"),
               patch("git_tools.cli._ask_with_back", return_value=None),
               patch.object(settings_module, "save_settings") as save):
             _edit_model(state)
@@ -156,7 +157,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
               patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints()),
-              patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="old-upstream"),
               patch("git_tools.cli.warning") as warn,
               patch.object(settings_module, "save_settings") as save):
@@ -174,7 +175,7 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
         state = _openrouter_state()
         with (patch("git_tools.cli._choose_provider_model", return_value=_NEW_MODEL),
               patch("git_tools.cli._list_openrouter_endpoints", return_value=_endpoints("new-upstream")),
-              patch("git_tools.cli.questionary.select"),
+              patch("git_tools.cli.picker.select"),
               patch("git_tools.cli._ask_with_back", return_value="any"),
               patch.object(settings_module, "save_settings") as save):
             _edit_model(state)
@@ -197,53 +198,54 @@ class ModelChangeOpenRouterPinTests(unittest.TestCase):
 
 
 class ModelPickerTests(unittest.TestCase):
-    """Large catalogs keep the arrow-key list and add type-to-filter.
+    """The model list is agent-cli's picker: one list, paged past 12 rows (PgUp/PgDn), current model first.
 
     The previous free-text autocomplete pre-typed the current model's title, so
     nothing else matched until the whole line was erased and Enter re-saved the
     current model: in practice the main model could not be changed.
     """
 
-    def test_large_catalog_is_a_filterable_list_with_current_model_preselected(self) -> None:
+    def test_large_catalog_is_one_list_with_current_model_preselected(self) -> None:
         models = {f"model-{i}": {"model_name": f"model-{i}"} for i in range(30)}
         with (patch.dict(mappings.PROVIDERS["openai"], {"models": models}),
-              patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="model-7")):
             chosen = _ask_model_choice("openai", current_model="model-3", default_model="model-3")
 
         self.assertEqual(chosen, "model-7")
         kwargs = select.call_args.kwargs
-        self.assertTrue(kwargs["use_search_filter"])
-        self.assertFalse(kwargs["use_jk_keys"])
         self.assertEqual(kwargs["default"], "model-3")
         self.assertEqual(kwargs["choices"][0].value, "model-3")
-        self.assertIn("filter", kwargs["instruction"])
+        self.assertGreater(len(kwargs["choices"]), picker.PAGE_THRESHOLD)
 
-    def test_searchable_list_titles_can_all_be_filtered(self) -> None:
-        # questionary's filter is `search.lower() in choice.title.lower()` over
-        # every row, so a styled (list) title anywhere crashes the first keystroke.
-        models = {f"model-{i}": {"model_name": f"model-{i}"} for i in range(30)}
-        models["gpt-6.1-sol"] = {"model_name": "gpt-6.1-sol", "display_name": "GPT-6.1 Sol"}
+    def test_a_long_list_pages_and_has_no_back_row(self) -> None:
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+        from git_tools.navigation import ask_with_back
+
+        models = {f"model-{i:02d}": {"model_name": f"model-{i:02d}"} for i in range(30)}
         with (patch.dict(mappings.PROVIDERS["openai"], {"models": models}),
-              patch("git_tools.cli.questionary.select") as select,
-              patch("git_tools.cli._ask_with_back", return_value="model-7")):
-            _ask_model_choice("openai", current_model="model-3", default_model="model-3")
-
-        choices = select.call_args.kwargs["choices"]
-        self.assertTrue(all(isinstance(choice.title, str) for choice in choices))
-        hits = [choice.value for choice in choices if "sol" in choice.title.lower()]
-        self.assertEqual(hits, ["gpt-6.1-sol"])
-        self.assertEqual(choices[-1].title, "← Back")
+              patch("git_tools.cli.picker.select", wraps=picker.select) as select,
+              patch("git_tools.cli._ask_with_back", side_effect=lambda question: question)):
+            question = _ask_model_choice("openai", current_model="model-00", default_model="model-00")
+        # Esc is the way back, as in agent-cli: no "← Back" row; manual entry is the last row.
+        values = [choice.value for choice in select.call_args.kwargs["choices"]]
+        self.assertEqual(values[-1], "__git_tools_add_model__")
+        with create_pipe_input() as pipe:
+            built = picker.select("Select model:", select.call_args.kwargs["choices"], default="model-00", input=pipe, output=DummyOutput())
+            pipe.send_text("\x1b[6~\r")  # PgDn, Enter: a page further down
+            self.assertEqual(ask_with_back(built), "model-12")
+        self.assertIsNotNone(question)
 
     def test_small_catalog_keeps_the_plain_list(self) -> None:
         models = {"gpt-6-astra": {"model_name": "gpt-6-astra"}, "gpt-6.1-sol": {"model_name": "gpt-6.1-sol"}}
         with (patch.dict(mappings.PROVIDERS["openai"], {"models": models}),
-              patch("git_tools.cli.questionary.select") as select,
+              patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value="gpt-6.1-sol")):
             chosen = _ask_model_choice("openai", current_model="gpt-6-astra", default_model="gpt-6-astra")
 
         self.assertEqual(chosen, "gpt-6.1-sol")
-        self.assertFalse(select.call_args.kwargs["use_search_filter"])
+        self.assertLessEqual(len(select.call_args.kwargs["choices"]), picker.PAGE_THRESHOLD)
         self.assertEqual(select.call_args.kwargs["default"], "gpt-6-astra")
 
     def test_retained_current_id_is_not_presented_as_discovered(self) -> None:
@@ -273,7 +275,7 @@ class ModelPickerTests(unittest.TestCase):
         self.assertEqual(choices[0].title, "served (current)")
 
     def test_escape_backs_out_without_a_choice(self) -> None:
-        with (patch("git_tools.cli.questionary.select"),
+        with (patch("git_tools.cli.picker.select"),
               patch("git_tools.cli._ask_with_back", return_value=None)):
             self.assertIsNone(_ask_model_choice("openai", current_model="gpt-6-astra", default_model="gpt-6-astra"))
 
@@ -289,7 +291,7 @@ class StyledMenuTests(unittest.TestCase):
                 for choice in _build_effort_choices("openai", "gpt-6-astra", "high")}
         self.assertEqual(rows["high"], "high (current)")
         self.assertEqual(rows["low"], "low")
-        self.assertEqual(rows[""], "Unset")
+        self.assertEqual(rows[""], "model default")
 
     def test_openai_effort_row_only_for_reasoning_models(self) -> None:
         from git_tools.cli import _build_settings_choices
@@ -325,12 +327,12 @@ class StyledMenuTests(unittest.TestCase):
                 "max_tokens": 32000, "max_retries": 1, "reasoning_effort": None}
         rows = {c.value: plain_title(c.title) for c in _build_settings_choices(
             {**base, "provider": "openrouter", "model": "vendor/model", "openrouter_provider": "deepinfra"})}
-        self.assertEqual(rows["openrouter-provider"], "OpenRouter upstream routing: deepinfra")
-        self.assertEqual(rows["api-key"], "API Key (openrouter): not set")
+        self.assertEqual(rows["openrouter-provider"], "Upstream routing: deepinfra")
+        self.assertEqual(rows["api-key"], "API key: not set")
         for stored, shown in ((None, "default"), (True, "on"), (False, "off"), ("odd", "default")):
             rows = {c.value: plain_title(c.title) for c in _build_settings_choices(
                 {**base, "provider": "kimicli", "model": "kimi-k2.5", "kimi_thinking": stored})}
-            self.assertEqual(rows["kimi-thinking"], f"Kimi thinking: {shown}")
+            self.assertEqual(rows["kimi-thinking"], f"Thinking: {shown}")
 
 
 class CommitFormatEditorTests(unittest.TestCase):
@@ -586,7 +588,7 @@ class ProviderProfileTests(unittest.TestCase):
         self.assertIn('OPENAI_BASE_URL="https://custom.invalid/v1"', content)
 
         content = self.run_settings("provider", "cliproxyapi")
-        self.assertIn('GIT_TOOLS_MODEL_MAIN="gpt-6-astra"', content)  # a clean slate: the provider default
+        self.assertIn('GIT_TOOLS_MODEL_MAIN="gpt-6.2-sol"', content)  # a clean slate: the provider default
         self.assertIn('GIT_TOOLS_REASONING_EFFORT=""', content)
         self.assertIn('GIT_TOOLS_API_BASE="http://127.0.0.1:8317/v1"', content)
         self.assertIn('GIT_TOOLS_OPENAI_MODEL_MAIN="my-openai-model"', content)  # untouched
@@ -603,7 +605,7 @@ class ProviderProfileTests(unittest.TestCase):
         self.assertNotIn("OPENAI_BASE_URL", content)  # back to the default: forgotten
 
         content = self.run_settings("provider", "cliproxyapi")
-        self.assertIn('GIT_TOOLS_MODEL_MAIN="gpt-6-astra"', content)
+        self.assertIn('GIT_TOOLS_MODEL_MAIN="gpt-6.2-sol"', content)
         self.assertIn('GIT_TOOLS_REASONING_EFFORT="low"', content)
         self.assertIn('GIT_TOOLS_API_BASE="http://127.0.0.1:8317/v1"', content)
 
@@ -625,8 +627,9 @@ class ProviderProfileTests(unittest.TestCase):
                         self.path.write_text(f'GIT_TOOLS_PROVIDER="{current}"\n'
                                              + "\n".join(obsolete_lines) + "\n")
                         state = cli._load_settings_state()
-                        answers = (["https://plan.invalid/v1", "low"]
-                                   if provider == "qwen" else ["low"])
+                        # Qwen asks its plan/region URL and CLIProxyAPI its proxy address (blank keeps it) before the key.
+                        answers = (["https://plan.invalid/v1", "low"] if provider == "qwen"
+                                   else ["", "low"] if provider == "cliproxyapi" else ["low"])
                         with (
                             patch.object(settings_module, "save_settings", wraps=settings_module.save_settings) as save,
                             patch("git_tools.cli._prompt_provider_api_key", return_value=(True, None)) as key,
@@ -713,6 +716,18 @@ class CombinedKimiPickerTests(unittest.TestCase):
             stub.start()
             self.addCleanup(stub.stop)
 
+    def test_enter_keeps_the_current_thinking_and_tier(self) -> None:
+        # The picker opens on the current row (agent-cli's initial=current_idx), so Enter changes nothing.
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+        from git_tools.cli import _pick_kimi_thinking
+
+        real = picker.select
+        with create_pipe_input() as pipe, \
+             patch("git_tools.cli.picker.select", side_effect=lambda *a, **k: real(*a, input=pipe, output=DummyOutput(), **k)):
+            pipe.send_text("\r")
+            self.assertEqual(_pick_kimi_thinking("kimicli", "tiered", True, "high"), (True, "high"))
+
     def test_the_catalog_decides_without_asking_where_it_can(self) -> None:
         from git_tools.cli import _pick_kimi_thinking
         from git_tools.generators.base import plain_title
@@ -724,7 +739,7 @@ class CombinedKimiPickerTests(unittest.TestCase):
             self.assertEqual(_pick_kimi_thinking("kimicli", "unknown", True, "low", keep_current=True), (True, "low"))
         ask.assert_not_called()
         # A thinking-only model without tiers still offers its one row, as agent-cli does.
-        with (patch("git_tools.cli.questionary.select") as select,
+        with (patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value=0)):
             self.assertEqual(_pick_kimi_thinking("kimicli", "always", None, None), (True, None))
         self.assertEqual([plain_title(c.title) for c in select.call_args.kwargs["choices"][:-1]], ["on"])
@@ -733,14 +748,14 @@ class CombinedKimiPickerTests(unittest.TestCase):
         from git_tools.cli import _pick_kimi_thinking
         from git_tools.generators.base import plain_title
 
-        with (patch("git_tools.cli.questionary.select") as select,
+        with (patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value=1)):
             self.assertEqual(_pick_kimi_thinking("kimicli", "tiered", None, None), (True, "low"))
         rows = [plain_title(choice.title) for choice in select.call_args.kwargs["choices"][:-1]]
         self.assertEqual(rows, ["off", "low", "high", "max"])  # nothing current: no marker
         self.assertEqual(select.call_args.kwargs["default"].value, 2)  # the model's default tier, high
 
-        with (patch("git_tools.cli.questionary.select") as select,
+        with (patch("git_tools.cli.picker.select") as select,
               patch("git_tools.cli._ask_with_back", return_value=0)):
             self.assertEqual(_pick_kimi_thinking("kimicli", "tiered", True, "max"), (False, None))
         rows = [plain_title(choice.title) for choice in select.call_args.kwargs["choices"][:-1]]
@@ -786,3 +801,53 @@ class UpstreamRowTests(unittest.TestCase):
         self.assertEqual(plain_title(_upstream_choice(entry, "deepinfra/fp4").title),
                          "DeepInfra [deepinfra/fp4] — $0.080/$0.180 per M · 1024k ctx · fp4 · cached · 98% up (current)")
         self.assertEqual(_upstream_choice(entry, None).value, "deepinfra/fp4")
+
+
+class GroupedSettingsMenuTests(unittest.TestCase):
+    """The interactive menu in levels, as agent-cli's /settings: groups first, then a group's settings."""
+
+    STATE = {"provider": "openrouter", "model": "vendor/model", "api_base": "https://openrouter.ai/api/v1",
+             "api_configured": True, "api_key_source": "", "temperature": 1.0, "max_tokens": 32000,
+             "max_retries": 1, "reasoning_effort": None, "openrouter_provider": None}
+
+    def test_the_top_level_names_each_group_and_what_it_holds(self):
+        from git_tools import cli
+        from git_tools.generators.base import plain_title
+
+        rows = [(row.value, plain_title(row.title)) for row in cli._build_settings_group_choices(self.STATE)]
+        self.assertEqual([value for value, _title in rows], ["provider", "generation", "commit", "issue-pr"])  # Esc leaves: no Done row
+        self.assertEqual(rows[0][1], "provider   — provider · main model · endpoint · upstream routing · effort · API key")
+        self.assertEqual(rows[2][1], "commit     — format · input budget")
+        # A provider without routing does not mention it.
+        cliproxy = {**self.STATE, "provider": "cliproxyapi", "model": "work/gpt-6.2-sol"}
+        self.assertEqual(plain_title(cli._build_settings_group_choices(cliproxy)[0].title),
+                         "provider   — provider · main model · endpoint · effort · API key")
+
+    def test_every_setting_row_belongs_to_one_group(self):
+        from git_tools import cli
+
+        grouped = [value for _key, _title, values in cli._SETTINGS_GROUPS for value in values]
+        self.assertEqual(len(grouped), len(set(grouped)))
+        for state in (self.STATE, {**self.STATE, "provider": "kimicli"}):
+            rows = {row.value for row in cli._build_settings_choices(state)} - {"done"}
+            self.assertLessEqual(rows, set(grouped))
+        self.assertLessEqual(set(grouped), set(cli._SETTINGS_EDITORS))
+
+    def test_a_group_lists_its_rows_in_its_own_order_and_esc_returns_to_the_groups(self):
+        from git_tools import cli
+        from git_tools.generators.base import plain_title
+
+        shown = []
+
+        def ask(question):
+            shown.append(question)
+            return ["commit", None, None][len(shown) - 1]
+
+        with patch.object(cli, "_load_settings_state", return_value=dict(self.STATE)), \
+             patch.object(cli, "_ask_with_back", side_effect=ask), \
+             patch.object(cli.picker, "select", side_effect=lambda message, **kwargs: SimpleNamespace(message=message, **kwargs)):
+            cli._run_settings_menu()
+        self.assertEqual([question.message for question in shown], ["Settings:", "Settings › commit:", "Settings:"])
+        self.assertEqual([plain_title(choice.title).split(":")[0] for choice in shown[1].choices],
+                         ["Format", "Input token budget"])  # Esc goes back: no Back row
+        self.assertEqual(shown[2].default, "commit")  # back on the row it came from

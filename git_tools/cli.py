@@ -19,7 +19,8 @@ from rich.console import Console
 from rich.text import Text
 import git_tools
 from git_tools.build_info import build_info
-from git_tools.navigation import BACK as _BACK, NavigationBack, ask_with_back
+from git_tools import picker
+from git_tools.navigation import BACK as _BACK, NavigationBack, ask_with_back, status_last
 from git_tools.settings.settings import (
     GitToolsSettings,
     normalize_provider_name,
@@ -28,6 +29,7 @@ from git_tools.settings.settings import (
     reload_settings,
     settings,
 )
+from git_tools.providers.cliproxyapi import split_model_group
 from git_tools.providers.kimi_code import KimiCodeModelEntry, default_choice_index, thinking_choices
 from git_tools.providers.openrouter import OpenRouterEndpoint
 from git_tools.providers.zcode import (
@@ -266,7 +268,7 @@ def _effort_prompt(provider: str, *, current: str | None = None) -> str:
     """Do not describe Coding Plan's lowest effort as thinking-off."""
     if normalize_provider_name(provider) == "zcode":
         return f"Reasoning effort (thinking always enabled; default: max; current: {current or 'max'}):"
-    return f"Reasoning effort (current: {current or 'unset'}):" if current is not None else "Reasoning effort:"
+    return f"Reasoning effort (current: {current or 'model default'}):" if current is not None else "Reasoning effort:"
 
 
 def _format_model_choice(model_config: dict[str, Any]) -> str:
@@ -338,49 +340,28 @@ def _build_model_choices(
     return choices
 
 
-# Catalogs longer than this get type-to-filter on top of the arrow-key list.
-_SEARCHABLE_CATALOG_SIZE = 15
-
-
 def _ask_model_choice(
     provider: str,
     *,
     current_model: str,
     default_model: str,
 ) -> str | None:
-    """Pick a model from a list; large live catalogs add type-to-filter.
+    """Pick a model from a list, in agent-cli's picker.
 
-    OpenRouter, OpenAI and local proxies can expose hundreds of models, so past
-    ``_SEARCHABLE_CATALOG_SIZE`` entries the list gains a search filter: the
-    current model starts highlighted, arrows move, typing narrows, Enter picks
-    the highlighted entry. A free-text autocomplete was used before, but it
-    pre-typed the current model's title, so nothing else matched until the
-    whole line was erased. Manual IDs stay reachable through the explicit
-    "Enter a model ID manually…" entry.
+    OpenRouter, OpenAI and local proxies can expose hundreds of models, so past 12 rows the list pages (PgUp/PgDn), as agent-cli's model list does; the current model starts highlighted. Manual IDs stay reachable through the explicit "Enter a model ID manually…" entry.
     """
-    model_rows = _build_model_choices(provider, current_model=current_model)
-    searchable = len(model_rows) + 1 > _SEARCHABLE_CATALOG_SIZE
-    # Every title must stay a plain string when the filter is on (see _back_choice).
-    choices = [*model_rows, _back_choice(plain=searchable)]
+    choices = _build_model_choices(provider, current_model=current_model)
     prompt = (
         f"Select model (current: {current_model or 'unset'}, "
         f"default: {_provider_default_model(provider)}):"
     )
     default = default_model if any(choice.value == default_model for choice in choices) else None
     selected = _ask_with_back(
-        questionary.select(
+        picker.select(
             prompt,
             choices=choices,
             default=default,
             style=TYPER_STYLE,
-            qmark="❯",
-            pointer="›",
-            use_search_filter=searchable,
-            use_jk_keys=not searchable,
-            instruction=(
-                "(↑↓ move · type to filter · Enter picks · Esc back)"
-                if searchable else "(↑↓ move · Enter picks · Esc back)"
-            ),
         )
     )
     return None if selected is None or selected == _BACK else str(selected)
@@ -406,18 +387,18 @@ def _build_effort_choices(
 
     if normalize_provider_name(provider) == "zcode":
         native_tiers = tuple(dict.fromkeys(ZCODE_EFFORT_TIERS.values()))
-        return [Choice(styled(fmt_dim("Server default (max; thinking always enabled)")), value=""),
+        return [Choice(styled(fmt_dim("server default (max; thinking always enabled)")), value=""),
                 *[tier(effort) for effort in native_tiers]]
 
     declared_efforts = _declared_kimi_efforts(provider, model)
     if declared_efforts:
-        return [Choice(styled(fmt_dim("Model default")), value=""),
+        return [Choice(styled(fmt_dim("model default")), value=""),
                 *[tier(effort) for effort in declared_efforts]]
 
     if model_effort:
-        choices.append(Choice(styled(fmt_dim(f"Model default ({model_effort})")), value=""))
+        choices.append(Choice(styled(fmt_dim(f"model default ({model_effort})")), value=""))
     else:
-        choices.append(Choice(styled(fmt_dim("Unset")), value=""))
+        choices.append(Choice(styled(fmt_dim("model default")), value=""))
 
     effort_values = []
     for effort in (configured_effort, model_effort, *REASONING_EFFORT_CHOICES):
@@ -435,29 +416,37 @@ def _build_settings_choices(
     *,
     done_label: str = "Done",
 ) -> list[Choice]:
-    """Build the top-level settings menu in provider/model/effort/API-key order."""
+    """Every setting row, each labelled as its group (``_SETTINGS_GROUPS``) shows it.
+
+    Labels are sentence case and do not repeat their group's name; a value that is not set says so once, without a "(not configured)" source after it.
+    """
     provider = normalize_provider_name(state["provider"])
-    api_status = fmt_ok("configured") if state["api_configured"] else fmt_warn("not set")
+
+    def source(text: Any) -> Any:
+        text = str(text or "")
+        return fmt_dim(f" ({text})") if text and text != "not configured" else ""
+
+    endpoint = state.get("api_base") or ""
     choices = [
         Choice(styled("Provider: ", fmt_primary(provider)), value="provider"),
         Choice(
-            styled("Main Model: ", fmt_primary(_format_model_display(provider, state.get("model")))),
+            styled("Main model: ", fmt_primary(_format_model_display(provider, state.get("model")))),
             value="model",
         ),
+        Choice(
+            styled("API endpoint: ", fmt_primary(_safe_endpoint_display(endpoint)) if endpoint else fmt_warn("not set"),
+                   source(state.get("api_base_source", "provider default")) if endpoint else ""),
+            value="api-base",
+        ),
     ]
-
-    choices.append(Choice(
-        styled("API Endpoint: ", fmt_primary(_safe_endpoint_display(state.get("api_base") or "")),
-               fmt_dim(f" ({state.get('api_base_source', 'provider default')})")), value="api-base",
-    ))
     if provider == "openrouter":
         choices.append(Choice(
-            styled("OpenRouter upstream routing: ", fmt_primary(state.get("openrouter_provider") or "any")),
+            styled("Upstream routing: ", fmt_primary(state.get("openrouter_provider") or "any")),
             value="openrouter-provider",
         ))
     if provider == "kimicli":
         # Thinking and tier are one row, as in agent-cli's Kimi picker.
-        choices.append(Choice(styled("Kimi thinking: ", fmt_primary(_kimi_thinking_summary(state))),
+        choices.append(Choice(styled("Thinking: ", fmt_primary(_kimi_thinking_summary(state))),
                               value="kimi-thinking"))
 
     effort = _effective_effort(
@@ -468,45 +457,49 @@ def _build_settings_choices(
     # OpenAI rejects a tier on its known non-reasoning models (gpt-4.x/4o); the
     # row would be a dead setting there, so it is hidden for those only. Any
     # other id on the platform defaults to reasoning, as in agent-core.
+    # A CLIProxyAPI account group ("work/") says nothing about the model; the model after it does.
     effort_capable = (
-        is_openai_reasoning_model(state.get("model") or "", platform=provider == "openai")
+        is_openai_reasoning_model(split_model_group(state.get("model"), provider)[1], platform=provider == "openai")
         if provider in {"openai", "cliproxyapi"}
         else provider in {"openrouter", "qwen", "acrc", "copilot", "anthropic", "zcode"}
     )
     if provider != "kimicli" and (effort or effort_capable):
-        source = "override" if state.get("reasoning_effort") else "model default"
         if provider == "zcode":
             configured = (state.get("reasoning_effort") or "").strip().lower()
-            source = (f"override {configured} → {effort}" if configured and configured != effort
+            detail = (f"override {configured} → {effort}" if configured and configured != effort
                       else "override" if configured else "server default")
-            source += "; thinking always enabled"
-        choices.append(Choice(
-            styled("Effort: ", fmt_primary(effort), fmt_dim(f" ({source})")), value="effort",
-        ))
+            value = styled("Effort: ", fmt_primary(effort), fmt_dim(f" ({detail}; thinking always enabled)"))
+        elif state.get("reasoning_effort"):
+            value = styled("Effort: ", fmt_primary(effort), fmt_dim(" (override)"))
+        else:
+            # Nothing chosen: the model's own default, named when the catalog declares one.
+            value = styled("Effort: ", fmt_primary(effort) if effort else fmt_dim("model default"),
+                           fmt_dim(" (model default)") if effort else "")
+        choices.append(Choice(value, value="effort"))
 
     pr_limit = (
-        styled("PR Limit: ", fmt_primary("auto"), fmt_dim(" (enabled only for Azure DevOps)"))
+        styled("PR limit: ", fmt_primary("auto"), fmt_dim(" (enabled only for Azure DevOps)"))
         if state.get("azure_pr_limit", "auto") == "auto"
-        else styled("PR Limit: ", fmt_primary("disabled"))
+        else styled("PR limit: ", fmt_primary("disabled"))
     )
     choices.extend(
         [
-            Choice(styled(f"API Key ({provider}): ", api_status,
-                          fmt_dim(f" ({state['api_key_source']})") if state.get("api_key_source") else ""),
+            Choice(styled("API key: ", fmt_ok("configured") if state["api_configured"] else fmt_warn("not set"),
+                          source(state.get("api_key_source")) if state["api_configured"] else ""),
                    value="api-key"),
             Choice(styled("Temperature: ", fmt_primary(state["temperature"])), value="temperature"),
             Choice(styled("Output token budget: ", fmt_primary(state["max_tokens"])), value="max-tokens"),
-            Choice(styled("Commit input token budget: ", fmt_primary(state.get("token_limit", 200000))),
+            Choice(styled("Input token budget: ", fmt_primary(state.get("token_limit", 200000))),
                    value="commit-input-budget"),
-            Choice(styled("Issue/PR input token budget: ", fmt_primary(state.get("issue_pr_token_limit", 200000))),
+            Choice(styled("Input token budget: ", fmt_primary(state.get("issue_pr_token_limit", 200000))),
                    value="issue-pr-input-budget"),
-            Choice(styled("Commit format: ", fmt_primary(_commit_format_summary(state))),
+            Choice(styled("Format: ", fmt_primary(_commit_format_summary(state))),
                    value="commit-format"),
-            Choice(styled("Issue/PR input source: ", fmt_primary(_SOURCE_LABELS[state.get("issue_pr_source", "b")])),
+            Choice(styled("Input source: ", fmt_primary(_SOURCE_LABELS[state.get("issue_pr_source", "b")])),
                    value="issue-pr-source"),
-            Choice(styled("Max Retries: ", fmt_primary(state["max_retries"])), value="max-retries"),
+            Choice(styled("Max retries: ", fmt_primary(state["max_retries"])), value="max-retries"),
             Choice(pr_limit, value="azure-pr-limit"),
-            Choice(styled("PR Max Chars: ", fmt_primary(state.get("azure_pr_max_chars", 4000))),
+            Choice(styled("PR max chars: ", fmt_primary(state.get("azure_pr_max_chars", 4000))),
                    value="azure-pr-max-chars"),
             Choice(styled(fmt_dim(done_label) if done_label.startswith("←") else done_label), value="done"),
         ]
@@ -580,8 +573,10 @@ def main(
         if choice is None or choice == "exit":
             raise typer.Exit(0)
 
-        console.print()
         # Settings is a detour, not a destination: leaving it lands back here.
+        # Its questions follow the root question directly; content commands get a gap.
+        if choice != "settings":
+            console.print()
         if choice == "settings":
             try:
                 _run_settings_menu(done_label="← Back")
@@ -593,7 +588,8 @@ def main(
                 raise typer.Exit(1)
             # Content commands read the settings singleton; pick up any edits.
             reload_settings()
-            console.print()
+            if status_last():
+                console.print()
             continue
 
         # Invoke the selected command with interactive=True
@@ -1443,14 +1439,17 @@ _SETTING_DEFAULTS = {
 def _load_settings_state() -> dict[str, Any]:
     """Re-read persisted settings; the import-time singleton would be stale
     when the menu is re-entered after edits in the same session."""
-    from .settings.settings import (GitToolsSettings, check_api_key_configured,
+    from .settings.settings import (GitToolsSettings, _get_provider_api_key_envs, check_api_key_configured,
                                     effective_provider_base_url, effective_value)
 
     fresh = GitToolsSettings()
     provider = normalize_provider_name(fresh.default_provider)
     is_api_configured, _ = check_api_key_configured(provider)
     endpoint, endpoint_source = effective_provider_base_url(provider)
-    _, key_source = effective_value(provider_api_key_env(provider))
+    # Every credential name the provider reads (Qwen has two), as the precheck reads them.
+    _, key_source = effective_value(*_get_provider_api_key_envs(provider))
+    if is_api_configured and key_source == "not configured":
+        key_source = "provider default"  # CLIProxyAPI's stock key: configured without being set
     return {
         "provider": provider,
         "model": _resolve_current_model(provider, fresh.effective_main_model),
@@ -1484,16 +1483,19 @@ def _prompt_provider_api_key(provider: str) -> tuple[bool, str | None]:
     persisted yet: the caller temporarily applies it for discovery and saves it
     only after model selection completes.
     """
-    from .settings.settings import check_api_key_configured
+    from .settings.settings import PROVIDER_DEFAULT_API_KEYS, check_api_key_configured, effective_value
 
     configured, _ = check_api_key_configured(provider)
     label = provider_label(provider)
-    suffix = " (blank keeps current)" if configured else ""
+    # As agent-cli asks it: a provider with a stock key (CLIProxyAPI's) names that key until one is set.
+    default_key = PROVIDER_DEFAULT_API_KEYS.get(normalize_provider_name(provider))
+    explicit = bool(effective_value(provider_api_key_env(provider))[0])
+    suffix = (" (blank keeps current)" if configured and (explicit or not default_key)
+              else f" (blank: {default_key})" if default_key else "")
     value = _ask_with_back(
-        questionary.password(
+        picker.password(
             f"Enter your {label} API key{suffix}:",
             style=TYPER_STYLE,
-            qmark="❯",
         )
     )
     if value is None:
@@ -1507,7 +1509,6 @@ def _prompt_provider_api_key(provider: str) -> tuple[bool, str | None]:
 
     console.print()
     warning(f"{label} needs an API key before models can be detected.")
-    console.print()
     return False, None
 
 
@@ -1548,18 +1549,20 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
     snapshots: dict[str, Any] = {}
     original_env: dict[str, str | None] = {}
     committed = False
-    step = "provider" if selection is None else "endpoint" if selection == "qwen" else "key"
+    # Qwen's plan/region URL and CLIProxyAPI's proxy address are asked before the key.
+    asks_endpoint = {"qwen", "cliproxyapi"}
+    step = "provider" if selection is None else "endpoint" if selection in asks_endpoint else "key"
     try:
         while True:
             if step == "provider":
-                picked = _ask_with_back(questionary.select(
+                picked = _ask_with_back(picker.select(
                     "Select provider:", choices=[*_build_provider_choices(selection or state["provider"]), _back_choice()],
-                    default=selection or state["provider"], style=TYPER_STYLE, qmark="❯",
+                    default=selection or state["provider"], style=TYPER_STYLE,
                 ))
                 if picked in (None, _BACK):
                     return
                 selection = picked
-                step = "endpoint" if selection == "qwen" else "key"
+                step = "endpoint" if selection in asks_endpoint else "key"
             assert selection is not None
             if selection not in pending:
                 changed = selection != state["provider"]
@@ -1589,10 +1592,19 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
             if draft["key"]:
                 os.environ[env_var] = draft["key"]
 
+            if step == "endpoint" and selection == "cliproxyapi":
+                # agent-cli's address question: blank keeps the current one, ip:port or a URL reaches another machine.
+                address = _ask_proxy_address(draft["endpoint"] or "")
+                if address is None:
+                    step = "provider"
+                    continue
+                draft["endpoint"] = address
+                step = "key"
+                continue
             if step == "endpoint":
-                endpoint = _ask_with_back(questionary.text(
+                endpoint = _ask_with_back(picker.text(
                     "Qwen API endpoint (exact plan/region URL):", default=draft["endpoint"] or "",
-                    style=TYPER_STYLE, qmark="❯",
+                    style=TYPER_STYLE,
                 ))
                 if endpoint in (None, _BACK):
                     step = "provider"
@@ -1603,14 +1615,16 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
             if step == "key":
                 proceed, new_key = _prompt_provider_api_key(selection)
                 if not proceed:
-                    step = "endpoint" if selection == "qwen" else "provider"
+                    step = "endpoint" if selection in asks_endpoint else "provider"
                     continue
                 if new_key is not None:
                     draft["key"] = new_key
                 step = "model"
                 continue
             if step == "model":
-                model = _choose_provider_model(selection, draft["model"])
+                # Back from effort, CLIProxyAPI reopens the group's model list it came from, without asking the management key again.
+                model = (_choose_cliproxyapi_model(draft["model"], resume=True) if draft.pop("resume_window", False)
+                         else _choose_provider_model(selection, draft["model"]))
                 if model is None:
                     step = "key"
                     continue
@@ -1636,21 +1650,23 @@ def _edit_provider(state: dict[str, Any], value: Optional[str] = None,
                         continue
                     draft["kimi_thinking"], draft["reasoning_effort"] = picked
                 else:
-                    capable = (is_openai_reasoning_model(draft["model"], platform=selection == "openai")
+                    capable = (is_openai_reasoning_model(split_model_group(draft["model"], selection)[1],
+                                                         platform=selection == "openai")
                                if selection in {"openai", "cliproxyapi"}
                                else selection in {"openrouter", "qwen", "anthropic", "acrc", "copilot", "zcode"})
                     if capable:
                         choices = _build_effort_choices(selection, draft["model"], draft["reasoning_effort"])
                         current = (draft["reasoning_effort"] or "").strip().lower()
                         default = _effort_picker_default(selection, current, choices)
-                        effort = _ask_with_back(questionary.select(
+                        effort = _ask_with_back(picker.select(
                             _effort_prompt(selection, current=(
                                 _effective_effort(selection, draft["model"], current) if selection == "zcode" else None
                             )), choices=[*choices, _back_choice()], default=default,
-                            style=TYPER_STYLE, qmark="❯",
+                            style=TYPER_STYLE,
                         ))
                         if effort in (None, _BACK):
                             step = "routing" if selection == "openrouter" else "model"
+                            draft["resume_window"] = selection == "cliproxyapi"
                             continue
                         draft["reasoning_effort"] = effort or None
                 updates = {
@@ -1745,6 +1761,16 @@ def _print_model_catalog_status(provider: str, live: bool) -> None:
         )
         return
 
+    if failure.kind == "configuration":
+        # Not a request that failed: the provider could not be set up for one. Say which part is missing.
+        from .settings.settings import check_api_key_configured
+
+        if not check_api_key_configured(provider)[0]:
+            warning(f"{label} models were not loaded: its API key is not set (Settings › provider › API key); {available}.")
+        else:
+            warning(f"{label} models were not loaded: its settings are incomplete (check Settings › provider › API endpoint); {available}.")
+        return
+
     status = f"HTTP {failure.status}" if failure.status else failure.kind
     detail = " ".join(failure.message.split())[:160]
     warning(
@@ -1752,12 +1778,45 @@ def _print_model_catalog_status(provider: str, live: bool) -> None:
     )
 
 
+def _ask_proxy_address(current: str) -> str | None:
+    """CLIProxyAPI's address, asked as agent-cli asks it; None goes back."""
+    from . import proxy_accounts
+
+    return proxy_accounts.ask_address(current, proxy_accounts.terminal_pickers(ask=_ask_with_back))
+
+
+def _choose_cliproxyapi_model(current_model: str, *, resume: bool = False) -> str | None:
+    """agent-cli's CLIProxyAPI picker: the management key, the account-group window, then a model inside the chosen group.
+
+    The model list is fetched with the endpoint and key the caller made effective (the wizard's pending ones). The management key and the group names are saved as soon as they change; the model is returned for the caller to save. ``resume`` (back from the effort step) reopens the current model's group's list with the management key this process already used there.
+    """
+    from . import proxy_accounts
+    from .settings.mappings import refresh_live_catalog
+    from .settings.settings import load_provider_config
+
+    try:
+        base_url = load_provider_config("cliproxyapi").base_url or ""
+    except ValueError:
+        base_url = ""
+    return proxy_accounts.choose_model(
+        base_url=base_url,
+        entry=proxy_accounts.load_entry(),
+        current_model=current_model,
+        catalog=refresh_live_catalog("cliproxyapi"),
+        refetch=lambda: refresh_live_catalog("cliproxyapi"),
+        pickers=proxy_accounts.terminal_pickers(ask=_ask_with_back),
+        resume=resume,
+    )
+
+
 def _choose_provider_model(provider: str, current_model: str) -> str | None:
     """Discover and choose a model for one provider without persisting it."""
+    if normalize_provider_name(provider) == "cliproxyapi":
+        return _choose_cliproxyapi_model(current_model or _provider_default_model(provider))
     console.print()
     live = refresh_live_models(provider, force=True)
     _print_model_catalog_status(provider, live)
-    console.print()
+    # No blank line after it: the picker below erases itself when done.
     default_model = current_model or _provider_default_model(provider)
     while True:
         model_choice = _ask_model_choice(
@@ -1769,12 +1828,10 @@ def _choose_provider_model(provider: str, current_model: str) -> str | None:
             return None
         if model_choice == ADD_MODEL_SENTINEL:
             new_model = _ask_with_back(
-                questionary.text(
+                picker.text(
                     f"Enter {provider} model ID:",
                     default=current_model,
                     style=TYPER_STYLE,
-                    qmark="❯",
-                    instruction="",
                 )
             )
             if new_model is None:
@@ -1844,7 +1901,6 @@ def _prompt_openrouter_upstream(model: str, current: Optional[str]) -> Optional[
     else:
         console.print()
         warning(f"Could not list OpenRouter upstreams for {model}.")
-        console.print()
         if current:
             choices.append(Choice(
                 styled(fmt_current(f"Keep current pin: {current}"), fmt_dim(" (unverified)")), value=current,
@@ -1853,13 +1909,13 @@ def _prompt_openrouter_upstream(model: str, current: Optional[str]) -> Optional[
                     Choice(styled(fmt_dim("Enter upstream slug manually")), value=manual), _back_choice()])
     default = current if current and any(choice.value == current for choice in choices) else None
     while True:
-        value = _ask_with_back(questionary.select(
+        value = _ask_with_back(picker.select(
             f"OpenRouter upstream for {model}:", choices=choices, default=default,
-            style=TYPER_STYLE, qmark="❯"))
+            style=TYPER_STYLE))
         if value in (None, _BACK):
             return None
         if value == manual:
-            value = _ask_with_back(questionary.text("Upstream slug:", style=TYPER_STYLE, qmark="❯"))
+            value = _ask_with_back(picker.text("Upstream slug:", style=TYPER_STYLE))
             if value is None:
                 continue
         pin = value.strip().lower()
@@ -1959,16 +2015,12 @@ def _edit_effort(state: dict[str, Any], value: Optional[str] = None) -> None:
                 f"Saved effort {configured} is not one of this model's tiers; "
                 "pick a listed tier or the model default."
             )
-            console.print()
         effort_choice = _ask_with_back(
-            questionary.select(
-                _effort_prompt(state["provider"], current=effective_effort or "unset"),
+            picker.select(
+                _effort_prompt(state["provider"], current=effective_effort or "model default"),
                 choices=[*choices, _back_choice()],
                 default=default,
                 style=TYPER_STYLE,
-                qmark="❯",
-                pointer="›",
-                instruction="",
             )
         )
         if effort_choice is None or effort_choice == _BACK:
@@ -2019,10 +2071,9 @@ def _edit_api_key(state: dict[str, Any], value: Optional[str] = None) -> None:
     direct = value is not None
     if not direct:
         value = _ask_with_back(
-            questionary.password(
+            picker.password(
                 f"Enter your {provider_label(provider)} API key:",
                 style=TYPER_STYLE,
-                qmark="❯",
             )
         )
         if value is None:
@@ -2062,12 +2113,10 @@ def _edit_number(
     direct = value is not None
     if not direct:
         value = _ask_with_back(
-            questionary.text(
+            picker.text(
                 f"{label} (current: {state[state_key]}, default: {_SETTING_DEFAULTS[state_key]}):",
                 default=str(state[state_key]),
                 style=TYPER_STYLE,
-                qmark="❯",
-                instruction="",
             )
         )
         if not value:
@@ -2115,7 +2164,7 @@ def _edit_max_tokens(state: dict[str, Any], value: Optional[str] = None) -> None
         state,
         state_key="max_tokens",
         env_var="GIT_TOOLS_DEFAULT_MAX_TOKENS",
-        label="Max tokens",
+        label="Output token budget",
         parse=int,
         is_valid=lambda tokens: tokens > 0,
         invalid_message="Invalid max tokens value.",
@@ -2147,10 +2196,9 @@ def _edit_boolean_preference(state: dict[str, Any], state_key: str, label: str,
     from .settings.settings import save_setting
 
     if value is None:
-        picked = _ask_with_back(questionary.select(
+        picked = _ask_with_back(picker.select(
             label + ":", choices=[Choice("No", value="false"), Choice("Yes", value="true"), _back_choice()],
-            default=str(state.get(state_key, default)).lower(), style=TYPER_STYLE, qmark="❯",
-            instruction="",
+            default=str(state.get(state_key, default)).lower(), style=TYPER_STYLE,
         ))
         if picked in (None, _BACK):
             return
@@ -2184,11 +2232,10 @@ def _edit_commit_body_style(state: dict[str, Any], value: Optional[str] = None) 
     from .settings.settings import save_setting
 
     if value is None:
-        value = _ask_with_back(questionary.select(
+        value = _ask_with_back(picker.select(
             "Description style:",
             choices=[Choice("Point form", value="bullets"), Choice("Prose", value="prose"), _back_choice()],
-            default=state.get("commit_body_style", "bullets"), style=TYPER_STYLE, qmark="❯",
-            instruction="",
+            default=state.get("commit_body_style", "bullets"), style=TYPER_STYLE,
         ))
         if value in (None, _BACK):
             return
@@ -2205,7 +2252,7 @@ def _edit_commit_body_style(state: dict[str, Any], value: Optional[str] = None) 
 def _commit_format_summary(state: dict[str, Any]) -> str:
     scope = "on" if state.get("commit_include_scope", False) else "off"
     body = "on" if state.get("commit_include_body", True) else "off"
-    style = "Point form" if state.get("commit_body_style", "bullets") == "bullets" else "Prose"
+    style = "point form" if state.get("commit_body_style", "bullets") == "bullets" else "prose"
     footer = "on" if state.get("commit_include_footer", False) else "off"
     return f"scope {scope} · body {body} · {style} · footer {footer}"
 
@@ -2242,28 +2289,25 @@ def _edit_commit_format(state: dict[str, Any], value: Optional[str] = None) -> N
     if value is not None:
         error("Commit format is a group; omit the value or use commit-scope, commit-body, commit-body-style, or commit-footer.")
         raise typer.Exit(1)
-    console.print()
     while True:
-        choice = _ask_with_back(questionary.select(
+        choice = _ask_with_back(picker.select(
             "Commit format (short summary is always required):",
-            choices=_build_commit_format_choices(state), style=TYPER_STYLE, qmark="❯", pointer="›",
-            instruction="",
+            choices=_build_commit_format_choices(state), style=TYPER_STYLE,
         ))
         if choice in (None, _BACK):
             return
         _SETTINGS_EDITORS[choice](state)
         _refresh_commit_format_state(state)
-        console.print()
 
 
 def _edit_issue_pr_source(state: dict[str, Any], value: Optional[str] = None) -> None:
     from .settings.settings import save_setting
 
     if value is None:
-        value = _ask_with_back(questionary.select(
+        value = _ask_with_back(picker.select(
             "Issue/PR input source:", choices=[*[Choice(label, value=key) for key, label in _SOURCE_LABELS.items()],
                                                _back_choice()],
-            default=state.get("issue_pr_source", "b"), style=TYPER_STYLE, qmark="❯",
+            default=state.get("issue_pr_source", "b"), style=TYPER_STYLE,
         ))
         if value in (None, _BACK):
             return
@@ -2295,7 +2339,7 @@ def _edit_azure_pr_limit(state: dict[str, Any], value: Optional[str] = None) -> 
     from .settings.settings import save_setting
 
     if value is None:
-        value = _ask_with_back(questionary.select(
+        value = _ask_with_back(picker.select(
             "PR limit mode (auto enables limiting only for Azure DevOps):",
             choices=[Choice("auto (enabled only for Azure DevOps)", value="auto"),
                      Choice("false (disabled)", value="false"), _back_choice()],
@@ -2379,9 +2423,9 @@ def _edit_api_base(state: dict[str, Any], value: Optional[str] = None) -> None:
     from .settings.settings import save_setting
 
     if value is None:
-        value = _ask_with_back(questionary.text(
+        value = _ask_with_back(picker.text(
             "API endpoint:", default=_current_api_base(state["provider"]),
-            style=TYPER_STYLE, qmark="❯"))
+            style=TYPER_STYLE))
         if value is None:
             return
     endpoint = _validate_api_base(value)
@@ -2458,9 +2502,9 @@ def _pick_kimi_thinking(
         if position == index and current_thinking is not None:
             parts.append(fmt_current())
         rows.append(Choice(styled(*parts), value=position))
-    picked = _ask_with_back(questionary.select(
+    picked = _ask_with_back(picker.select(
         f"Kimi thinking for {model}:", choices=[*rows, _back_choice()], default=rows[index],
-        style=TYPER_STYLE, qmark="❯", pointer="›", instruction="",
+        style=TYPER_STYLE,
     ))
     if picked in (None, _BACK):
         return None
@@ -2559,26 +2603,89 @@ _SETTINGS_EDITORS: dict[str, Callable[..., None]] = {
 }
 
 
-def _run_settings_menu(*, done_label: str = "Done") -> None:
-    """Interactive settings menu; Esc or the last row leaves it."""
-    state = _load_settings_state()
+# The interactive menu in levels, as agent-cli's /settings shows it: a short top level of groups (each row says what it holds), and each group its own list with current values. Rows are _build_settings_choices' rows, in the group's order; a row a provider does not show (routing, Kimi thinking, effort) is left out of its group too. `git-tools settings <name> [value]` is unchanged.
+_SETTINGS_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("provider", "provider", ("provider", "model", "api-base", "openrouter-provider", "kimi-thinking", "effort", "api-key")),
+    ("generation", "generation", ("temperature", "max-tokens", "max-retries")),
+    ("commit", "commit", ("commit-format", "commit-input-budget")),
+    ("issue-pr", "issue / PR", ("issue-pr-source", "issue-pr-input-budget", "azure-pr-limit", "azure-pr-max-chars")),
+)
+
+# How the top level names each row of a group.
+_SETTING_SHORT_NAMES = {
+    "provider": "provider", "model": "main model", "api-base": "endpoint", "openrouter-provider": "upstream routing",
+    "kimi-thinking": "thinking", "effort": "effort", "api-key": "API key",
+    "temperature": "temperature", "max-tokens": "output tokens", "max-retries": "retries",
+    "commit-format": "format", "commit-input-budget": "input budget",
+    "issue-pr-source": "input source", "issue-pr-input-budget": "input budget",
+    "azure-pr-limit": "PR limit", "azure-pr-max-chars": "PR max chars",
+}
+
+
+def _build_settings_group_choices(state: dict[str, Any]) -> list[Choice]:
+    """The top level: one row per group, ``name — what it holds``. Esc leaves; like agent-cli's /settings, there is no Done row."""
+    rows = _build_settings_choices(state)
+    shown = {row.value for row in rows}
+    width = max(len(title) for _key, title, _values in _SETTINGS_GROUPS)
+    choices = []
+    for key, title, values in _SETTINGS_GROUPS:
+        knobs = [_SETTING_SHORT_NAMES[value] for value in values if value in shown]
+        if knobs:
+            choices.append(Choice(styled(fmt_primary(f"{title:<{width}}"), fmt_dim(" — "), " · ".join(knobs)), value=key))
+    return choices
+
+
+#: What the top level says under its title, as agent-cli's /settings does.
+_SETTINGS_ABOUT = "Each change is saved to ~/.git-tools/settings.env at once. An exported environment variable still wins over a saved value."
+
+
+def _run_settings_group(key: str, state: dict[str, Any]) -> dict[str, Any]:
+    """One group's settings with their current values; Esc returns to the top level."""
+    title, values = next((title, values) for group, title, values in _SETTINGS_GROUPS if group == key)
+    last: str | None = None
     while True:
+        # In the group's own order, which is the order its top-level row names them in.
+        built = {row.value: row for row in _build_settings_choices(state)}
+        rows = [built[value] for value in values if value in built]
         choice = _ask_with_back(
-            questionary.select(
-                "Select setting to edit:",
-                choices=_build_settings_choices(state, done_label=done_label),
+            picker.select(
+                f"Settings › {title}:",
+                choices=rows,
+                default=last if any(row.value == last for row in rows) else None,
                 style=TYPER_STYLE,
-                qmark="❯",
-                pointer="›",
-                instruction="",
+            )
+        )
+        if choice in (None, _BACK):
+            return state
+        last = choice
+        _SETTINGS_EDITORS[choice](state)
+        # Show effective values after saves; process env may still override them. The pickers erase themselves, so only the editors' status lines stay on screen.
+        state = _load_settings_state()
+
+
+def _run_settings_menu(*, done_label: str = "Done") -> None:
+    """Interactive settings menu: the groups, then a group's settings. Esc leaves it.
+
+    ``done_label`` is kept for callers; agent-cli's picker has no Done or Back row (Esc goes back), so it is not shown.
+    """
+    state = _load_settings_state()
+    last: str | None = None
+    while True:
+        choices = _build_settings_group_choices(state)
+        choice = _ask_with_back(
+            picker.select(
+                "Settings:",
+                choices=choices,
+                about=_SETTINGS_ABOUT,
+                default=last if any(row.value == last for row in choices) else None,
+                style=TYPER_STYLE,
             )
         )
         if choice is None or choice == "done":
             return
-        _SETTINGS_EDITORS[choice](state)
-        # Show effective values after saves; process env may still override them.
+        last = choice  # Esc in the group comes back here, on its row
+        _run_settings_group(choice, state)
         state = _load_settings_state()
-        console.print()
 
 
 @app.command(name="settings")

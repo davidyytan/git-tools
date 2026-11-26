@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models.base import _convert_message_to_dict
 
+from git_tools.providers.cliproxyapi import split_model_group
 from git_tools.providers.zcode import resolve_reasoning_effort
 from git_tools.settings.mappings import is_openai_reasoning_model
 
@@ -38,6 +39,8 @@ def provider_request_options(
     kwargs: dict[str, Any] = {"temperature": temperature}
     requested_effort = (effort or "").strip().lower() or None
     reasoning_effort = None if requested_effort == "none" else requested_effort
+    # What the model is, for the family checks below: a CLIProxyAPI account group ("work/gpt-6.2-sol") is dropped, as the proxy drops it before calling upstream. The id sent stays whole, since the group is what routes the request.
+    family_id = split_model_group(model, provider)[1]
     if provider == "openrouter":
         provider_block: dict[str, Any] = {"data_collection": "deny"}
         slug = (openrouter_provider or "").strip().lower()
@@ -79,7 +82,7 @@ def provider_request_options(
         if requested_effort:
             kwargs["reasoning_effort"] = resolve_reasoning_effort(requested_effort)
     elif provider == "openai":
-        if reasoning_effort and is_openai_reasoning_model(model, platform=True):
+        if reasoning_effort and is_openai_reasoning_model(family_id, platform=True):
             kwargs["reasoning_effort"] = reasoning_effort
     elif provider == "anthropic":
         kwargs.pop("temperature", None)
@@ -87,7 +90,7 @@ def provider_request_options(
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         elif reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
-    elif reasoning_effort and is_openai_reasoning_model(model):
+    elif reasoning_effort and is_openai_reasoning_model(family_id):
         kwargs["reasoning_effort"] = reasoning_effort
     if provider == "cliproxyapi":
         kwargs["default_headers"] = {"Session_id": session_key}

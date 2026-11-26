@@ -328,7 +328,8 @@ class SettingsSpacingTests(unittest.TestCase):
                     refresh.assert_called_once_with("openrouter", force=True)
                     text = output.getvalue()
                     self.assertIn("********\n\n", text)
-                    self.assertIn("\n\n❯ Select model:", text)
+                    # The picker erases itself, so the status line sits directly above it, with no gap to leave behind.
+                    self.assertRegex(text, r"\n\n(⚠|model list:)[^\n]*\n❯ Select model:")
                     self.assertNotIn("\n\n\n", text)
                     self.assertEqual(text.count("model list:") if live else text.count("⚠"), 1)
 
@@ -338,24 +339,25 @@ class SettingsSpacingTests(unittest.TestCase):
                 console.print("❯ Select model: saved/model")
                 with (
                     patch.object(cli, "_list_openrouter_endpoints", return_value=[]),
-                    patch.object(cli.questionary, "select", side_effect=fake_questions(console, ["any"])),
+                    patch.object(cli.picker, "select", side_effect=fake_questions(console, ["any"])),
                     patch.object(cli, "_ask_with_back", side_effect=lambda q: q.unsafe_ask()),
                 ):
                     self.assertEqual(cli._prompt_openrouter_upstream("saved/model", None), "")
                 text = output.getvalue()
                 self.assertIn("saved/model\n\n⚠ ", text)
-                self.assertIn("\n\n❯ OpenRouter upstream", text)
+                # The warning sits directly above the (erasing) picker: no blank line to leave behind.
+                self.assertRegex(text, r"\n\n⚠ [^\n]*\n❯ OpenRouter upstream")
                 self.assertNotIn("\n\n\n", text)
 
     def test_preference_save_and_return_to_settings_have_single_gaps(self):
         state = {"commit_include_scope": False}
         for width in WIDTHS:
             with self.subTest(width=width), captured_console(width) as (console, output):
-                question = fake_questions(console, ["commit-scope", "true", "done"])
+                question = fake_questions(console, ["commit", "commit-scope", "true", None, None])
                 with (
                     patch.object(cli, "_load_settings_state", return_value=state.copy()),
                     patch.object(cli, "_build_settings_choices", return_value=[]),
-                    patch.object(cli.questionary, "select", side_effect=question),
+                    patch.object(cli.picker, "select", side_effect=question),
                     patch.object(cli, "_ask_with_back", side_effect=lambda q: q.unsafe_ask()),
                     patch.object(settings_module, "save_setting") as saved,
                 ):
@@ -363,14 +365,15 @@ class SettingsSpacingTests(unittest.TestCase):
                 saved.assert_called_once_with("GIT_TOOLS_COMMIT_INCLUDE_SCOPE", "true")
                 text = output.getvalue()
                 self.assertIn("commit-scope\n❯ Commit scope by default: true\n\n✓ ", text)
-                self.assertIn("\n\n❯ Select setting to edit: done\n", text)
+                # The ✓ line stays; the next (erasing) picker sits right under it.
+                self.assertIn("saved as true\n❯ Settings › commit: \n❯ Settings: \n", text)
                 self.assertNotIn("\n\n\n", text)
 
     def test_main_settings_detour_and_command_dispatch_have_single_gaps(self):
         for width in WIDTHS:
             with self.subTest(width=width), captured_console(width) as (console, output):
                 def settings_menu(**_kwargs):
-                    console.print("❯ Select setting to edit: ← Back")
+                    console.print("❯ Settings: ← Back")
                 def invoke(*_args, **_kwargs):
                     console.print("❯ Select commit mode: conventional")
                 ctx = SimpleNamespace(invoked_subcommand=None, invoke=Mock(side_effect=invoke))
@@ -389,8 +392,8 @@ class SettingsSpacingTests(unittest.TestCase):
                 header = "git-tools 9.8.7"
                 self.assertTrue(text.startswith(f"{header}\n❯ Select command: settings\n"), text)
                 self.assertEqual(text.splitlines().count(header), 1, text)
-                self.assertIn("settings\n\n❯ Select setting to edit:", text)
-                self.assertIn("← Back\n\n❯ Select command: commit\n\n❯ Select commit mode:", text)
+                self.assertIn("settings\n❯ Settings:", text)  # questions stack: no gap
+                self.assertIn("← Back\n❯ Select command: commit\n\n❯ Select commit mode:", text)
                 self.assertNotIn("\n\n\n", text)
 
     def test_cancelled_editor_returns_to_menu_with_one_separator(self):
@@ -399,11 +402,11 @@ class SettingsSpacingTests(unittest.TestCase):
                 patch.object(cli, "_load_settings_state", return_value={}),
                 patch.object(cli, "_build_settings_choices", return_value=[]),
                 patch.object(cli, "_SETTINGS_EDITORS", {"cancelled": lambda _state: None}),
-                patch.object(cli.questionary, "select", side_effect=fake_questions(console, ["cancelled", "done"])),
+                patch.object(cli.picker, "select", side_effect=fake_questions(console, ["commit", "cancelled", None, None])),
                 patch.object(cli, "_ask_with_back", side_effect=lambda q: q.unsafe_ask()),
             ):
                 cli._run_settings_menu()
-        self.assertEqual(output.getvalue(), "❯ Select setting to edit: cancelled\n\n❯ Select setting to edit: done\n")
+        self.assertEqual(output.getvalue(), "❯ Settings: commit\n❯ Settings › commit: cancelled\n❯ Settings › commit: \n❯ Settings: \n")
 
 
 if __name__ == "__main__":

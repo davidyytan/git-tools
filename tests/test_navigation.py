@@ -17,7 +17,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from typer.testing import CliRunner
 
-from git_tools import cli
+from git_tools import cli, picker
 from git_tools.navigation import NavigationBack, ask_with_back
 from git_tools.generators.base.generator import BaseGenerator
 from git_tools.generators.commitgen.generator import CommitGenerator
@@ -31,18 +31,19 @@ def keyed_questions(keys):
     """Each real prompt gets its own input pipe, avoiding cross-prompt buffering."""
     answers = iter(keys)
     messages = []
-    factories = {name: getattr(questionary, name) for name in ('select', 'text', 'password')}
+    # questionary (root menu, log, generators) and git-tools' agent-cli pickers (settings) alike.
+    factories = {(module, name): getattr(module, name) for module in (questionary, picker) for name in ('select', 'text', 'password')}
     with ExitStack() as stack:
-        def factory(name):
-            def build(message, **kwargs):
+        def factory(key):
+            def build(message, *args, **kwargs):
                 messages.append(message)
                 pipe = stack.enter_context(create_pipe_input())
-                question = factories[name](message, input=pipe, output=DummyOutput(), **kwargs)
+                question = factories[key](message, *args, input=pipe, output=DummyOutput(), **kwargs)
                 pipe.send_text(next(answers))
                 return question
             return build
-        for name in factories:
-            stack.enter_context(patch.object(questionary, name, side_effect=factory(name)))
+        for module, name in factories:
+            stack.enter_context(patch.object(module, name, side_effect=factory((module, name))))
         yield messages
 
 
@@ -178,14 +179,14 @@ class RootRoutingTests(unittest.TestCase):
             self.assertNotIn('Unexpected error', result.output)
 
     def test_settings_escape_still_returns_one_level_then_root(self):
-        # Select settings in root; enter a child; cancel child; cancel settings;
-        # the root is shown again and Esc exits it.
+        # Select settings in root; open a group; enter a child; cancel child;
+        # cancel the group, then settings; the root is shown again and Esc exits it.
         def choices(_state, **_kwargs):
             return [questionary.Choice('Child', value='child'), questionary.Choice('Back', value='done')]
-        with keyed_questions(['\x1b[B' * 5 + '\r', '\r', '\x1b', '\x1b', '\x1b']) as messages, patch.object(cli, '_has_interactive_terminal', return_value=True), patch.object(cli, '_load_settings_state', return_value={}), patch.object(cli, '_build_settings_choices', side_effect=choices), patch.object(cli, '_SETTINGS_EDITORS', {'child': lambda _s: cli._ask_with_back(questionary.text('Child:'))}), patch.object(cli, 'reload_settings') as reload:
+        with keyed_questions(['\x1b[B' * 5 + '\r', '\r', '\r', '\x1b', '\x1b', '\x1b', '\x1b']) as messages, patch.object(cli, '_has_interactive_terminal', return_value=True), patch.object(cli, '_load_settings_state', return_value={}), patch.object(cli, '_build_settings_choices', side_effect=choices), patch.object(cli, '_SETTINGS_GROUPS', (('test', 'test', ('child',)),)), patch.object(cli, '_SETTING_SHORT_NAMES', {'child': 'child'}), patch.object(cli, '_SETTINGS_EDITORS', {'child': lambda _s: cli._ask_with_back(questionary.text('Child:'))}), patch.object(cli, 'reload_settings') as reload:
             result = self.runner.invoke(cli.app, [])
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(messages, ['Select command:', 'Select setting to edit:', 'Child:', 'Select setting to edit:', 'Select command:'])
+        self.assertEqual(messages, ['Select command:', 'Settings:', 'Settings › test:', 'Child:', 'Settings › test:', 'Settings:', 'Select command:'])
         reload.assert_called_once()
 
     def test_all_command_boundaries_route_back_and_ctrl_c_differently(self):

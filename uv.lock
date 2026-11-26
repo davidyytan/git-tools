@@ -206,7 +206,7 @@ wheels = [
 
 [[package]]
 name = "git-tools"
-version = "0.2.0a7"
+version = "0.2.0a8"
 source = { editable = "." }
 dependencies = [
     { name = "langchain" },

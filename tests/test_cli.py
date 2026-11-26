@@ -362,7 +362,7 @@ class CliTests(unittest.TestCase):
         state = {"provider": "openai", "model": "gpt-4.1", "temperature": 0.6,
                  "max_tokens": 32000, "max_retries": 1, "api_configured": False}
         rows = {row.value: plain_title(row.title) for row in _build_settings_choices(state)}
-        self.assertEqual(rows["commit-format"], "Commit format: scope off · body on · Point form · footer off")
+        self.assertEqual(rows["commit-format"], "Format: scope off · body on · point form · footer off")
         for key in ("commit-scope", "commit-body", "commit-body-style", "commit-footer"):
             self.assertNotIn(key, rows)
             self.assertIn(key, _SETTINGS_EDITORS)
@@ -384,8 +384,8 @@ class CliTests(unittest.TestCase):
             titles[:3],
             [
                 "Provider: cliproxyapi",
-                "Main Model: gpt-5.5",
-                "API Endpoint: not configured (provider default)",
+                "Main model: gpt-5.5",
+                "API endpoint: not set",
             ],
         )
         self.assertEqual(titles[-1], "Done")
@@ -405,14 +405,14 @@ class CliTests(unittest.TestCase):
 
         # Kimi's tier lives in the combined thinking row (agent-cli's picker);
         # there is no separate effort row for it.
-        self.assertIn("Kimi thinking: high", titles)
+        self.assertIn("Thinking: high", titles)
         self.assertFalse([title for title in titles if title.startswith("Effort:")])
         self.assertEqual(
             titles[:3],
             [
                 "Provider: kimicli",
-                "Main Model: kimi-k2.5",
-                "API Endpoint: not configured (provider default)",
+                "Main model: kimi-k2.5",
+                "API endpoint: not set",
             ],
         )
 

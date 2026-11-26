@@ -151,11 +151,11 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(config.base_url, "http://127.0.0.1:8317/v1")
 
     def test_cliproxyapi_api_key_defaults_without_env(self) -> None:
-        # The CLIProxyAPI client key is a fixed placeholder, so it need not be set.
+        # The CLIProxyAPI client key is agent-proxy's stock key, so it need not be set.
         from git_tools.settings import settings as settings_module
 
         self.assertEqual(
-            CLIProxyAPIConfig.model_fields["api_key"].default, "cliproxyapi"
+            CLIProxyAPIConfig.model_fields["api_key"].default, "cliproxyapi_sEcr3Tk3Y"
         )
 
         with patch.dict(os.environ, {}, clear=False):
@@ -164,7 +164,7 @@ class ProviderConfigTests(unittest.TestCase):
                 configured, value = settings_module.check_api_key_configured("cliproxyapi")
 
         self.assertTrue(configured)
-        self.assertEqual(value, "cliproxyapi")
+        self.assertEqual(value, "cliproxyapi_sEcr3Tk3Y")
 
     def test_openrouter_api_key_not_defaulted(self) -> None:
         # Only local-proxy providers get a default key; OpenRouter still requires one.

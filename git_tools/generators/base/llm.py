@@ -81,4 +81,12 @@ class LLMInvocationMixin:
         self.logger.error(
             f"LLM invocation failed after {max_retries + 1} attempts: {last_error}"
         )
+        # agent-core's retry.explained: say what CLIProxyAPI's model_not_found means for an account-group model id.
+        if (getattr(last_error, "code", None) == "model_not_found"
+                and getattr(self.chatclient, "provider_name", "") == "cliproxyapi"):
+            from git_tools.providers.cliproxyapi import model_not_found_hint
+
+            hint = model_not_found_hint(getattr(self.chatclient, "model_name", ""))
+            if hint:
+                warning(hint)
         return None

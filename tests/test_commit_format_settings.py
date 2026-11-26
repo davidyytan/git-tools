@@ -103,7 +103,7 @@ class CommitFormatSettingsTests(unittest.TestCase):
             for cancel in (None, cli._BACK):
                 before = copy.deepcopy(state)
                 with patch.object(cli, "_ask_with_back", return_value=cancel), \
-                     patch.object(cli.questionary, "select") as select, \
+                     patch.object(cli.picker, "select") as select, \
                      patch.object(config, "save_setting") as save:
                     editor(state)
                 self.assertEqual(select.call_args.kwargs["default"], expected)
@@ -130,8 +130,8 @@ class CommitFormatSettingsTests(unittest.TestCase):
         self.assertEqual(rows.call_args.args[0]["commit_body_style"], "prose")
 
     def test_top_level_returns_after_nested_back_and_reenters(self):
-        answers = ["commit-format", "commit-body", "false", cli._BACK,
-                   "commit-format", "commit-body-style", "prose", None, "done"]
+        answers = ["commit", "commit-format", "commit-body", "false", cli._BACK,
+                   "commit-format", "commit-body-style", "prose", None, None, "done"]
         with patch.object(cli, "_ask_with_back", side_effect=answers) as ask:
             cli._run_settings_menu()
         self.assertEqual(ask.call_count, len(answers))
@@ -186,12 +186,13 @@ class CommitFormatSettingsTests(unittest.TestCase):
                 state = {"commit_body_style": "bullets"}
                 with patch.object(cli, "console", console), \
                      patch("git_tools.generators.base.terminal.console", console), \
-                     patch.object(cli.questionary, "select", side_effect=select), \
+                     patch.object(cli.picker, "select", side_effect=select), \
                      patch.object(cli, "_ask_with_back", side_effect=lambda q: q.unsafe_ask()):
                     cli._edit_commit_format(state)
                 rendered = output.getvalue()
                 self.assertNotIn("\n\n\n", rendered)
-                self.assertIn("Description style saved as Prose\n\nScope: off", rendered)
+                # The ✓ line stays; the sub-list (an erasing picker) is drawn right under it.
+                self.assertIn("Description style saved as Prose\nScope: off", rendered)
                 self.assertIn("Description style: Prose", rendered)
                 self.assertNotIn("?:", rendered)
                 self.assertEqual(state["commit_body_style"], "prose")

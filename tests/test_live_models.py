@@ -262,7 +262,7 @@ class TestLiveProviderModelTrust(unittest.TestCase):
     def test_unset_model_still_uses_single_provider_default(self) -> None:
         from git_tools.cli import _resolve_current_model
 
-        self.assertEqual(_resolve_current_model("cliproxyapi", None), "gpt-6-astra")
+        self.assertEqual(_resolve_current_model("cliproxyapi", None), "gpt-6.2-sol")
 
     def test_generator_default_keeps_live_only_model(self) -> None:
         from git_tools.generators.base import BaseGenerator

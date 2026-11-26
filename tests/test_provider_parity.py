@@ -170,15 +170,14 @@ class ProviderParityTests(unittest.TestCase):
         picker.assert_called_once_with("kimicli", current_model="unlisted-main", default_model="unlisted-main")
         self.assertEqual(selected, "invocation-model")
 
-    def test_generation_picker_uses_search_for_large_catalog(self):
+    def test_generation_picker_lists_a_large_catalog_in_one_list(self):
         from git_tools.cli import ADD_MODEL_SENTINEL
 
         models = {f"model-{i}": {"model_name": f"model-{i}"} for i in range(30)}
-        with patch.dict(mappings.PROVIDERS["kimicli"], {"models": models}), patch.object(settings, "main_model", "unlisted-main"), patch("git_tools.cli.questionary.select") as search, patch("git_tools.cli._ask_with_back", return_value="model-20"):
+        with patch.dict(mappings.PROVIDERS["kimicli"], {"models": models}), patch.object(settings, "main_model", "unlisted-main"), patch("git_tools.cli.picker.select") as search, patch("git_tools.cli._ask_with_back", return_value="model-20"):
             selected = BaseGenerator(interactive=True)._interactive_model_selection(models, "kimicli")
         self.assertEqual(selected, "model-20")
         search.assert_called_once()
-        self.assertTrue(search.call_args.kwargs["use_search_filter"])
         labels = [choice.title for choice in search.call_args.kwargs["choices"]]
         self.assertTrue(any("unlisted-main" in label for label in labels))
         self.assertTrue(any("manually" in label for label in labels))

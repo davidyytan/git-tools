@@ -40,7 +40,7 @@ class ModelSelectionMixin:
         providers = list(PROVIDERS.keys())
         return settings.default_provider if settings.default_provider in providers else providers[0]
 
-    def ensure_api_key_configured(self, provider: str = "openrouter") -> bool:
+    def ensure_api_key_configured(self, provider: str = "cliproxyapi") -> bool:
         """Check if API key is configured, offer setup if not.
 
         Args:
@@ -121,6 +121,10 @@ class ModelSelectionMixin:
             selected_model = self._resolve_cli_model(models)
         else:
             selected_model = self._get_default_model(models, provider)
+        if provider == "cliproxyapi":
+            self._note_implicit_cliproxyapi()
+            if live:
+                self._require_account_group(selected_model, models)
 
         # Use explicit None checks so --temp 0.0 remains a valid override.
         temperature = (
@@ -135,6 +139,45 @@ class ModelSelectionMixin:
         )
 
         return selected_model, temperature, max_tokens
+
+    def _note_implicit_cliproxyapi(self) -> None:
+        """Say so when CLIProxyAPI is in use only because it became the default, while an OpenRouter key is set: that is how settings from before the change look (OpenRouter was the default), and their OpenRouter model id would otherwise read as an account group."""
+        from git_tools.settings.settings import effective_value
+
+        if effective_value("GIT_TOOLS_PROVIDER", "GIT_TOOLS_DEFAULT_PROVIDER")[0] or not effective_value("OPENROUTER_API_KEY")[0]:
+            return
+        warning(
+            "git-tools now defaults to CLIProxyAPI (it was OpenRouter), and no provider is chosen in your settings, "
+            "though an OpenRouter key is set. To keep using OpenRouter, run `git-tools settings provider openrouter --non-interactive`; "
+            "to use CLIProxyAPI, choose it with `git-tools settings provider cliproxyapi`."
+        )
+        console.print()
+
+    def _require_account_group(self, model: str, models: Dict[str, Any]) -> None:
+        """Stop before anything is sent when CLIProxyAPI cannot serve ``model`` from its account groups.
+
+        Once agent-proxy keeps every account in a group, the proxy serves only ``<group>/<model>`` ids and refuses a plain one, so commands such as ``git-tools commit`` need a group chosen once in settings first. Checked only against a catalog that was just discovered and lists something; an unreadable or empty one is left to the request (and its ``model_not_found`` hint).
+        """
+        from git_tools.providers.cliproxyapi import split_model_group
+
+        served = {str(config.get("model_name") or key) for key, config in models.items()}
+        if not served or model in served:
+            return
+        groups = sorted({group for group in (split_model_group(item, "cliproxyapi")[0] for item in served) if group})
+        group, name = split_model_group(model, "cliproxyapi")
+        setup = ("Choose an account group and a model once with `git-tools settings provider cliproxyapi` "
+                 "(or `git-tools settings` → provider → Main model)")
+        if group is None and groups and name not in served:
+            raise ValueError(
+                f"CLIProxyAPI keeps its accounts in groups ({', '.join(groups)}) and serves no {name} without one. "
+                f"{setup}, or pass a grouped model, for example `--model {groups[0]}/{name}`."
+            )
+        if group is not None and group not in groups:
+            raise ValueError(
+                f'CLIProxyAPI serves nothing in the account group "{group}": no account in it is logged in, or the group is gone. '
+                f"{setup}: log an account into the group there, or pick another group."
+                + (f" Groups served now: {', '.join(groups)}." if groups else "")
+            )
 
     def _get_default_model(self, models: Dict[str, Any], provider: str = "") -> str:
         """Resolve the configured ID, then the provider's single default, independently of discovery."""
